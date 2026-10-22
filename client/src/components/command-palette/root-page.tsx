@@ -503,30 +503,6 @@ export function RootPage() {
      With no thread routed there is no project, and these open in $HOME. */
   {
     items.push({
-      id: "dock:web",
-      group: "Workspace",
-      title: "Preview",
-      keywords: "browser dev server localhost web",
-      icon: <MonitorIcon />,
-      onSelect: () => {
-        const previewUrl = projects.find((candidate) => candidate.id === meta?.projectId)?.previewUrl ?? ""
-        const inThread = threadDock(meta?.id)
-        if (inThread) return palette.run(() => inThread.open("web", true))
-        palette.run(() =>
-          palette.dock.openPanel(
-            {
-              kind: "web",
-              trust: "project",
-              ...(meta ? { projectId: meta.projectId } : {}),
-              viewId: "default",
-              ...(previewUrl ? { url: previewUrl } : {}),
-            },
-            { direction: "right" }
-          )
-        )
-      },
-    })
-    items.push({
       id: "dock:terminal",
       group: "Workspace",
       title: "New terminal",

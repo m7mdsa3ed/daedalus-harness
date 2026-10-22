@@ -28,9 +28,6 @@ export const threadPath = (sessionId: string) => `/t/${encodeURIComponent(sessio
     way to starting one. */
 export const landingPath = (projectId?: string) =>
   projectId ? `/?project=${encodeURIComponent(projectId)}` : "/"
-/** One thread's trace — the journal as a timeline rather than a transcript. */
-export const threadTracePath = (sessionId: string) =>
-  `/t/${encodeURIComponent(sessionId)}/trace`
 /** The overview — where "Settings" (not a section) opens. */
 export const settingsRootPath = () => `/settings`
 export const settingsPath = (section: string) => `/settings/${section}`
@@ -74,8 +71,7 @@ export const automationRunPath = (automationId: string, runId: string) =>
 export const automationPath = (automationId: string) => `/automations/${encodeURIComponent(automationId)}`
 
 /** The thread the URL points at, if any — legacy /?session= deep links too.
-    A trace view (`/t/<id>/trace`) is deliberately NOT a thread route: no chat
-    is docked for it, so the routed thread stays whatever it was (or none). */
+    */
 export function currentThreadId(
   pathname: string = location.pathname,
   search: string = location.search
@@ -86,20 +82,12 @@ export function currentThreadId(
 }
 
 /** The thread the address bar *shows* — only on a thread route (or the legacy
-    `?session=` on `/`), and not on its trace. `currentThreadId` alone would
+    `?session=` on `/`). `currentThreadId` alone would
     also answer for any page carrying a `?session=` of its own (the automation form
     does), so the read is gated on the two places a thread can be. */
 export function routedThreadId(pathname: string, search: string): string | null {
   if (pathname !== "/" && !pathname.startsWith("/t/")) return null
-  if (matchPath("/t/:sessionId/trace", pathname)) return null
   return currentThreadId(pathname, search)
-}
-
-/** The thread a trace view (`/t/<id>/trace`) is reading, if any. Kept apart
-    from `currentThreadId` for the reason stated there. */
-export function currentTraceId(pathname: string = location.pathname): string | null {
-  const match = matchPath("/t/:sessionId/trace", pathname)
-  return match?.params.sessionId ?? null
 }
 
 let navigateFn: NavigateFunction | null = null

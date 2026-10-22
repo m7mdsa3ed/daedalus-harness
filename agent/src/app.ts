@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { context } from "@opentelemetry/api";
 import * as acp from "./acp.js";
 import { scanCommands, scanSkills, toAvailableCommands } from "./commands.js";
 import {
@@ -20,7 +19,6 @@ import {
   type PauseResponse,
 } from "./hold.js";
 import { Session } from "./session.js";
-import { flushTraces, inSpan, sessionContext, TRACE_CAPABILITY } from "./tracing.js";
 import { handlePrompt, type TurnDeps } from "./turn.js";
 import { Emitter } from "./updates.js";
 
@@ -39,7 +37,6 @@ export {
 /* The compaction trigger is named in `compaction.ts` for the same reason —
    `turn.ts` reads its flag — and re-exported here for the same one. */
 export { COMPACT_CAPABILITY, COMPACT_METHOD, type CompactResponse } from "./compaction.js";
-export { TRACE_CAPABILITY, TRACE_NOTIFICATION } from "./tracing.js";
 
 /* AIR's `customInstructions` (`_meta.jetbrains.air`): the client's standing
    instructions, sent on every `session/new`, `session/load` and
@@ -224,12 +221,9 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
           /* ACP has no pause — only `session/cancel`, which throws the step
              away. This runtime owns its loop, so it can stop at a step
              boundary and carry on; the harness reads this to offer it. */
-          /* `daedalus/trace`: this runtime's own spans come up as
-             `_daedalus/trace`, parented under the prompt's `traceparent`. */
           _meta: {
             [PAUSE_CAPABILITY]: true,
             [COMPACT_CAPABILITY]: true,
-            [TRACE_CAPABILITY]: true,
             jetbrains: { air: { version: 1, capabilities: [CUSTOM_INSTRUCTIONS_CAPABILITY] } },
           },
         },
@@ -237,9 +231,7 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
     })
     .onRequest("session/new", async ({ params, client }) => {
       const sessionId = randomUUID();
-      const session = await context.with(sessionContext(sessionId, client, params._meta), () =>
-        openSession(sessionId, params.cwd, params.mcpServers, client, params._meta),
-      );
+      const session = await openSession(sessionId, params.cwd, params.mcpServers, client, params._meta);
       store.create(sessionId, params.cwd);
       announceCommands(client, session);
       return {
@@ -248,17 +240,12 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
         configOptions: session.configOptions(booleanCapable()),
       } satisfies acp.NewSessionResponse;
     })
-    .onRequest("session/load", ({ params, client }) =>
-      context.with(sessionContext(params.sessionId, client, params._meta), () => restore(params, client, true)),
-    )
+    .onRequest("session/load", ({ params, client }) => restore(params, client, true))
     /* `session/resume`: the same restore without the narration. The client
        already holds the transcript (the harness keeps its journal across a
        revive), so streaming it back again is seconds of updates nobody reads. */
     .onRequest("session/resume", async ({ params, client }) => {
-      const { modes, configOptions } = await context.with(
-        sessionContext(params.sessionId, client, params._meta),
-        () => restore(params, client, false),
-      );
+      const { modes, configOptions } = await restore(params, client, false);
       return { modes, configOptions } satisfies acp.ResumeSessionResponse;
     })
     /* `session/fork`, with the jetbrains.air fork point (`_meta`) that says
@@ -282,20 +269,7 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
     })
     .onRequest("session/prompt", ({ params, client }) => {
       const session = get(params.sessionId);
-      const traced = sessionContext(session.id, client, params._meta);
-      /* A steer is answered by the turn it joins, whose span it runs under. */
-      if (session.turnActive) return context.with(traced, () => handlePrompt(deps, session, client, params));
-      /* The turn is a span of our own because a retry and a hold happen
-         *between* the SDK's spans and need somewhere to be written. The flush
-         is awaited before the answer, so the harness has the turn's spans
-         before it hears the turn end. */
-      return context.with(traced, async () => {
-        try {
-          return await inSpan("agent turn", "turn", {}, () => handlePrompt(deps, session, client, params));
-        } finally {
-          await flushTraces();
-        }
-      });
+      return handlePrompt(deps, session, client, params);
     })
     .onRequest("session/set_mode", async ({ params, client }) => {
       const session = get(params.sessionId);
@@ -420,10 +394,7 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
       const emit = new Emitter(client, session.id, store);
       const announce = Boolean(clientCaps?.session?.compaction);
       const signal = session.abort?.signal ?? new AbortController().signal;
-      const traced = sessionContext(session.id, client);
-      const work = context.with(traced, () =>
-        compact(session, env, deps.makeModel, emit, announce, signal),
-      ).catch((err) => {
+      const work = compact(session, env, deps.makeModel, emit, announce, signal).catch((err) => {
         /* The `failed` compaction_update has already said so to anyone
            listening; this end keeps the thread usable and uncompacted. */
         process.stderr.write(`compaction failed: ${(err as Error)?.message ?? String(err)}\n`);

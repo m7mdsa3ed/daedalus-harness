@@ -945,111 +945,6 @@ export const JOURNALED_EVENTS: readonly ThreadEventKind[] = [
   "turn_ended",
 ];
 
-/* ── Trajectory: a thread's OpenTelemetry spans ──
-   Every span the harness and its agents produced for one thread, as
-   `GET /api/sessions/:id/spans` serves it (server/src/tracing.ts). Two
-   sources share one tree: the harness's own spans (`source: "harness"`), which
-   exist for every runtime because they are read off ACP — a turn, the prompt
-   request, a permission wait, a spawn or load, and for a runtime that does not
-   trace itself, the tool calls and model generations the updates imply — and a
-   runtime's own spans (`source: "agent"`), sent up over `_daedalus/trace` and
-   parented under the harness's prompt span by the W3C `traceparent` the prompt
-   carries in `_meta`. Our own runtime sends the AI SDK's GenAI spans
-   (`@ai-sdk/otel`), which is where the model request, its time to first
-   chunk, its prompt and its answer come from. */
-
-/** What a span is, for drawing: the harness names it at write time
-    (`daedalus.kind` on its own, the GenAI operation on an agent's). */
-export type TraceSpanKind =
-  | "turn"
-  | "request"
-  | "agent"
-  | "step"
-  | "model"
-  | "tool"
-  | "permission"
-  | "process"
-  | "session"
-  | "shell"
-  | "other";
-
-export type TraceAttributeValue = string | number | boolean | string[] | number[] | boolean[];
-
-export interface TraceSpanEvent {
-  name: string;
-  /** Epoch ms. */
-  at: number;
-  attributes?: Record<string, TraceAttributeValue>;
-}
-
-/** OpenTelemetry's `SpanKind`, spelled out. Absent on a span recorded before the
-    server kept it (read as internal). */
-export type TraceSpanOtelKind = "internal" | "server" | "client" | "producer" | "consumer";
-
-/** A causal reference to a span that is not the parent (OTLP `Span.Link`). */
-export interface TraceSpanLink {
-  traceId: string;
-  spanId: string;
-  attributes?: Record<string, TraceAttributeValue>;
-}
-
-/** The instrumentation scope that made a span (OTLP `InstrumentationScope`). */
-export interface TraceSpanScope {
-  name: string;
-  version?: string;
-}
-
-export interface TraceSpan {
-  traceId: string;
-  spanId: string;
-  parentSpanId: string | null;
-  /** The thread (harness session id), never an agent's ACP id. */
-  sessionId: string;
-  name: string;
-  kind: TraceSpanKind;
-  source: "harness" | "agent";
-  /** Epoch ms, fractional. */
-  start: number;
-  /** Epoch ms; null while the span is still open. */
-  end: number | null;
-  status: "unset" | "ok" | "error";
-  statusMessage?: string;
-  attributes: Record<string, TraceAttributeValue>;
-  events: TraceSpanEvent[];
-  /* The rest of the OpenTelemetry span model, as the span's producer said it.
-     All optional: a span stored before `otel-span-fields` has none of them. */
-  /** OTel `SpanKind` — a model call is `client`, the prompt request is `client`. */
-  spanKind?: TraceSpanOtelKind;
-  links?: TraceSpanLink[];
-  scope?: TraceSpanScope;
-  /** The producer's resource attributes (`service.name`, `telemetry.sdk.*`). */
-  resource?: Record<string, TraceAttributeValue>;
-  /** W3C `tracestate`, serialised. */
-  traceState?: string;
-  /** Attribute keys whose value the list elided for size (`TRACE_LIST_VALUE_LIMIT`);
-      `GET /api/sessions/:id/spans/:spanId` returns them whole. */
-  elided?: string[];
-}
-
-/** `GET /api/sessions/:id/spans` — every span of the thread, oldest start first. */
-export interface SpansPage {
-  spans: TraceSpan[];
-}
-
-/** A string attribute longer than this is elided from the list and served by
-    the span's own route — a model span's `gen_ai.input.messages` is the whole
-    prompt, every step. */
-export const TRACE_LIST_VALUE_LIMIT = 2_000;
-
-/** `_daedalus/trace` — a runtime's finished spans, agent → client. Attributes
-    already flattened to OTel's value types; times in epoch ms. */
-export const TRACE_NOTIFICATION = "_daedalus/trace";
-export interface TraceNotificationParams {
-  /** The ACP session the spans belong to. */
-  sessionId: string;
-  spans: Omit<TraceSpan, "sessionId" | "kind" | "source" | "elided">[];
-}
-
 export type ThreadEvent =
   | { ev: "session_title"; title: string }
   /* ---- attach lifecycle ----
@@ -1366,10 +1261,10 @@ export type ThreadEvent =
       durationMs?: number;
       /** Union wall time spent in the thread's own tool calls; overlapping calls count once. */
       toolDurationMs?: number;
-      /** Output speed's own denominator, read off the turn's model spans
-          (`BridgeTrace`). Absent when no call was timed — a runtime whose
-          spans had not arrived, or a journal from before it was measured —
-          and then the speed falls back to throughput over `durationMs`. */
+      /** Output speed's own denominator, read off the thread's stream
+          (`DecodeClock`). Absent when no generation was timed, or a journal
+          from before it was measured — and then the speed falls back to
+          throughput over `durationMs`. */
       generation?: TurnGeneration;
       /** The ACP `messageId` of the last content chunk this turn produced —
           absent when the runtime never sent one, or the turn produced no

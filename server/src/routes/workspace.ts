@@ -46,37 +46,6 @@ import { listProjectScripts } from "../project-scripts.js";
 import { clearShellHistory, listShellHistory } from "../shell-history.js";
 import { crud, flag, workspace } from "./helpers.js";
 
-/** The one kind of address a preview may be — plain http(s). */
-const PREVIEW_SCHEME = /^https?:\/\//i;
-
-/**
- * Whether the project's dev server answers, probed *from the server* rather
- * than from the browser. A browser fetch to the dev server is blocked by CORS
- * (the dev server did not grant this origin), and a cross-origin iframe cannot
- * be inspected — but the server and the dev server share a machine, so a
- * loopback fetch answers the real question: "is it running?". The URL stored
- * is the person's own (localhost, a LAN address, a tunnel) — probing from the
- * server works because the harness runs where the dev server runs.
- *
- * Any HTTP response counts as "up": a dev server that answers 404 on its root
- * is still running, and the panel's job is to say so and load it.
- */
-async function probePreview(url: string): Promise<boolean> {
-  if (!PREVIEW_SCHEME.test(url)) return false;
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      // Headers, not the body: a slow-to-stream page is still up, and the
-      // body of something like a deep endpoint is not the point of a probe.
-      signal: AbortSignal.timeout(2500),
-      redirect: "follow",
-    });
-    return typeof res.status === "number";
-  } catch {
-    return false;
-  }
-}
-
 /** Projects and everything scoped to a project's directory: the workspace
     filesystem, source control, the file watcher and the terminals' JSON half. */
 export function workspaceRoutes(app: Hono): void {
@@ -197,30 +166,6 @@ export function workspaceRoutes(app: Hono): void {
      its own session list (turns, activity, what the project has learned). One
      route, because a page that asked six would redraw six times. */
   app.get("/api/projects/:id/stats", (c) => workspace(c, async () => await projectStats(c.req.param("id"))));
-
-  /* The preview probe — `url` is the stored address, `up` is whether it
-     answers from the server's own machine. The panel polls this while it is
-     open: it is what turns "Start the dev server" into "the preview is up",
-     with no CORS and no reading inside a plain iframe. */
-  app.get("/api/projects/:id/preview", (c) =>
-    workspace(c, async () => {
-      const project = await getProject(c.req.param("id"));
-      if (!project) throw new WorkspaceError("no such project", 404);
-      const url = project.previewUrl ?? "";
-      return { url, up: url ? await probePreview(url) : false };
-    }),
-  );
-
-  /* The same probe, for an address the panel was *given* rather than one the
-     project stores. The Browser panel's frame is sandboxed and cross-origin, so
-     it cannot tell a refused connection (a port nobody is on) from a page that
-     drew — both fire `load`. The one thing that can is a fetch from this side,
-     so "nothing is answering" is measured rather than guessed. `up` is false
-     only for an address that was actually tried and failed; a malformed one is
-     the client's own to reject before it is ever framed. */
-  app.get("/api/preview", async (c) =>
-    c.json({ up: await probePreview(c.req.query("url") ?? "") }),
-  );
 
   // Feeds the client's path autocomplete; ?path= (empty lists the home dir).
   // Handles its own errors: `not found` vs `not a directory` deserve real codes,

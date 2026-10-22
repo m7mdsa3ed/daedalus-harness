@@ -3,10 +3,8 @@ import { sandbox, type Handle, type SpawnSpec } from "./sandbox/index.js";
 import { performance } from "node:perf_hooks";
 import { Readable, Writable } from "node:stream";
 import * as acp from "./acp.js";
-import { BridgeTrace } from "./bridge-trace.js";
-import { ingest } from "./tracing.js";
+import { DecodeClock, generationFromMeta, isModelOutput, spendFromError } from "./decode-clock.js";
 import { claudePauseSettings, setPauseGate } from "./pause-hooks.js";
-import type { TraceNotificationParams } from "./protocol.js";
 import { profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { mentionLinks } from "./mentions.js";
@@ -28,6 +26,7 @@ import type {
   ThreadHold,
   SessionFailure,
   ThreadRetry,
+  TurnGeneration,
   WireError,
 } from "./protocol.js";
 import { optionFor, stanceFor, type AutonomyPolicy } from "./autonomy.js";
@@ -274,10 +273,6 @@ export const RETRY_NOTIFICATION = "_daedalus/session/retry";
    capability and offered through `session_config.canCompact`. */
 const COMPACT_METHOD = "_daedalus/session/compact";
 const COMPACT_CAPABILITY = "daedalus/compact";
-/* A runtime that traces itself: it takes the prompt's `traceparent` and sends
-   its finished spans back over `_daedalus/trace` (bridge-trace.ts). */
-const TRACE_CAPABILITY = "daedalus/trace";
-
 
 export interface PausedParams {
   sessionId?: string;
@@ -296,16 +291,6 @@ export interface RetryParams {
   delayMs?: number;
   message?: string;
   detail?: string;
-}
-
-export const parseTraceParams = (params: unknown): TraceNotificationParams =>
-  (params ?? { sessionId: "", spans: [] }) as TraceNotificationParams;
-
-/** How a parked question was answered, in one word for its span. */
-function outcomeOf(response: unknown): string {
-  const r = response as { outcome?: { outcome?: string; optionId?: string }; action?: string } | null;
-  if (r?.outcome?.outcome === "selected") return r.outcome.optionId ?? "selected";
-  return r?.outcome?.outcome ?? r?.action ?? "answered";
 }
 
 export const parseRetryParams = (params: unknown): RetryParams => (params ?? {}) as RetryParams;
@@ -546,10 +531,8 @@ function steerRow({ id, createdAt, event }: HeldSteer): QueuedMessage {
 }
 
 export interface BridgeHost {
-  /** The thread — what every span this bridge records is filed under. */
+  /** The thread this bridge serves. */
   readonly threadId: string;
-  /** Who and what a turn runs on, stamped on its span: agent, profile, model. */
-  traceAttributes(): Record<string, string>;
   /** Journal (when the event is journaled) and fan out to every peer but
       `except` — which is how a peer avoids being told about its own action. */
   emit(event: ThreadEvent, except?: Peer): void;
@@ -704,9 +687,6 @@ export interface BridgeOptions {
       presence is what makes such a runtime pausable; absent, only a runtime
       that advertises its own pause is. */
   pauseHookUrl?: string;
-  /** The runtime exports its own model and tool spans over OTLP
-      (`AgentDef.telemetryVia`, `otlp.ts`), so they are not derived from ACP. */
-  otlpTraced?: boolean;
 }
 
 export class AcpBridge implements ConnectionRoute {
@@ -762,8 +742,8 @@ export class AcpBridge implements ConnectionRoute {
   private runsActive = false;
 
   private readonly host: BridgeHost;
-  /** This thread's spans (bridge-trace.ts) — told, never asked. */
-  private readonly trace: BridgeTrace;
+  /** What the running turn's output speed is measured on (decode-clock.ts). */
+  private readonly decode = new DecodeClock();
   /** The process this session is on — its own, or one shared with other
       threads (`AcpConnection`). */
   private readonly conn: AcpConnection;
@@ -798,6 +778,9 @@ export class AcpBridge implements ConnectionRoute {
   private toolTimeLost = false;
   private toolWindowStartedAt: number | null = null;
   private ttftSent = false;
+  /** The runtime's own generation reading for the turn in flight, if any answer
+      has carried one (see `settleTurn`). */
+  private reportedGeneration: TurnGeneration | null | undefined;
   private nextRequestId = 1;
   /** True while a `session/load` is streaming the conversation back, so the
       updates it produces are journaled as history rather than as news. */
@@ -834,7 +817,6 @@ export class AcpBridge implements ConnectionRoute {
   /** This thread is held through the harness's hooks rather than the
       runtime's own pause (`BridgeOptions.pauseHookUrl`). */
   private readonly pauseViaHooks: boolean;
-  private readonly otlpTraced: boolean;
 
   /** `stream` is the transport, not the process: `agentStream(proc)` for a
       child on stdio (the only kind today), and whatever carries ndJSON frames
@@ -843,12 +825,10 @@ export class AcpBridge implements ConnectionRoute {
       (stderr, exit, kill); the bridge owns only the conversation on it. */
   constructor(host: BridgeHost, conn: AcpConnection, opts: BridgeOptions) {
     this.host = host;
-    this.trace = new BridgeTrace(host.threadId, () => this.selfTraced);
     this.cwd = opts.cwd;
     this.mcpServers = opts.mcpServers;
     this.suppressModelMetadataWarning = opts.suppressModelMetadataWarning === true;
     this.pauseViaHooks = !!opts.pauseHookUrl;
-    this.otlpTraced = opts.otlpTraced === true;
     this.conn = conn;
     this.connection = conn.rpc;
     conn.attach(this);
@@ -896,18 +876,9 @@ export class AcpBridge implements ConnectionRoute {
     };
     arm();
     this.handshakeActivity = arm;
-    const span = this.trace.standalone(
-      opts.load?.resume ? "session/resume" : opts.load ? "session/load" : "session/new",
-      "session",
-      { "rpc.system": "jsonrpc", ...this.host.traceAttributes(), ...(opts.load ? { "daedalus.acp_session_id": opts.load.acpSessionId } : {}) },
-    );
     try {
       await Promise.race([this.runHandshake(opts), deadline]);
-      span.end();
     } catch (error) {
-      span.recordException(error instanceof Error ? error : String(error));
-      span.setStatus({ code: 2, message: error instanceof Error ? error.message : String(error) });
-      span.end();
       /* A shared process that cannot finish a handshake in a minute is wedged,
          and the pool would hand it to the next thread too. Its other sessions
          go down with it — they were on a process that stopped answering. Only
@@ -1454,11 +1425,21 @@ export class AcpBridge implements ConnectionRoute {
       const title = (update as { title?: unknown }).title;
       if (typeof title === "string" && title.trim()) this.host.onSessionTitle(title);
     }
-    if (this.turnStartedAt !== null && !this.ttftSent) {
+    /* The first thing the model *said*, on the thread's own stream: prose,
+       thought or the opening of a tool call. Not "the first update" — the
+       runtime announces the session's title and mode before it has called the
+       model, which read a follow-up turn's time to first token as a few
+       milliseconds — and never a subagent's, whose output is not the parent's. */
+    if (
+      own &&
+      !this.historyReplay &&
+      this.turnStartedAt !== null &&
+      !this.ttftSent &&
+      isModelOutput(update)
+    ) {
       this.ttftSent = true;
       const ms = Math.round(performance.now() - this.turnStartedAt);
       this.host.emit({ ev: "ttft", ms });
-      this.trace.ttft(ms);
     }
     /* The step boundary a held steer is waiting for. ACP has no "step ended"
        event, and the closest honest reading of one is a tool call reaching a
@@ -1471,7 +1452,7 @@ export class AcpBridge implements ConnectionRoute {
        parent's step and are not what the parent's steer is waiting on. A
        replay is history and moves nothing. */
     const settled = own && !this.historyReplay ? this.trackToolCall(update) : false;
-    if (!this.historyReplay) this.trace.onUpdate(update, own ? undefined : notification.sessionId);
+    if (own && !this.historyReplay) this.decode.onUpdate(update);
     /* The fork point a rewind to the NEXT turn will cut at (`turn_ended`'s
        `lastMessageId`) is the last messageId this turn actually produced —
        only the two content-chunk variants carry one, and a chunk that omits
@@ -1574,7 +1555,6 @@ export class AcpBridge implements ConnectionRoute {
         settle: resolve as (response: never) => void,
       };
       this.pending.set(requestId, entry);
-      this.trace.startWait(requestId, kind, request, toolCallId);
       this.host.emit(
         kind === "permission"
           ? { ev: "permission", requestId, request: request as acp.RequestPermissionRequest }
@@ -1733,8 +1713,7 @@ export class AcpBridge implements ConnectionRoute {
       this.host.onHeldSteersChanged();
     } else this.host.emit(started, origin);
     const opensTurn = this.inflight === 0;
-    if (opensTurn) this.trace.startTurn(turnId, text, this.host.traceAttributes());
-    else this.trace.steer(text);
+    if (opensTurn) this.decode.start();
     if (this.inflight === 0) {
       this.currentTurnId = turnId;
       this.currentTurnPrompt = text;
@@ -1782,9 +1761,6 @@ export class AcpBridge implements ConnectionRoute {
     const outgoing = text + attach.textSuffix;
     const blocks = attach.blocks;
 
-    /* The turn's own request carries its span out, so a runtime that traces
-       itself parents its spans under it; a steer joins that request's turn. */
-    const traceMeta = opensTurn ? this.trace.startRequest(text) : undefined;
     const sent = { text, done: false };
     this.outstanding.add(sent);
     /* Answered once: by the agent, or by `close()` on a process that stays up
@@ -1815,7 +1791,6 @@ export class AcpBridge implements ConnectionRoute {
            path, or `[attached: shot.png]`), for the reason mentions.ts states:
            the text is what every runtime reads without being taught anything. */
         prompt: [{ type: "text", text: outgoing }, ...blocks, ...mentionLinks(this.cwd, text + attach.textSuffix)],
-        ...(traceMeta ? { _meta: traceMeta } : {}),
       })
       .then(
         once(async (response: acp.PromptResponse) =>
@@ -1825,6 +1800,7 @@ export class AcpBridge implements ConnectionRoute {
             text,
             response.stopReason,
             parseSessionFailure(response._meta),
+            generationFromMeta(response._meta),
           ),
         ),
         once((error: unknown) => this.onPromptRejected(error, text)),
@@ -1847,7 +1823,8 @@ export class AcpBridge implements ConnectionRoute {
       this.held.push(text);
       return;
     }
-    void this.settleTurn(null, this.host.enrichError(toWireError(error)), text);
+    const spent = spendFromError(toWireError(error));
+    void this.settleTurn(spent.usage, this.host.enrichError(spent.error), text, undefined, undefined, spent.generation);
   }
 
   /**
@@ -1884,7 +1861,14 @@ export class AcpBridge implements ConnectionRoute {
     void Promise.resolve(reply).then((r) =>
       "error" in r
         ? this.settleTurn(null, this.host.enrichError(toWireError(r.error)), text)
-        : this.settleTurn(r.result.usage ?? null, undefined, text, r.result.stopReason, parseSessionFailure(r.result._meta)),
+        : this.settleTurn(
+            r.result.usage ?? null,
+            undefined,
+            text,
+            r.result.stopReason,
+            parseSessionFailure(r.result._meta),
+            generationFromMeta(r.result._meta),
+          ),
     );
   }
 
@@ -1897,8 +1881,16 @@ export class AcpBridge implements ConnectionRoute {
         steer's answer can carry one too, so the last one seen is kept until
         the turn itself ends. */
     failure?: SessionFailure,
+    /** The runtime's own reading of what it wrote and how long that took —
+        preferred over the clock below, which can only see prose. The last one
+        seen wins, like `failure`: a steer's answer may carry the turn's. */
+    reported?: TurnGeneration | null,
   ): Promise<void> {
     if (failure) this.turnFailure = failure;
+    /* A steer's answer may carry the turn's reading: a real one replaces what
+       was seen, "measured nothing" only fills a gap, silence changes nothing. */
+    if (reported) this.reportedGeneration = reported;
+    else if (reported === null) this.reportedGeneration ??= null;
     // Steering: a second prompt sent mid-turn keeps the turn open. Only the one
     // that empties the set ends it.
     if (--this.inflight > 0) return;
@@ -1932,7 +1924,12 @@ export class AcpBridge implements ConnectionRoute {
     const failed = error ?? (turnFailure?.severity === "error"
       ? { code: -32603, message: turnFailure.details ? `${turnFailure.title}\n${turnFailure.details}` : turnFailure.title }
       : undefined);
-    const generation = this.trace.endTurn({ error: failed?.message, usage, stopReason, durationMs, toolDurationMs });
+    const clocked = this.decode.end(usage);
+    /* A runtime that timed its calls is believed, including when it timed none:
+       `null` is its "nothing I would stand behind", and the clock below sees
+       the same output and cannot tell a buffered burst from writing. */
+    const generation = this.reportedGeneration === undefined ? clocked : (this.reportedGeneration ?? undefined);
+    this.reportedGeneration = undefined;
     this.turnStartedAt = null;
     this.turnToolDurationMs = 0;
     this.toolTimeLost = false;
@@ -2114,17 +2111,6 @@ export class AcpBridge implements ConnectionRoute {
     return Array.isArray(caps) ? caps : [];
   }
 
-  /** Whether the runtime sends spans of its own (bridge-trace.ts). */
-  get selfTraced(): boolean {
-    const meta = this.agentCapabilities._meta as Record<string, unknown> | null | undefined;
-    return Boolean(meta?.[TRACE_CAPABILITY]) || this.otlpTraced;
-  }
-
-  /** A runtime's own finished spans, filed under this thread. */
-  onTrace(params: TraceNotificationParams): void {
-    ingest(this.host.threadId, params);
-  }
-
   /** Whether the runtime takes a compaction *request* — not whether it
       compacts, which any runtime may do on its own and report. */
   get canCompact(): boolean {
@@ -2245,10 +2231,6 @@ export class AcpBridge implements ConnectionRoute {
           })
         : null;
     this.setHold(paused, params.reason ?? "user", error);
-    this.trace.event(paused ? "paused" : "resumed", {
-      reason: params.reason ?? "user",
-      ...(params.message ? { message: params.message } : {}),
-    });
   }
 
   /**
@@ -2261,14 +2243,6 @@ export class AcpBridge implements ConnectionRoute {
    */
   onAgentRetry(params: RetryParams): void {
     const attempt = params.attempt ?? null;
-    if (attempt !== null) {
-      this.trace.event("retry", {
-        attempt,
-        ...(params.of ? { of: params.of } : {}),
-        ...(params.delayMs ? { delay_ms: params.delayMs } : {}),
-        ...(params.message ? { message: params.message } : {}),
-      });
-    }
     this.setRetry(
       attempt === null
         ? null
@@ -2400,7 +2374,6 @@ export class AcpBridge implements ConnectionRoute {
 
   async cancel(): Promise<void> {
     if (!this.acpSessionId) return;
-    this.trace.event("cancel");
     await this.connection.agent.notify(acp.methods.agent.session.cancel, {
       sessionId: this.acpSessionId,
     });
@@ -2462,7 +2435,6 @@ export class AcpBridge implements ConnectionRoute {
        because this is the one exit every one of those paths takes. */
     if (entry.timer) clearTimeout(entry.timer);
     entry.settle(response);
-    this.trace.endWait(entry.requestId, outcomeOf(response), auto?.answer);
     this.host.emit(
       {
         ev: "request_answered",
@@ -2565,7 +2537,6 @@ export class AcpBridge implements ConnectionRoute {
       );
       for (const text of this.held.splice(0)) void this.settleTurn(null, error, text);
     }
-    this.trace.close(reason);
     this.releaseIdle();
     this.conn.detach(this, this.acpSessionId ?? this.pendingSessionId, reason);
   }

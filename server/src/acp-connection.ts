@@ -1,10 +1,8 @@
-import { TRACE_NOTIFICATION, type TraceNotificationParams } from "./protocol.js";
 import * as acp from "./acp.js";
 import {
   CLIENT_CAPABILITIES,
   PAUSED_NOTIFICATION,
   RETRY_NOTIFICATION,
-  parseTraceParams,
   SUBAGENT_UPDATE_METHOD,
   agentStream,
   parsePausedParams,
@@ -62,7 +60,6 @@ export interface ConnectionRoute {
   onElicitationComplete(elicitationId: string): void;
   onAgentPaused(params: PausedParams): void;
   onAgentRetry(params: RetryParams): void;
-  onTrace(params: TraceNotificationParams): void;
 }
 
 /** A route that drops everything — the options probe's, which opens a session
@@ -75,7 +72,6 @@ export const SINK: ConnectionRoute = {
   onElicitationComplete: () => {},
   onAgentPaused: () => {},
   onAgentRetry: () => {},
-  onTrace: () => {},
 };
 
 /** How long advancing offsets/counters wait before one write. */
@@ -189,9 +185,6 @@ export class AcpConnection {
       )
       .onNotification(RETRY_NOTIFICATION, parseRetryParams, (ctx) =>
         this.route(ctx.params.sessionId)?.onAgentRetry(ctx.params),
-      )
-      .onNotification(TRACE_NOTIFICATION, parseTraceParams, (ctx) =>
-        this.route(ctx.params.sessionId)?.onTrace(ctx.params),
       )
       .connect(agentStream(proc, this.ledger ?? undefined));
     if (adopted) {

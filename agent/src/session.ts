@@ -7,7 +7,6 @@ import { EFFORTS, type AgentEnv, type Effort } from "./env.js";
 import type { McpHandle } from "./mcp.js";
 import type { CommandDef, SkillDef } from "./commands.js";
 import type { ErrorHold, Release } from "./hold.js";
-import { spanEvent } from "./tracing.js";
 
 export type ModeId = "default" | "acceptEdits" | "bypassPermissions" | "plan";
 
@@ -248,7 +247,6 @@ export class Session {
    */
   async gate(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) throw abortError();
-    if (this.held) spanEvent("paused", { reason: this.paused ? "user" : "error" });
     /* A loop, not an `if`: two things can hold this, so being let go of once
        does not mean being let go of. */
     while (this.held) {

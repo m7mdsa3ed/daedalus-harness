@@ -5,7 +5,6 @@ import {
   ArrowUp,
   BookOpenIcon,
   FolderIcon,
-  GlobeIcon,
   PanelsTopLeft,
   Pencil,
   Plus,
@@ -101,18 +100,6 @@ const PROJECT_COLUMNS: ColumnDef<Project, unknown>[] = [
     header: "Description",
     meta: { className: "hidden @panel-md:table-cell max-w-64" },
     cell: ({ row }) => <span className="block truncate text-muted-foreground">{row.original.description}</span>,
-  },
-  {
-    id: "preview",
-    header: "Preview",
-    meta: { className: "hidden @panel-lg:table-cell max-w-56" },
-    cell: ({ row }) =>
-      row.original.previewUrl ? (
-        <span className="inline-flex max-w-full items-center gap-1 text-primary">
-          <GlobeIcon className="size-3 shrink-0" />
-          <span className="truncate font-mono text-sm">{row.original.previewUrl}</span>
-        </span>
-      ) : null,
   },
   {
     id: "helpers",
@@ -330,7 +317,6 @@ export function ProjectForm({
     spaceIds: project?.spaceIds ?? [],
     description: project?.description ?? "",
     logoUrl: project?.logoUrl ?? "",
-    previewUrl: project?.previewUrl ?? "",
     voiceProvider: project?.defaults?.voiceProvider ?? "",
   }))
   const qc = useQueryClient()
@@ -361,7 +347,6 @@ export function ProjectForm({
         cwd: form.cwd === "/" ? form.cwd : form.cwd.replace(/\/+$/, ""),
         description: form.description.trim() || null,
         logoUrl: form.logoUrl.trim(),
-        previewUrl: form.previewUrl.trim(),
         spaceIds: form.spaceIds.length > 0 ? form.spaceIds : activeSpaceId ? [activeSpaceId] : undefined,
       }
       const saved = project
@@ -435,22 +420,6 @@ export function ProjectForm({
             </div>
           </Field>
         </div>
-        <div className="@panel-sm:col-span-2">
-          <Field
-            label="Preview URL"
-            hint="The project's dev server, as the Browser panel opens it. Reachable from this device: localhost on the server's own machine, a LAN or tunnel address from a phone. The dev server must be running — mark a helper command below and the panel can start it for you."
-          >
-            <div className="flex items-center gap-2">
-              <GlobeIcon className="size-4 shrink-0 text-muted-foreground" />
-              <Input
-                value={form.previewUrl}
-                onChange={(e) => set({ previewUrl: e.target.value })}
-                placeholder="http://localhost:5173"
-                className="min-w-0 flex-1 font-mono"
-              />
-            </div>
-          </Field>
-        </div>
         {/* Written through the defaults door at once, like the composer's picks;
             a project being created has no row to write to yet. */}
         {project && (
@@ -495,7 +464,6 @@ export function ProjectForm({
               { label: "Rules", value: ruleCount },
               { label: "Helpers", value: project.helpers?.length ?? 0 },
               { label: "Knowledge", value: knowledgeCount ?? 0, loading: knowledgeCount === undefined },
-              { label: "Preview", value: project.previewUrl ? "Set" : "None", tone: project.previewUrl ? "ok" : "default" },
             ]}
           />
         )}
@@ -649,7 +617,7 @@ function HelpersSection({ project }: { project: Project | null }) {
   const f = useTableFilter(helpers, {
     text: (h) => `${h.name} ${h.command} ${h.description ?? ""} ${h.cwd ?? ""}`,
     placeholder: "Search helpers...",
-    fields: [{ id: "behaviour", label: "Behaviour", of: (h) => (h.preview ? "Preview" : h.confirm ? "Asks first" : "Plain") }],
+    fields: [{ id: "behaviour", label: "Behaviour", of: (h) => (h.confirm ? "Asks first" : "Plain") }],
   })
 
   return (
@@ -727,11 +695,6 @@ const HELPER_COLUMNS: ColumnDef<HelperCommand, unknown>[] = [
     meta: { align: "end" },
     cell: ({ row }) => (
       <span className="inline-flex flex-wrap items-center justify-end gap-1">
-        {row.original.preview && (
-          <Badge variant="secondary" className="gap-1 text-primary">
-            <GlobeIcon className="size-3" /> preview
-          </Badge>
-        )}
         {row.original.confirm && <Badge variant="secondary">asks first</Badge>}
       </span>
     ),

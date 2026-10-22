@@ -141,12 +141,6 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   without a second `initialize`. A change to spawn, stdio or turn settlement must hold under both.
   Loopback keys are derived from `data/loopback-secret`, so they survive a restart.
   → `docs/protocol.md` "Durable agent processes".
-- **The trajectory is OpenTelemetry spans, never a re-read of the journal** (`tracing.ts`,
-  `bridge-trace.ts`, `trace_spans`). One trace per turn, rooted at the turn; `session/prompt`
-  carries its `traceparent` in `_meta`. A runtime that advertises `daedalus/trace` sends its own
-  spans over `_daedalus/trace` and the bridge then **derives no model or tool spans for it** —
-  never both, or every call is drawn and counted twice. The bridge tells the tracer; it never
-  holds a span. → `docs/protocol.md` "Trajectory".
 - **Importing a thread writes a pointer, never a transcript.** Listing is ACP's
   `session/list`, never a runtime's files.
 - **The harness is an AIR client** (`_meta.jetbrains.air` in `CLIENT_CAPABILITIES`), declared
@@ -342,16 +336,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   speaks the rest — media, instructions, `list_changed`, elicitation, sampling (behind a
   permission), roots, progress — and joins a tool's images to the next step as a user message,
   because an OpenAI-compatible tool message is text only.
-- **Driving the Preview is a plain stdio library row, not a built-in**: `chrome-devtools-mcp
-  --browserUrl http://127.0.0.1:9222` against Electron's own `--remote-debugging-port`
-  (`DAEDALUS_DEBUG_PORT`, `"0"` = off; `electron/main.cjs`). That port is **every window of the
-  app, the harness page and its token included, to anything local** - a deliberate trade for a
-  stock MCP, replacing the per-thread `builtin:browser` pipe. **It is `electron/cdp-proxy.cjs`,
-  not Chromium's own port** (that one is ephemeral): a byte-for-byte relay with one repair,
-  because Electron answers `Target.createTarget` - the MCP's `new_page` - with "Not supported".
-  The page it opens is a pinned window (`createAgentPage`: sandboxed, no preload, the
-  `persist:preview` session, http(s) only). Desktop shell only; the PWA's iframe has no CDP.
-  Boot deletes any leftover `builtin:browser` row.
+- **There is no browser and no CDP.** The Preview panel draws a project's files and diffs and
+  nothing else (`web-panel.tsx`); Electron opens no debugging port, runs no `<webview>`, and no
+  `chrome-devtools-mcp` row is shipped. Boot still deletes any leftover `builtin:browser` row.
 - **The marketplace indexes nothing** (`server/src/mcp-registry.ts`): Browse proxies an MCP
   Registry's `GET /v0/servers` (`config.mcpRegistryUrl`, the official one by default) and maps
   `server.json` onto `McpServerInput` — `version=latest` or a search is twenty copies of one

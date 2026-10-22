@@ -10,7 +10,7 @@
  * neither side spells a route twice. Adding a capability is one entry here plus
  * the route it names, and the route already exists because the browser uses it.
  *
- * Deliberately absent: the streaming reads (spans/watch; replay is offered only as the windowed `threads_read`), the file,
+ * Deliberately absent: the streaming reads (watch; replay is offered only as the windowed `threads_read`), the file,
  * terminal and git workspace routes, attachments and the OAuth callbacks — an
  * agent has its own filesystem and shell, those responses are unbounded or
  * browser-interactive, and none of them is "managing the harness".
@@ -189,7 +189,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
   {
     name: "projects_create",
     title: "Create a project",
-    description: "Add a project. Fields: name, cwd (an absolute path), spaceIds? (one or more space ids), description?, logoUrl?, previewUrl?.",
+    description: "Add a project. Fields: name, cwd (an absolute path), spaceIds? (one or more space ids), description?, logoUrl?.",
     method: "POST",
     path: "/api/projects",
     data: true,

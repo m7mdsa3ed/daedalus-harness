@@ -10,7 +10,7 @@ import type { TpsStats, TurnGeneration } from "./protocol.js";
  *
  * Two readings, never mixed in one figure:
  *   - **generation** — output tokens over the time the model spent writing
- *     them (`TurnGeneration`, measured off the turn's model spans). This is
+ *     them (`TurnGeneration`, measured off the thread's stream, `decode-clock.ts`). This is
  *     the speed. Tool calls, prefill, permission waits and holds are not in it.
  *   - **throughput** — output tokens over the turn's wall clock. Kept for the
  *     turns that have no generation (a runtime the harness cannot time, a
@@ -32,31 +32,6 @@ const rateOf = (tokens: number, ms: number): number | null => {
   const rate = (tokens * 1000) / ms;
   return tokens > 0 && ms > 0 && Number.isFinite(rate) ? rate : null;
 };
-
-/** A model span's time to first token in ms: the harness's own reading
-    (`daedalus.ttft_ms`, also what the OTLP intake writes), else the AI SDK's
-    GenAI attribute, which is in seconds. */
-export function ttftMsOf(attributes: Record<string, unknown>): number | null {
-  const ms = attributes["daedalus.ttft_ms"];
-  if (typeof ms === "number" && Number.isFinite(ms)) return ms;
-  const s = attributes["gen_ai.client.operation.time_to_first_chunk"];
-  return typeof s === "number" && Number.isFinite(s) ? s * 1000 : null;
-}
-
-/** One finished model span's share of a turn's generation, or null when it
-    cannot be timed: no output count, no first-token time, or no decode left. */
-export function spanGeneration(span: {
-  start: number;
-  end: number | null;
-  attributes: Record<string, unknown>;
-}): TurnGeneration | null {
-  if (span.end === null) return null;
-  const output = span.attributes["gen_ai.usage.output_tokens"];
-  const ttft = ttftMsOf(span.attributes);
-  if (typeof output !== "number" || !(output > 0) || ttft === null) return null;
-  const decodeMs = span.end - span.start - ttft;
-  return decodeMs > 0 ? { outputTokens: output, decodeMs } : null;
-}
 
 export function generationRate(generation: TurnGeneration | undefined): number | null {
   return generation ? rateOf(generation.outputTokens, generation.decodeMs) : null;

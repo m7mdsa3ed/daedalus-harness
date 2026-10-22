@@ -124,12 +124,6 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   bridge closing kills it, as before. A shared bridge closing is `session/close`, and the
   process stays warm 5 min — the draft's probe asks on it, so the first message skips
   `initialize`. A crash takes every session on the process with it.
-- **The trajectory is OpenTelemetry spans, never a re-read of the journal** (`tracing.ts`,
-  `bridge-trace.ts`, `trace_spans`). One trace per turn, rooted at the turn; `session/prompt`
-  carries its `traceparent` in `_meta`. A runtime that advertises `daedalus/trace` sends its own
-  spans over `_daedalus/trace` and the bridge then **derives no model or tool spans for it** —
-  never both, or every call is drawn and counted twice. The bridge tells the tracer; it never
-  holds a span. → `docs/protocol.md` "Trajectory".
 - **Importing a thread writes a pointer, never a transcript.** Listing is ACP's
   `session/list`, never a runtime's files.
 - **A capability we don't advertise is a feature the agent turns off.** Questions arrive as

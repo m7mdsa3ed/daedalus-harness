@@ -21,19 +21,14 @@ export type ThreadPanelKind =
   | "plan"
   | "agents"
   | "details"
-  | "tokens"
   | "terminal"
   | "web"
-  | "trajectory"
 
 export interface ThreadDockHandle {
   /** Show the one there is (`reuse`) or open one — a fresh shell for a
       terminal, the only kind a thread holds more than one of. */
   open: (kind: ThreadPanelKind, reuse?: boolean) => void
   jump: (id?: string, turn?: { turnId: string; seq: number }) => void
-  /** A Preview panel of its own on an address - never one of the project's, so
-      two pages are two panels. */
-  openWeb: (url: string) => void
 }
 
 /* Which thread's dock a panel (or a tool row in its transcript) is in. Lives

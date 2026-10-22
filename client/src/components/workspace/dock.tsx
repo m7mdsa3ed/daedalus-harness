@@ -366,9 +366,8 @@ export function useWorkspaceDock(): DockController {
       const existing = api.getPanel(id)
       if (existing) {
         /* Same id, different params is "the same surface, pointed somewhere
-           else" — the Browser panel following a second source is the whole
-           reason it can happen, since its `viewId` is its identity and the URL
-           is not. Both sides normalized through `parsePanel`, so the order some
+           else" — the Preview panel following a second file is the case, since
+           its `viewId` is its identity and the file is not. Both sides normalized through `parsePanel`, so the order some
            caller wrote its literal in does not count as a change. */
         if (JSON.stringify(descriptorOf(existing)) !== JSON.stringify(parsePanel(panel.kind, panel)))
           existing.api.updateParameters(panel as unknown as Record<string, unknown>)
@@ -965,9 +964,7 @@ export function useWorkspaceDock(): DockController {
                    either is stale. */
                 descriptor.kind === "tasks" || descriptor.kind === "page" || !pruneProjects
                 ? false
-                : descriptor.kind === "web"
-                  ? descriptor.trust === "project" && !!descriptor.projectId && !projects.has(descriptor.projectId)
-                  : !projects.has(descriptor.projectId)
+                : !projects.has(descriptor.projectId)
           /* Not gone, but another space's: closed here and owed there. */
           const owner = !gone && descriptor ? foreign?.(descriptor) : null
           if (owner && descriptor) filed.set(owner, [...(filed.get(owner) ?? []), descriptor])

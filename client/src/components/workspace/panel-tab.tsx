@@ -301,7 +301,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
         : descriptor?.kind === "terminal"
           ? (descriptor.cwd ?? project?.cwd ?? "")
           : descriptor?.kind === "web"
-            ? (descriptor.file ?? descriptor.url ?? "")
+            ? (descriptor.file ?? descriptor.diff?.path ?? "")
             : ""
   /* The age rides the second row and never opens one. */
   /* When the thread last did anything. The age only moves by the minute, so one
@@ -320,8 +320,8 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
     project?.name && `Project: ${project.name}`,
     descriptor?.kind === "terminal" && (descriptor.cwd ?? project?.cwd) &&
       `Directory: ${descriptor.cwd ?? project?.cwd}`,
-    descriptor?.kind === "web" && (descriptor.file ?? descriptor.url) &&
-      `Location: ${descriptor.file ?? descriptor.url}`,
+    descriptor?.kind === "web" && (descriptor.file ?? descriptor.diff?.path) &&
+      `Location: ${descriptor.file ?? descriptor.diff?.path}`,
     descriptor?.kind === "page" && `Page: ${descriptor.path}`,
     descriptor?.kind === "chat" && meta?.model && `Model: ${meta.model}`,
     descriptor?.kind === "chat" && meta?.effort && `Effort: ${meta.effort}`,

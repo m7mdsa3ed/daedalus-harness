@@ -73,6 +73,10 @@ export interface StepBatch {
       calls cost together, since they ran side by side. On the batch's last call
       only, and only once every call has ended. */
   spanMs?: number
+  /** Calls of its batch that have not ended yet, on the batch's last call only
+      and only while there are any — what lets the foot say "1 of 3 running"
+      instead of staying silent until the slowest call is done. */
+  running?: number
 }
 
 export function layoutBatches(spans: readonly BatchSpan[], options: BatchOptions): StepBatch[] {
@@ -102,6 +106,7 @@ export function layoutBatches(spans: readonly BatchSpan[], options: BatchOptions
       const last = batch.members[size - 1]
       for (let i = first; i <= last; i++) out[i].edge = i === first ? "start" : i === last ? "end" : "middle"
       if (Number.isFinite(batch.end)) out[last].spanMs = Math.max(0, batch.end - batch.start)
+      else out[last].running = batch.members.filter((i) => spans[i].end === undefined).length
     }
     const next = batches[b + 1]
     if (options.gapMinMs === null || !next || !Number.isFinite(batch.end)) return

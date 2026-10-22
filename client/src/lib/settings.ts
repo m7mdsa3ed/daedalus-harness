@@ -818,11 +818,6 @@ export interface Project {
   /** Logo shown wherever the project is named — a URL. Empty means "no logo",
       and `ProjectIcon` draws the project's initial instead. */
   logoUrl?: string
-  /** The project's dev server, as the Browser panel should open it. Empty
-      means none. What it is reachable *at* is the person's own call —
-      `localhost` for the machine the server runs on, a LAN or tunnel address
-      for a phone. */
-  previewUrl?: string
   /** Standing rules every thread spawned here starts with — the project layer
       of `server/src/rules.ts`, beneath the global block. Null = none. */
   rules?: string | null
@@ -903,9 +898,6 @@ export interface HelperCommand {
   description: string | null
   /** Ask before running — the dialog shows a confirm step first. */
   confirm: boolean
-  /** This helper starts the project's dev server — the Browser panel offers
-      it when a preview URL is set but nothing answers on it. */
-  preview: boolean
   createdAt: number
 }
 

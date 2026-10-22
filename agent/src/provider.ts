@@ -1,6 +1,7 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 import type { AgentEnv } from "./env.js";
+import type { SharedV4ProviderOptions } from "@ai-sdk/provider";
 
 export type ModelFactory = (env: AgentEnv, modelId: string) => LanguageModel;
 
@@ -22,3 +23,16 @@ export const makeModel: ModelFactory = (env, modelId) =>
     apiKey: env.apiKey ?? "daedalus",
     includeUsage: true,
   }).chatModel(modelId);
+
+/* A prefix cache lives on the machine that built it, so a router free to pick
+   a different backend per request answers a warm prompt from a cold one. The
+   key is the affinity hint that keeps a thread's steps together: OpenAI routes
+   on it explicitly, and a gateway that has never heard of it ignores an
+   unknown body field. The session id — stable across every step of every turn,
+   distinct between threads that share a model — is exactly the grain the cache
+   is built at. Env-gated for the strict upstream that rejects what it cannot
+   parse rather than ignoring it. */
+export function cacheAffinity(env: AgentEnv, sessionId: string): SharedV4ProviderOptions | undefined {
+  if (!env.promptCacheKey) return undefined;
+  return { [PROVIDER_OPTIONS_KEY]: { prompt_cache_key: sessionId } };
+}

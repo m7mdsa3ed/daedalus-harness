@@ -2,7 +2,6 @@ import { performance } from "node:perf_hooks";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { compress } from "hono/compress";
-import { shutdownTracing } from "./tracing.js";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { WebSocket, WebSocketServer } from "ws";
@@ -32,7 +31,6 @@ import { stopWatching } from "./workspace-watch.js";
 import { attachTerminal, killProjectTerminals } from "./terminals.js";
 import { configureGatewayShim } from "./gateway-shim.js";
 import { configureMcpShim } from "./mcp-shim.js";
-import { configureOtlp } from "./otlp.js";
 import { configurePauseHooks } from "./pause-hooks.js";
 import { Push } from "./push.js";
 import { addNotification } from "./notifications.js";
@@ -68,9 +66,6 @@ configureMcpShim({ port: config.port });
 /* And for a runtime paused through its own hooks: they call `/ph/<key>/<id>`,
    which answers only while the thread is not paused (pause-hooks.ts). */
 configurePauseHooks({ port: config.port });
-/* And for a runtime that reports its own OpenTelemetry: it posts to
-   `/otlp/<key>/<threadId>` (otlp.ts), which files it under that thread. */
-configureOtlp({ port: config.port });
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
 await seedAgents();
@@ -251,7 +246,7 @@ app.use("/api/*", async (c, next) => {
 });
 
 /**
- * The three journal reads and the trajectory, compressed.
+ * The two journal reads, compressed.
  *
  * A transcript is opened over HTTP now (`GET /api/sessions/:id/replay`), and
  * that document is the most compressible thing this server sends: the same
@@ -261,19 +256,17 @@ app.use("/api/*", async (c, next) => {
  * compression behind. Measured on this install's largest thread the body goes
  * from 17.9MB to 788KB, and on a phone that is the whole of the wait.
  *
- * Scoped to these three paths rather than `/api/*`: everything else here is a
+ * Scoped to these two paths rather than `/api/*`: everything else here is a
  * small JSON object where a compression pass is a cost with nothing to show
  * for it, and the streaming routes (the terminal, the watch streams) must not
  * have a codec sitting between a line and the reader.
  */
 app.use("/api/sessions/:id/replay", compress());
 app.use("/api/sessions/:id/earlier", compress());
-app.use("/api/sessions/:id/spans", compress());
-app.use("/api/sessions/:id/spans/:spanId", compress());
 
 /* The routes, by domain (src/routes/). Registered after the middleware so
    everything under /api is behind the token; /api/health exempts itself above,
-   and /gw/* + /otlp/* + /mx/* + /wf/* + /hm/* + /rt/* are outside /api with the key-in-path
+   and /gw/* + /mx/* + /wf/* + /hm/* + /rt/* are outside /api with the key-in-path
    rule — as is /oauth/mcp/callback, which is unauthenticated by necessity
    (an authorization server redirects a browser there and no bearer survives
    that hop; its `state` is the credential instead, see routes/library.ts)
@@ -459,10 +452,6 @@ async function shutdown(code: number): Promise<never> {
   } catch (error) {
     console.error("[shutdown]", error);
   }
-  /* The retired bridges ended their spans; write them (and export them) inside
-     the drain rather than dropping the last turn's trajectory. */
-  await Promise.race([shutdownTracing(), new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_MS))]);
-  lap("tracing flushed");
   /* The fixed wait is for direct children: `AcpConnection.kill` escalates SIGTERM
      to SIGKILL on a timer that has to fire before the process goes. Over a durable
      sandbox nothing is waiting on one — the agents are not ours to kill, the hosts

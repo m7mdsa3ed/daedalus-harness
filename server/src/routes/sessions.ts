@@ -14,8 +14,6 @@ import { getTask } from "../tasks-board.js";
 import { listAgentSessions } from "../session-list.js";
 import { threadCwd, type SessionManager } from "../sessions.js";
 import * as git from "../git.js";
-import type { SpansPage } from "../protocol.js";
-import { getSpan, listSpans } from "../tracing.js";
 import { listHelpers } from "../project-helpers.js";
 import { recordShellRun } from "../shell-history.js";
 import { runShellLine } from "../shell.js";
@@ -674,20 +672,6 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     if (!Number.isFinite(before)) return c.json({ error: "before must be a number" }, 400);
     const page = await sessions.earlierPage(c.req.param("id"), before);
     return page ? c.json(page) : c.json({ error: "not found" }, 404);
-  });
-
-  /* The thread's trajectory: every OpenTelemetry span the harness and its
-     runtime recorded for it (tracing.ts), open ones included, long values
-     elided — and one span whole, for what the list elided. */
-  app.get("/api/sessions/:id/spans", async (c) => {
-    const id = c.req.param("id");
-    if (!sessions.get(id)) return c.json({ error: "not found" }, 404);
-    return c.json({ spans: await listSpans(id) } satisfies SpansPage);
-  });
-
-  app.get("/api/sessions/:id/spans/:spanId", async (c) => {
-    const span = await getSpan(c.req.param("id"), c.req.param("spanId"));
-    return span ? c.json(span) : c.json({ error: "not found" }, 404);
   });
 
   // What the agent process has been printing. The client shows this when a thread

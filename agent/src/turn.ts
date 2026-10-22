@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hostname, platform } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
-import type * as acp from "./acp.js";
-import type { SharedV4ProviderOptions } from "@ai-sdk/provider";
+import * as acp from "./acp.js";
 import {
   stepCountIs,
   streamText,
@@ -20,7 +19,7 @@ import type { AgentEnv } from "./env.js";
 import { findInstructionFiles, readInstructions } from "./instructions.js";
 import { loadModelPrompts, modelPromptLayer } from "./model-prompts.js";
 import type { SessionStore } from "./persistence.js";
-import { PROVIDER_OPTIONS_KEY, type ModelFactory } from "./provider.js";
+import { cacheAffinity, type ModelFactory } from "./provider.js";
 import {
   PAUSED_NOTIFICATION,
   RETRY_NOTIFICATION,
@@ -31,11 +30,10 @@ import {
 } from "./hold.js";
 import type { Session } from "./session.js";
 import { buildTools, metaFor, type ToolMeta, type ToolRuntime } from "./tools/index.js";
-import { deferMcpTools, pickTools } from "./tools/tool-search.js";
-import { historyTokens, prefixTokens, promptBreakdown, type PrefixTokens } from "./token-breakdown.js";
-import { spanEvent } from "./tracing.js";
+import { deferMcpTools } from "./tools/tool-search.js";
 import { generateTitle } from "./title.js";
 import { Emitter } from "./updates.js";
+import { Meter, normalizeUsage, toAcpUsage, totalOf, type CallMetering } from "./metering.js";
 
 export interface TurnDeps {
   env: AgentEnv;
@@ -104,6 +102,12 @@ export async function handlePrompt(
   session.abort = abort;
   const emit = new Emitter(ctx, session.id, deps.store);
 
+  /* Every model call the turn makes, metered as each one answers
+     (`metering.ts`) — the root loop, its retries, its subagents, the
+     summarizer and the title call alike. Not read off a stream's `finish`,
+     which a cancelled turn never reaches. */
+  const meter = new Meter();
+
   /* Only a session's very first message is named: a reloaded session has no
      `title` either, but it has messages. */
   const naming = !session.title && session.messages.length === 0 && deps.env.autoTitle;
@@ -121,7 +125,7 @@ export async function handlePrompt(
   deps.store.touch(session.id, session.title ?? undefined);
   if (naming) {
     const fallback = session.title;
-    void generateTitle(deps.env, deps.makeModel, session.modelId, text, abort.signal).then((title) => {
+    void generateTitle(deps.env, deps.makeModel, session.modelId, text, abort.signal, meter.record).then((title) => {
       const next = title ?? fallback;
       if (!next) return;
       session.title = next;
@@ -137,7 +141,7 @@ export async function handlePrompt(
   const compactOnce = async (): Promise<boolean> => {
     const announce = Boolean(deps.clientCaps()?.session?.compaction);
     try {
-      await compact(session, deps.env, deps.makeModel, emit, announce, abort.signal);
+      await compact(session, deps.env, deps.makeModel, emit, announce, abort.signal, meter.record);
       return true;
     } catch (err) {
       if (abort.signal.aborted) throw err;
@@ -180,12 +184,12 @@ export async function handlePrompt(
       messageId: randomUUID(),
     });
 
-    /* Every attempt's tokens, not the last attempt's. A turn that burned 60k
-       reading a repo, hit a quota wall, held while the model was changed and
-       finished on another one is still one turn, and reporting only the second
-       model's tokens would under-count exactly the expensive turns — the ones
-       `refreshQuota` is drawn against. */
-    let turnUsage: LanguageModelUsage | null = null;
+    /* Every attempt's tokens, not the last attempt's — that is what `meter`
+       is (declared above): a turn that burned 60k reading a repo, hit a quota
+       wall, held while the model was changed and finished on another one is
+       still one turn, and reporting only the second model's tokens would
+       under-count exactly the expensive turns — the ones `refreshQuota` is
+       drawn against. */
     let attempt = 0;
     /* Mid-turn compaction bookkeeping: how many times this turn has summarized
        its own history, and whether the summarizer has already failed once —
@@ -277,44 +281,24 @@ export async function handlePrompt(
           clientCaps: deps.clientCaps(),
           env: deps.env,
           runSubagent: (name, prompt, toolCallId, modelId, role) =>
-            runSubagent(deps, session, ctx, emit, toolCallId ?? "unknown", name, prompt, (usage) => {
-              /* A subagent's spend is the turn's spend: its steps never touch
-                 `session.lastTokens` (they measure the child's own window), so
-                 the only place its tokens can land is here, folded into the
-                 same accumulator every retry of the root adds to. */
-              if (usage) turnUsage = addUsage(turnUsage, usage);
-            }, undefined, modelId, role),
+            /* A subagent's spend is the turn's spend: its steps never touch
+               `session.lastTokens` (they measure the child's own window), so
+               the only place its tokens can land is the turn's meter, the one
+               every call of the root adds to. */
+            runSubagent(deps, session, ctx, emit, toolCallId ?? "unknown", name, prompt, meter.record, undefined, modelId, role),
           listSubagents: () =>
             deps.store.listSubagents(session.id).map(({ id, name, task, status }) => ({ id, name, task, status })),
           sendMessage: (agent, message) =>
-            runSubagent(deps, session, ctx, emit, `message-${randomUUID()}`, agent, message, (usage) => {
-              if (usage) turnUsage = addUsage(turnUsage, usage);
-            }, agent),
+            runSubagent(deps, session, ctx, emit, `message-${randomUUID()}`, agent, message, meter.record, agent),
         };
         const { tools, meta } = buildTools(rt);
         const deferral = deferMcpTools(tools, session.messages);
-        let active = deferral?.activeFor(session.messages);
 
-        /* Hoisted out of the call so `pumpStream` can divide the prompt the
-           request carries: the same string and the same tool set go to the
-           model and to the breakdown, so the two cannot drift. The system
-           prompt names the tools that are never deferred; a loaded MCP tool is
-           said by the search result that loaded it, so a load never rewrites
-           the prompt — not this turn, and not the next one either. */
+        /* The system prompt names the tools that are never deferred; a loaded
+           MCP tool is said by the search result that loaded it, so a load never
+           rewrites the prompt — not this turn, and not the next one either. */
         const sections = systemSections(session, deps.env, { toolNames: deferral?.base ?? Object.keys(tools) });
         const system = sections.map((part) => part.text).join("\n\n");
-        /* The static prefix is walked once per attempt rather than per step —
-           the system prompt never changes between the steps of one, and the
-           tool set only when a search loads more (re-walked in `prepareStep`,
-           in place, because `pumpStream` holds this object). */
-        const prefix = prefixTokens(sections, active ? pickTools(tools, active) : tools);
-        let promptMessages: ModelMessage[] = session.messages;
-        /* The SDK picks which deferred tools a step sends; the breakdown
-           re-counts the prefix when a search grows the set. */
-        const recount = (next: string[]) => {
-          if (next.length !== active?.length) Object.assign(prefix, prefixTokens(sections, pickTools(tools, next)));
-          active = next;
-        };
 
         const result = streamText({
           model,
@@ -339,7 +323,7 @@ export async function handlePrompt(
             readFiles: session.readFiles,
           }),
           providerOptions: cacheAffinity(deps.env, session.id),
-          telemetry: { functionId: "daedalus.turn", recordInputs: true, recordOutputs: true },
+          onLanguageModelCallEnd: meter.record,
           onError: () => {
             /* Surfaced through the fullStream 'error' part below; without this
                handler streamText also logs the error, which is fine on stderr. */
@@ -375,10 +359,8 @@ export async function handlePrompt(
               compactMidTurn = true;
             }
             const injected = drainSteers();
-            promptMessages = injected.length === 0 ? messages : [...messages, ...injected];
-            if (deferral) recount(deferral.activeFor(promptMessages));
             if (injected.length === 0) return {};
-            return { messages: promptMessages };
+            return { messages: [...messages, ...injected] };
           },
         });
 
@@ -389,13 +371,9 @@ export async function handlePrompt(
           deps.env,
           session.modelId,
           session,
-          undefined,
           subagentsNegotiated(deps),
-          prefix,
           { cwd: session.cwd, model: session.modelId },
-          () => promptMessages,
         );
-        if (outcome.totalUsage) turnUsage = addUsage(turnUsage, outcome.totalUsage);
 
         /* `result.response` is the *last step's* metadata — its `messages` are
            that step's alone. A tool-using turn is many steps, so keeping them
@@ -488,7 +466,8 @@ export async function handlePrompt(
 
           const promptResponse: acp.PromptResponse = {
             stopReason,
-            usage: toAcpUsage(turnUsage),
+            usage: toAcpUsage(meter.usage),
+            _meta: meter.meta(),
           };
           settleParked(session, (p) => p.resolve(promptResponse));
           return promptResponse;
@@ -519,7 +498,6 @@ export async function handlePrompt(
            silence, and a notice that arrives when the next attempt starts
            explains a pause that has already happened. */
         retryAnnounced = true;
-        spanEvent("retry", { attempt, delay_ms: delayMs, "error.message": describeHold(failure).message });
         await notifyRetry(ctx, {
           sessionId: session.id,
           attempt,
@@ -557,15 +535,19 @@ export async function handlePrompt(
          `stopReason` it has always ended with — never as a failure. */
       const cancelled: acp.PromptResponse = {
         stopReason: "cancelled",
-        usage: toAcpUsage(turnUsage),
+        usage: toAcpUsage(meter.usage),
+        _meta: meter.meta(),
       };
       settleParked(session, (p) => p.resolve(cancelled));
       return cancelled;
     }
   } catch (err) {
     process.stderr.write(`turn failed: ${(err as Error)?.stack ?? String(err)}\n`);
-    settleParked(session, (p) => p.reject(err));
-    throw err;
+    /* A rejected prompt has no response to carry usage in, and the calls that
+       ran before it failed were billed all the same — they ride the error. */
+    const failed = withSpend(err, meter);
+    settleParked(session, (p) => p.reject(failed));
+    throw failed;
   } finally {
     session.turnActive = false;
     session.abort = null;
@@ -604,7 +586,6 @@ async function holdForFailure(
   // Whole, for the same reason the retry's line is: stderr is the log, and it
   // is what gets spliced into an error on the way out.
   process.stderr.write(`turn held: ${errorText(unwrapRetry(failure)).trim() || hold.message}\n`);
-  spanEvent("paused", { reason: "error", "error.message": hold.message });
   await notifyPaused(ctx, { sessionId: session.id, paused: true, reason: "error", ...hold });
   const release = await session.holdError(hold, signal);
   /* Said again on the way out, whichever way it ended: the harness learns a
@@ -680,30 +661,6 @@ function settledPrefix(messages: ModelMessage[]): ModelMessage[] {
   return messages.slice(0, keep);
 }
 
-/* One turn, one usage figure, however many attempts it took. Summed field by
-   field rather than by `totalTokens` alone, because every one of them is drawn
-   separately — the cache rate above all (`toAcpUsage`). */
-function addUsage(a: LanguageModelUsage | null, b: LanguageModelUsage): LanguageModelUsage {
-  if (!a) return b;
-  const sum = (x: number | undefined, y: number | undefined): number | undefined =>
-    x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
-  return {
-    ...a,
-    inputTokens: sum(a.inputTokens, b.inputTokens),
-    outputTokens: sum(a.outputTokens, b.outputTokens),
-    totalTokens: sum(a.totalTokens, b.totalTokens),
-    inputTokenDetails: {
-      ...a.inputTokenDetails,
-      cacheReadTokens: sum(a.inputTokenDetails?.cacheReadTokens, b.inputTokenDetails?.cacheReadTokens),
-      cacheWriteTokens: sum(a.inputTokenDetails?.cacheWriteTokens, b.inputTokenDetails?.cacheWriteTokens),
-    },
-    outputTokenDetails: {
-      ...a.outputTokenDetails,
-      reasoningTokens: sum(a.outputTokenDetails?.reasoningTokens, b.outputTokenDetails?.reasoningTokens),
-    },
-  };
-}
-
 function failNoModel(): never {
   throw new Error(
     "No model configured: the profile names no model and DAEDALUS_AGENT_MODEL is empty",
@@ -712,7 +669,6 @@ function failNoModel(): never {
 
 interface StreamOutcome {
   finishReason: string;
-  totalUsage: LanguageModelUsage | null;
   aborted: boolean;
   error: unknown;
   /** The assistant's final prose, accumulated for subagent reports. */
@@ -740,21 +696,13 @@ async function pumpStream(
      carry a window, and it runs on the same session's model. */
   modelId: string,
   contextOf: Session | null,
-  onUsage: ((usage: LanguageModelUsage) => void) | undefined,
   /* Whether the client negotiated the subagent RFD — the one thing that
      decides if `announcesOwnSession` has anything to defer to. */
   subagentsRfd = false,
-  /* The static share of every prompt this stream's requests carry — the system
-     prompt and the tool block, counted once by the caller. The provider reports
-     one total per request and never divides it, so this is what lets each step's
-     `usage_update` carry where its prompt actually went. */
-  prefix?: PrefixTokens,
   callContext?: { cwd: string; model: string },
-  requestMessages?: () => ModelMessage[],
 ): Promise<StreamOutcome> {
   const outcome: StreamOutcome = {
     finishReason: "stop",
-    totalUsage: null,
     aborted: false,
     error: undefined,
     text: "",
@@ -767,8 +715,6 @@ async function pumpStream(
      else, and it is never compared across turns. */
   let stepId = randomUUID();
   const stepMeta = () => ({ daedalus: { stepId } });
-  /* The prefix item list last sent on this attempt's stream — see `finish-step`. */
-  let sentItems = "";
   /* Calls whose row was withheld, by id, so the result can be dropped and a
      failure can be sent whole. Keyed on the id `tool-input-start` carries,
      which is the `toolCallId` the later parts use. */
@@ -918,56 +864,37 @@ async function pumpStream(
           break;
         }
         case "finish-step": {
-          const used = totalOf(part.usage);
+          const stepUsage = normalizeUsage(part.usage);
+          const used = totalOf(stepUsage);
           /* ponytail: lags by whatever is appended after the last model reply —
              the final step's tool results, the next user message — since only a
              request reports. The output reserve in `windowFor` absorbs it;
              add a tokenizer only if a real turn is seen overflowing. */
           if (contextOf) contextOf.lastTokens = used;
-          onUsage?.(part.usage);
           /* Per-step, because a turn's total hides where the cache was lost:
              a run that misses on one step of thirteen and a run that misses on
              all thirteen add up to different totals but to the same story, and
              only the step series says which happened. ACP has no field for it,
              so it rides `_meta` — journaled with the event, which is what makes
              a cold step answerable by a query instead of a reconstruction.
-             `_meta.cache` is the provider's own counters, exact; `_meta.breakdown`
-             below is the local split of the same prompt, and the two are kept
-             in different blocks so a reader always knows which one is which. */
-          const cacheRead = part.usage.inputTokenDetails?.cacheReadTokens ?? null;
-          const cacheWrite = part.usage.inputTokenDetails?.cacheWriteTokens ?? null;
+             `_meta.cache` is the provider's own counters, exact. */
+          const cacheRead = stepUsage.inputTokenDetails?.cacheReadTokens ?? null;
+          const cacheWrite = stepUsage.inputTokenDetails?.cacheWriteTokens ?? null;
           const window = windowFor(env, modelId);
           const cache =
             cacheRead === null && cacheWrite === null
               ? null
-              : { read: cacheRead, write: cacheWrite, prompt: part.usage.inputTokens ?? null };
+              : { read: cacheRead, write: cacheWrite, prompt: stepUsage.inputTokens ?? null };
           /* `size` is required by the schema and there is no way to say "I do
              not know", so an unknown window ships the fallback and says so
              beside it — the client draws the reading as approximate rather
              than as a percentage of a number nobody measured. */
-          /* Where this request's prompt went. `used` is the whole prompt as the
-             provider billed it — cache hits included — which is exactly the
-             anchor `promptBreakdown` divides, so the figures cannot disagree
-             with the headline number above them. The history is counted by role
-             from the request's actual messages, and only as proportions of what
-             the provider's total left after the static prefix. */
-          const breakdown = prefix
-            ? promptBreakdown(used, prefix, requestMessages ? historyTokens(requestMessages()) : undefined)
-            : undefined;
-          /* What the static prefix is made of rides only the first step of an
-             attempt and any step after it changed (a search loaded tools): it is
-             byte-identical between steps, and a turn is the smallest window a
-             reader ever loads, so every loaded turn holds one. */
-          const items = prefix ? JSON.stringify(prefix.items) : "";
-          const itemsMeta = prefix && items !== sentItems ? { items: prefix.items } : {};
-          sentItems = items;
           const usageMeta = {
             ...(cache ? { cache } : {}),
-            ...(breakdown ? { breakdown: { ...breakdown, ...itemsMeta } } : {}),
             /* The step's own bill in `acp.Usage` shape, so a reader can keep a
                running total while the turn is still going instead of waiting
                for `turn_ended` — which still carries the authoritative sum. */
-            daedalus: { step: toAcpUsage(part.usage), ...(window.known ? {} : { windowEstimated: true }) },
+            daedalus: { step: toAcpUsage(stepUsage), ...(window.known ? {} : { windowEstimated: true }) },
           };
           await emit.update({
             sessionUpdate: "usage_update",
@@ -979,7 +906,6 @@ async function pumpStream(
         }
         case "finish":
           outcome.finishReason = part.finishReason;
-          outcome.totalUsage = part.totalUsage;
           break;
         case "abort":
           outcome.aborted = true;
@@ -1025,10 +951,11 @@ async function runSubagent(
   toolCallId: string,
   name: string,
   prompt: string,
-  /** Every token the child burns, whatever happened to the attempt — the
-      parent turn's answer is the one figure a reader sees, and a turn that
-      spent most of its budget in three children reported only the root's. */
-  reportUsage: (usage: LanguageModelUsage | null) => void,
+  /** Every model call the child makes, as it answers, whatever becomes of the
+      attempt — the parent turn's answer is the one figure a reader sees, and a
+      turn that spent most of its budget in three children reported only the
+      root's. */
+  reportCall: (call: CallMetering) => void,
   existingId?: string,
   /** The model the child runs on — the `task` tool's `role`/`model` resolved to
       an id. Absent, the session model (today's behaviour). Its context window
@@ -1105,19 +1032,16 @@ async function runSubagent(
       if (attempt > 0) {
         const delayMs = retryDelayMs(lastError, attempt);
         process.stderr.write(`subagent stream retry ${attempt}/${MAX_STREAM_RETRIES} in ${delayMs}ms\n`);
-        spanEvent("retry", { attempt, delay_ms: delayMs, "error.message": describeHold(lastError).message });
         await sleep(delayMs, undefined, { signal: session.abort?.signal }).catch(() => {});
         if (session.abort?.signal.aborted) throw lastError;
       }
 
-      let active = deferral?.activeFor(messages);
       const sections = systemSections(session, deps.env, { subagent: true, toolNames: deferral?.base ?? Object.keys(tools) });
       const system = sections.map((part) => part.text).join("\n\n");
-      const prefix = prefixTokens(sections, active ? pickTools(tools, active) : tools);
       let settled: ModelMessage[] = [];
-      /* What the step about to run sends — the breakdown counts the history by
-         role, and `messages` alone is only where the child started. */
-      let sent: ModelMessage[] = messages;
+      /* This attempt's own bill, for the child's card; each call also goes to
+         the parent's meter, which is the turn's. */
+      const attemptMeter = new Meter();
       const result = streamText({
         model: deps.makeModel(deps.env, childModel),
         system,
@@ -1130,7 +1054,10 @@ async function runSubagent(
         maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
         repairToolCall: makeRepairToolCall({ readFiles: session.readFiles }),
         providerOptions: cacheAffinity(deps.env, session.id),
-        telemetry: { functionId: "daedalus.subagent", recordInputs: true, recordOutputs: true },
+        onLanguageModelCallEnd: (call) => {
+          attemptMeter.record(call);
+          reportCall(call);
+        },
         onError: () => {},
         onStepEnd: async (step) => {
           const candidate = [...settled, ...(step.response.messages as ModelMessage[])];
@@ -1143,14 +1070,8 @@ async function runSubagent(
         /* A subagent pauses with its parent: the Codex thread-tree issue's
            complaint is exactly a root held while its collaborators keep
            spending, so the child's steps pass the same gate. */
-        prepareStep: async ({ messages: stepMessages }) => {
+        prepareStep: async () => {
           await session.gate(session.abort?.signal);
-          sent = stepMessages;
-          if (deferral) {
-            const next = deferral.activeFor(stepMessages);
-            if (next.length !== active?.length) Object.assign(prefix, prefixTokens(sections, pickTools(tools, next)));
-            active = next;
-          }
           return {};
         },
       });
@@ -1163,22 +1084,16 @@ async function runSubagent(
           deps.env,
           childModel,
           null,
-          undefined,
           rfd,
-          prefix,
           { cwd: session.cwd, model: childModel },
-          () => sent,
         );
-        if (outcome.totalUsage) {
-          reportUsage(outcome.totalUsage);
-          const usage = toAcpUsage(outcome.totalUsage);
-          if (rfd && usage) {
-            await parentEmit.update({
-              sessionUpdate: "_daedalus/subagent_usage",
-              subagentSessionId: childId,
-              usage,
-            });
-          }
+        const attemptUsage = toAcpUsage(attemptMeter.usage);
+        if (rfd && attemptUsage) {
+          await parentEmit.update({
+            sessionUpdate: "_daedalus/subagent_usage",
+            subagentSessionId: childId,
+            usage: attemptUsage,
+          });
         }
         if (outcome.error !== undefined) {
           if (isRetriableStreamError(outcome.error) && attempt < MAX_STREAM_RETRIES && !session.abort?.signal.aborted) {
@@ -1600,19 +1515,6 @@ Nothing is implemented in plan mode. End by asking the user to approve the plan 
   return parts;
 }
 
-/* A prefix cache lives on the machine that built it, so a router free to pick
-   a different backend per request answers a warm prompt from a cold one. The
-   key is the affinity hint that keeps a thread's steps together: OpenAI routes
-   on it explicitly, and a gateway that has never heard of it ignores an
-   unknown body field. The session id — stable across every step of every turn,
-   distinct between threads that share a model — is exactly the grain the cache
-   is built at. Env-gated for the strict upstream that rejects what it cannot
-   parse rather than ignoring it. */
-function cacheAffinity(env: AgentEnv, sessionId: string): SharedV4ProviderOptions | undefined {
-  if (!env.promptCacheKey) return undefined;
-  return { [PROVIDER_OPTIONS_KEY]: { prompt_cache_key: sessionId } };
-}
-
 function settleParked(session: Session, settle: (p: Parked) => void): void {
   const parked = parkedBySession.get(session);
   if (!parked) return;
@@ -1741,30 +1643,21 @@ function mapFinishReason(reason: string): acp.StopReason {
   }
 }
 
-function totalOf(usage: LanguageModelUsage): number {
-  return usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-}
-
-/* `inputTokens` in this protocol is the part of the prompt the provider had to
-   read *fresh* — the client adds the cache figures back to it to draw "the
-   prompt" and divides by that sum to draw the cache rate (`lib/tokens.ts`).
-   OpenAI-compatible `prompt_tokens`, which is all this runtime ever speaks,
-   means the opposite: it is the whole prompt with `cached_tokens` counted
-   inside it. Reported raw, every cached token was counted twice — a turn that
-   really hit cache on 89% of its prompt was drawn as 47%, and no amount of
-   caching could ever have moved it past 50%. Subtract the hit, floor at zero
-   for a provider that ever reports more cache than prompt. */
-function toAcpUsage(usage: LanguageModelUsage | null): acp.Usage | null {
-  if (!usage) return null;
-  const cacheRead = usage.inputTokenDetails?.cacheReadTokens ?? null;
-  return {
-    totalTokens: totalOf(usage),
-    inputTokens: Math.max(0, (usage.inputTokens ?? 0) - (cacheRead ?? 0)),
-    outputTokens: usage.outputTokens ?? 0,
-    thoughtTokens: usage.outputTokenDetails?.reasoningTokens ?? null,
-    cachedReadTokens: cacheRead,
-    cachedWriteTokens: usage.inputTokenDetails?.cacheWriteTokens ?? null,
-  };
+/* The spend a failed turn still has to report, attached to the error the
+   harness reads it back from (`data.daedalus`, the server's `settleTurn`).
+   A plain `Error` becomes an internal-error `RequestError` with the same
+   message, which is what the SDK would have made of it on the wire. */
+function withSpend(err: unknown, meter: Meter): unknown {
+  const usage = toAcpUsage(meter.usage);
+  if (!usage) return err;
+  const spend = { daedalus: { usage, ...(meter.generation ? { generation: meter.generation } : {}) } };
+  if (err instanceof acp.RequestError) {
+    err.data = { ...(err.data && typeof err.data === "object" ? err.data : {}), ...spend };
+    return err;
+  }
+  const wrapped = new acp.RequestError(-32603, err instanceof Error ? err.message : String(err), spend);
+  if (err instanceof Error) wrapped.stack = err.stack;
+  return wrapped;
 }
 
 function outputText(output: unknown): string {

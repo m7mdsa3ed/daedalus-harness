@@ -1,7 +1,7 @@
 /* ── Every route that is not the transcript, in one file ──
    The whole route tree plus the lazy bindings it is made of. A thread is a
    chat panel and never a route; everything else — settings, the board, the
-   routines, the schedules, the inbox, a project's page, a thread's trace and
+   routines, the schedules, the inbox, a project's page and
    the landing console — is here, and adding a page is one edit in this file.
 
    `pageRoutes` returns a *fragment of `<Route>`*, not a component: the dock is
@@ -49,7 +49,6 @@ import type { Actions } from "@/lib/actions"
 import { useProjects } from "@/lib/queries/catalog"
 import { useAutomations } from "@/lib/queries/automations"
 import type { ServerSettings } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
 
 export interface PageHeading {
   crumb?: string
@@ -65,7 +64,6 @@ const SettingsOverviewPage = lazyPage(
 )
 
 const ProjectPage = lazyPage(() => import("@/components/project-page"), "ProjectPage")
-const TracePage = lazyPage(() => import("@/components/trace-page"), "TracePage")
 const AutomationsPage = lazyPage(() => import("@/components/automations/page"), "AutomationsPage")
 const NotificationsInboxPage = lazyPage(
   () => import("@/components/notifications/page"),
@@ -115,7 +113,6 @@ function LegacyRedirect({ to }: { to: (params: Readonly<Params>, search: string)
     that is its own section stays one line rather than saying its name twice
     in two sizes. */
 export function usePageHeading(): (path: string) => PageHeading | null {
-  const sessions = useStoreSelect((state) => state.sessions)
   const projects = useProjects()
   const automations = useAutomations().data ?? []
   return (path) => {
@@ -143,8 +140,6 @@ export function usePageHeading(): (path: string) => PageHeading | null {
     if (first === "notifications") return { crumb: "Workspace", title: "Inbox" }
     if (first === "projects")
       return { crumb: "Projects", title: projects.find((p) => p.id === seg)?.name ?? "Project" }
-    if (first === "t" && pathname.endsWith("/trace"))
-      return { crumb: "Thread", title: sessions.find((s) => s.id === seg)?.title ?? "Trajectory" }
     if (!first) return { title: "New tab" }
     return null
   }
@@ -251,10 +246,6 @@ export function pageRoutes({
           </div>
         }
       />
-      {/* The trajectory is a thread's other view — its spans as a
-          waterfall rather than a transcript — so it sits under the thread's
-          own path. */}
-      <Route path="/t/:sessionId/trace" element={<TracePage />} />
       {/* The landing console — "New thread" — is the root and the catch-all. */}
       <Route
         path="*"

@@ -29,11 +29,6 @@ export const ProjectInputSchema = z.object({
   /** Optional — a URL. Empty means "no logo of its own"; the client draws
       the project's initial instead. */
   logoUrl: z.string().optional().default(""),
-  /** The project's dev server, as the Browser panel should open it. Empty
-      means none. What it is reachable *at* is the person's own call —
-      `localhost` for the machine the server runs on, a LAN or tunnel address
-      for a phone. */
-  previewUrl: z.string().optional().default(""),
 });
 
 /** The *input* shape, so `logoUrl` is optional to callers — routes parse it
@@ -210,7 +205,6 @@ const rowToProject = (
   ...withoutDefaults(row),
   spaceIds,
   logoUrl: row.logoUrl ?? "",
-  previewUrl: row.previewUrl ?? "",
   helpers,
   defaults: projectDefaultsOf(row),
 });
@@ -225,7 +219,6 @@ const columns = (input: ProjectInput) => ({
   cwd: input.cwd,
   description: input.description ?? null,
   logoUrl: input.logoUrl ?? "",
-  previewUrl: input.previewUrl ?? "",
 });
 
 /** Each project's spaces, in the switcher's order, so "the first space" is the

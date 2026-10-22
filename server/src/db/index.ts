@@ -231,25 +231,6 @@ async function ensureSchema(): Promise<void> {
     }
     await db.execute(sql`ALTER TABLE projects DROP COLUMN IF EXISTS rules`);
   }
-  /* A thread's OpenTelemetry spans (tracing.ts). */
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS trace_spans (
-      span_id TEXT PRIMARY KEY,
-      trace_id TEXT NOT NULL,
-      parent_span_id TEXT,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      source TEXT NOT NULL,
-      start DOUBLE PRECISION NOT NULL,
-      "end" DOUBLE PRECISION NOT NULL,
-      status TEXT NOT NULL,
-      status_message TEXT,
-      attributes JSONB NOT NULL,
-      events JSONB NOT NULL
-    )
-  `);
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS trace_spans_session ON trace_spans(session_id, start)`);
   /* Spaces (spaces.ts): a named scope above projects. */
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS spaces (

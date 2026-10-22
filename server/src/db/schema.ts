@@ -2,7 +2,6 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
-  doublePrecision,
   index,
   integer,
   jsonb,
@@ -271,13 +270,6 @@ export const agents = pgTable("agents", {
   /** The runtime's own tools a harness MCP server replaces, and how to switch
       them off. Null = its built-ins stay on beside ours. */
   builtinTools: jsonb("builtin_tools").$type<BuiltinToolOverrides>(),
-  /** Which of the runtime's saved files explains its prompt
-      (`registry.ts › AgentDef.promptFiles`). Null = inferred from the transcript. */
-  promptFiles: text("prompt_files").$type<"claude-jsonl" | "codex-rollout" | "opencode-sqlite">(),
-  /** Which OpenTelemetry dialect this runtime exports to the harness
-      (`registry.ts › AgentDef.telemetryVia`). Null = nothing exported, and the
-      bridge derives its model and tool spans. */
-  telemetryVia: text("telemetry_via").$type<"claude-otlp">(),
   /** How to ask this runtime's plain CLI for the built-in model catalog a
       generated one is modelled on. Null = no catalog is generated for it. */
   catalogProbe: jsonb("catalog_probe").$type<CatalogProbe>(),
@@ -517,11 +509,9 @@ export const projects = pgTable("projects", {
       folder, pickers, the projects list. Null/empty means "no logo", which
       falls back to the project's initial in the client. */
   logoUrl: text("logo_url"),
-  /** The project's development server, as the Browser panel should open it.
-      What this is reachable at is the person's own network fact: `localhost`
-      for the machine the server runs on, a LAN or tunnel address for a phone.
-      Empty means none. The server probes it loopback-side (`/preview` route)
-      but never rewrites where the browser points. */
+  /** Legacy: the dev-server address of the removed browser Preview. Nothing
+      reads or writes it; it stays declared only because a push drops any
+      column the schema does not name. */
   previewUrl: text("preview_url"),
   /** Where the project sits in every list that names projects — the settings
       page, the sidebar's folders, the pickers. A fact about the project like
@@ -911,9 +901,9 @@ export const projectHelpers = pgTable(
     description: text("description"),
     /** Ask before running — for the destructive ones. */
     confirm: boolean("confirm").notNull().default(false),
-    /** This helper starts the project's dev server — the command the Browser
-        panel offers when the preview URL is set but nothing is answering on
-        it. A marker, never a constraint: the row still runs as any helper. */
+    /** Legacy: marked a helper as "starts the dev server" for the removed
+        browser Preview. Nothing reads or writes it; kept declared so a push
+        does not drop the column. */
     preview: boolean("preview").notNull().default(false),
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
   },
@@ -2361,48 +2351,6 @@ export const taskLinks = pgTable(
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
   },
   (t) => [index("task_links_from").on(t.fromId), index("task_links_to").on(t.toId)],
-);
-
-/**
- * A thread's OpenTelemetry spans — the Trajectory panel's data (tracing.ts).
- *
- * One row per *finished* span; a span still open lives in the tracer's memory
- * and is served from there. Two sources share the table: the harness's own
- * spans, read off ACP for every runtime, and a runtime's own, sent up over
- * `_daedalus/trace`. Not exported by backup, like the probe cache: it is a
- * record of what happened, and a restored install starts recording afresh.
- */
-export const traceSpans = pgTable(
-  "trace_spans",
-  {
-    spanId: text("span_id").primaryKey(),
-    traceId: text("trace_id").notNull(),
-    parentSpanId: text("parent_span_id"),
-    sessionId: text("session_id")
-      .notNull()
-      .references(() => sessions.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    /** `TraceSpanKind` — decided at write time so a list never parses attributes. */
-    kind: text("kind").notNull(),
-    /** "harness" | "agent". */
-    source: text("source").notNull(),
-    /** Epoch ms, fractional — `double precision`. */
-    start: doublePrecision("start").notNull(),
-    end: doublePrecision("end").notNull(),
-    status: text("status").notNull(),
-    statusMessage: text("status_message"),
-    attributes: jsonb("attributes").$type<Record<string, unknown>>().notNull(),
-    events: jsonb("events").$type<unknown[]>().notNull(),
-    /* The rest of the OpenTelemetry span model. Nullable: a row written before
-       these existed is read as a span that said none of them. */
-    /** `TraceSpanOtelKind`. */
-    spanKind: text("span_kind"),
-    links: jsonb("links").$type<unknown[]>(),
-    scope: jsonb("scope").$type<Record<string, unknown>>(),
-    resource: jsonb("resource").$type<Record<string, unknown>>(),
-    traceState: text("trace_state"),
-  },
-  (t) => [index("trace_spans_session").on(t.sessionId, t.start)],
 );
 
 /**

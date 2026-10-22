@@ -129,12 +129,6 @@ export const gitSummaryKey = (s: ServerSettings) => scope(s).concat(["git-summar
 export const composerHistoryKey = (s: ServerSettings) => scope(s).concat(["composer-history"])
 export const agentOptionsKey = (s: ServerSettings, profileId: string, agentId: string, projectId?: string | null) =>
   scope(s).concat(["agent-options", profileId, agentId, projectId ?? ""])
-/** A thread's OpenTelemetry spans (`GET /api/sessions/:id/spans`), and one
-    span whole (`…/spans/:spanId`) under it — a thread's invalidation takes both. */
-export const threadSpansKey = (s: ServerSettings, sessionId: string) =>
-  scope(s).concat(["thread-spans", sessionId])
-export const spanDetailKey = (s: ServerSettings, sessionId: string, spanId: string) =>
-  threadSpansKey(s, sessionId).concat(["span", spanId])
 /** A folder of the file library (`GET /api/files?parent=`); `null` is the root.
     One family, so a write invalidates every open level of the tree at once. */
 export const filesKey = (s: ServerSettings, parentId?: string | null) =>

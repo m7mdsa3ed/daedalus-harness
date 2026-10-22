@@ -13,14 +13,9 @@
 
 export type PanelKind = "chat" | "terminal" | "web" | "tasks" | "page"
 
-/** Whether a web panel is looking at a project's own dev server or the wider
-    internet. It is carried on the descriptor so the panel cannot decide for
-    itself; a panel may drop to "external" but never raise itself back. */
 /** The project id of a terminal or IDE opened with no thread routed: the
     server roots it at $HOME (`projectRoot`). */
 export const HOME_PROJECT_ID = "home"
-
-export type WebTrust = "project" | "external"
 
 /** A file against git, shown in the Preview panel: the two sides of a source-control row.
     A side is a `Comparison` name or a commit's `{ rev }` — the JSON-safe half of `DiffSide`. */
@@ -46,9 +41,9 @@ export type PanelDescriptor =
       sessionId?: string
       cwd?: string
     }
-  /** `file` is a project-relative path the panel is showing instead of the
-      page (`workspace/file-preview.tsx`) — a project panel's only. */
-  | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string; file?: string; diff?: WebDiff }
+  /** The Preview panel: a project file (`workspace/file-preview.tsx`) or a
+      file's diff, and nothing else - it embeds no web page. */
+  | { kind: "web"; viewId: string; projectId: string; file?: string; diff?: WebDiff }
   /** A board, beside the work it describes. One panel, not one per board: the
       board being read is a *place inside* it (`lib/tasks-location.ts`) the way
       a file is a place inside the IDE, so it travels in the params and moving
@@ -103,9 +98,7 @@ export function panelId(panel: PanelDescriptor): string {
     case "terminal":
       return `terminal:${panel.projectId}:${panel.terminalId}`
     case "web":
-      return panel.trust === "external"
-        ? `web:external:${panel.viewId}`
-        : `web:${panel.projectId}:${panel.viewId}`
+      return `web:${panel.projectId}:${panel.viewId}`
     case "tasks":
       return panel.viewId ? `tasks:${panel.viewId}` : "tasks"
     case "page":
@@ -193,20 +186,18 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
       }
     }
     case "web": {
+      /* A layout saved when the panel was a browser (an address, no project)
+         has nothing left to show, and is dropped rather than drawn empty. */
       const viewId = str(p.viewId)
-      if (!viewId) return null
-      /* Trust is re-derived, never believed: a stored "project" on a panel with
-         no project is how a demoted panel would silently climb back. Anything
-         that is not a project panel with a project is external. */
-      const trust: WebTrust = p.trust === "project" && projectId ? "project" : "external"
+      const file = str(p.file)
+      const diff = parseWebDiff(p.diff)
+      if (!viewId || !projectId || (!file && !diff)) return null
       return {
         kind: "web",
-        trust,
         viewId,
-        ...(trust === "project" && projectId ? { projectId } : {}),
-        ...(str(p.url) ? { url: str(p.url) } : {}),
-        ...(trust === "project" && str(p.file) ? { file: str(p.file) } : {}),
-        ...(trust === "project" && parseWebDiff(p.diff) ? { diff: parseWebDiff(p.diff) } : {}),
+        projectId,
+        ...(file ? { file } : {}),
+        ...(diff ? { diff } : {}),
       }
     }
   }

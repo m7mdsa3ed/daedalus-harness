@@ -51,25 +51,6 @@ contextBridge.exposeInMainWorld("desktop", {
   /** Close only the BrowserWindow that owns this renderer. */
   closeWindow: () => ipcRenderer.invoke("close-window"),
   signalWorkspaceReady: () => ipcRenderer.send("workspace-ready"),
-  /** The Preview's page console: the backlog for a guest, and the live stream
-      (`{type: "entry"|"clear"|"gone"}`), keyed by the guest's webContents id. */
-  guestConsole: {
-    read: (guestId) => ipcRenderer.invoke("preview-console-read", guestId),
-    onMessage: (handler) => {
-      const listener = (_event, guestId, payload) => handler(guestId, payload)
-      ipcRenderer.on("guest-console", listener)
-      return () => ipcRenderer.off("guest-console", listener)
-    },
-  },
-  /** "Pick element": resolve with the element the person clicked, or null. */
-  previewPicker: {
-    pick: (guestId) => ipcRenderer.invoke("preview-pick", guestId),
-    cancel: (guestId) => ipcRenderer.invoke("preview-pick-cancel", guestId),
-  },
-  /** Docked DevTools: render the guest's DevTools into the blank host webview. */
-  previewDevtools: {
-    open: (guestId, hostId) => ipcRenderer.invoke("preview-devtools-open", guestId, hostId),
-  },
   /** electron-updater (main.cjs "Updates"): `check` resolves `{available, version?}`
       once a found update has downloaded; `install` quits into it, and rejects
       when nothing has been downloaded. Absent where main runs no updater. */
@@ -81,12 +62,6 @@ contextBridge.exposeInMainWorld("desktop", {
     : undefined,
   /** A ShortcutId the native menu, the tray or the quick-entry hotkey asked
       the renderer to run. Returns an unsubscribe. */
-  /** The Preview panel an agent's `new_page` asked for (main.cjs `createAgentPage`). */
-  onOpenPreview: (handler) => {
-    const listener = (_event, request) => handler(request)
-    ipcRenderer.on("open-preview", listener)
-    return () => ipcRenderer.off("open-preview", listener)
-  },
   onShortcut: (handler) => {
     const listener = (_event, id) => handler(id)
     ipcRenderer.on("shortcut", listener)

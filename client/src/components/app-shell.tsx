@@ -92,8 +92,7 @@ function CloseSidebarOnNavigate() {
 
 /** The thread the address bar names — only on a thread route. `currentThreadId`
     also reads a legacy `?session=` deep link, which a schedule form carries on
-    its own path, so the read is gated on the two places a thread can be. A
-    trace (`/t/<id>/trace`) docks no chat and names none. */
+    its own path, so the read is gated on the two places a thread can be. */
 function routedThreadId(pathname: string, search: string): string | null {
   if (pathname !== "/" && !pathname.startsWith("/t/")) return null
   return currentThreadId(pathname, search)
@@ -430,11 +429,11 @@ export function AppShell({
   const openWorkspacePanel = React.useCallback(
     (kind: PanelKind, reuse?: boolean, target?: OpenerTarget) => {
       const into = target?.into
-      /* A thread in front owns its terminal and preview: they open in
+      /* A thread in front owns its terminal: it opens in
          its own dock (`thread-dock.tsx`), rooted in its worktree. The outer
          kinds below are what is left for a page in front — a $HOME shell. */
       const inThread = threadDock(routeRef.current.sessionId)
-      if (inThread && (kind === "terminal" || kind === "web")) {
+      if (inThread && kind === "terminal") {
         inThread.open(kind, reuse)
         return
       }
@@ -480,25 +479,6 @@ export function AppShell({
           .find((entry) => entry.panel.kind === "terminal" && entry.panel.projectId === projectId)
         if (existing && reuse) dock.openPanel(existing.panel)
         else void openTerminal(dock, projectId, into)
-      } else if (kind === "web") {
-        /* The stored preview URL rides on the descriptor, so a project panel
-           opens on its dev server instead of an empty address bar — and an
-           existing panel is re-pointed to it the same way. */
-        const previewUrl = projects.find((candidate) => candidate.id === projectId)?.previewUrl ?? ""
-        const existing = dock
-          .listPanels()
-          .find((entry) => entry.panel.kind === "web" && entry.panel.viewId === "default")
-        dock.openPanel(
-          {
-            kind: "web",
-            trust: "project",
-            ...(projectId !== HOME_PROJECT_ID ? { projectId } : {}),
-            viewId: "default",
-            ...second(existing),
-            ...(previewUrl ? { url: previewUrl } : {}),
-          },
-          { direction: "right", into }
-        )
       }
     },
     [dock, projects]
@@ -520,19 +500,6 @@ export function AppShell({
   useShortcut("viewOptions", () => void navigate(settingsPath("appearance")))
   // The desktop shell's tray, native menu and quick-entry hotkey (lib/desktop.ts).
   useDesktopBridge()
-
-  /* An agent's `new_page` (main.cjs `createAgentPage`) opens a Preview panel -
-     the thread in front's own dock when it has one, else the outer dock's. Its
-     own panel, never the project's: a second page is a second tab. */
-  React.useEffect(
-    () =>
-      window.desktop?.onOpenPreview?.(({ url }) => {
-        const inThread = threadDock(routeRef.current.sessionId)
-        if (inThread) inThread.openWeb(url)
-        else dock.openPanel({ kind: "web", trust: "external", viewId: uuid().slice(0, 8), url }, { direction: "right" })
-      }),
-    [dock]
-  )
 
   /* The route tree — every page that is not the transcript — lives in
      `components/routes.tsx`, which is also the only module that imports those

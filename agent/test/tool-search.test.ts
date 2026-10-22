@@ -47,7 +47,7 @@ async function run(tools: ToolSet, messages: ModelMessage[], scripts: LanguageMo
 // --- the catalogue groups every tool under its server, and a summary can be read without searching ---
 {
   const tools = make();
-  const deferral = deferMcpTools(tools, [])!;
+  deferMcpTools(tools, []);
   const description = String(tools[SEARCH_TOOL].description);
   assert.match(description, /^github \(3 tools\)$/m, "a server's tools are one group, with the count");
   assert.match(description, /^ {2}create_issue: Create a GitHub issue\.$/m, "a name carries its summary, so a model can select without searching");
@@ -60,7 +60,6 @@ async function run(tools: ToolSet, messages: ModelMessage[], scripts: LanguageMo
   assert.deepEqual(sent[0], ["read_file", SEARCH_TOOL]);
   assert.ok(sent[1].includes("mcp__github__create_issue"), "the match is sent on the next step");
   assert.ok(!sent[1].includes("mcp__web__fetch"), "a tool nobody searched for stays out");
-  assert.ok(deferral.activeFor([...history, ...response]).includes("mcp__github__create_issue"), "the breakdown mirrors the SDK");
 
   // the next turn, rebuilt from the history: the loaded tool is sent from step one
   const next = make();
@@ -76,10 +75,9 @@ async function run(tools: ToolSet, messages: ModelMessage[], scripts: LanguageMo
   const history: ModelMessage[] = [
     { role: "assistant", content: [{ type: "tool-call", toolCallId: "1", toolName: "mcp__web__fetch", input: {} }] },
   ];
-  const deferral = deferMcpTools(tools, history)!;
+  deferMcpTools(tools, history);
   assert.ok(!tools.mcp__web__fetch.deferLoading);
   assert.ok(tools.mcp__github__list_prs.deferLoading);
-  assert.ok(deferral.activeFor(history).includes("mcp__web__fetch"));
 }
 
 // --- select: resolves the forms the description promises, not just the whole name ---
@@ -163,7 +161,6 @@ async function run(tools: ToolSet, messages: ModelMessage[], scripts: LanguageMo
   const after = deferMcpTools(make(), loadedHistory)!;
   assert.deepEqual(after.base, before.base, "a load leaves the prompt's tool list alone, so the next turn stays cached");
   assert.deepEqual(before.base.sort(), ["read_file", SEARCH_TOOL].sort());
-  assert.ok(after.activeFor(loadedHistory).includes("mcp__web__fetch"), "the request still sends what loaded");
 }
 
 console.log("tool-search.test.ts passed");

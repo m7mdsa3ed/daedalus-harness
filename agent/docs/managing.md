@@ -124,32 +124,29 @@ the cache rate is the hit divided by that sum (`client/src/lib/tokens.ts`).
 
 OpenAI-compatible `prompt_tokens`, which is the only dialect this runtime
 speaks, means the whole prompt with `cached_tokens` counted *inside* it. So
-`toAcpUsage` (`src/turn.ts`) subtracts the hit before reporting. Passed through
+`toAcpUsage` (`src/metering.ts`) subtracts the hit — and a cache write, which a
+gateway reports in `prompt_tokens_details` and `normalizeUsage` lifts into the
+SDK's standard slot — before reporting. Passed through
 raw, every cached token was counted twice and the drawn cache rate was roughly
 half the real one — a turn hitting cache on 89% of its prompt read as 47%, and
 no amount of caching could have moved the figure past 50%.
 
+**A turn is metered per model call, as each one answers** (`Meter`, fed by the
+SDK's `onLanguageModelCallEnd`, which fires before any tool runs). Reading usage
+off a stream's `finish` lost every call of a turn that was cancelled during a
+tool, because an aborted stream never finishes; and a prompt that throws
+carries its spend on the error (`data.daedalus`) since it has no response to
+put it in. The root loop, its retries, its subagents, the compaction summary
+and the title call all feed the one meter. A call's output speed is the SDK's
+own timing (`performance.timeToFirstOutputMs`, so tool-argument tokens are
+inside the window) and rides the prompt answer as `_meta.daedalus.generation`;
+a call that arrived as one chunk has no decode to divide by and is left out of
+both sides. The summarizer sends the turn's `prompt_cache_key` like every
+other call.
+
 The context-window reading (`usage_update`'s `used`) is a different number and
 deliberately untouched: it is the provider's own total for the last step, cache
 hits included, because a cached token still occupies the window.
-
-The thread's Tokens panel is the only place a token figure is *estimated*, and
-each `usage_update` carries what it needs in `_meta.breakdown`: the system prompt,
-the built-in tool schemas and the MCP tool schemas, tokenized locally
-(`src/token-breakdown.ts`), and the history by who wrote it — the user's
-messages, the assistant's replies, the tools' results — counted locally by role
-and then given **the provider's remainder in proportion** (`prompt_tokens` less
-the static parts). Every part sums to the provider's prompt total. Message counts
-are cached per message object, so a request counts only what is new. The first
-step of each attempt, and any step after a tool search changed the set, also
-carries `items`: the system prompt by named section (`systemSections` in
-`src/turn.ts`, split again at each `##` heading) and each built-in and MCP tool's
-definition, as raw local counts the panel scales to the part's figure. Non-text
-media is not counted. Other runtimes do not send this breakdown, and the panel
-infers one from the transcript instead (`client/src/lib/token-breakdown.ts`),
-alongside the billed figures (fresh input, cache read and write, output, of which
-reasoning), which are the provider's own. Nothing else — the context
-popover, the step and turn popovers — reads `_meta.breakdown`.
 
 A subagent's spend is part of the turn's answer: every child folds its total
 into the same `usage` the turn ends with, so a turn that spent most of its
@@ -160,28 +157,6 @@ not spend to add again to the parent's total. The context-window gauge is the
 parent's alone — a child's steps measure the child's own, smaller window, and
 writing them onto the parent made compaction threshold against a context the
 parent never had.
-
-## Tracing
-
-The agent advertises `daedalus/trace` in `initialize`'s `agentCapabilities._meta`
-and sends its OpenTelemetry spans up as the `_daedalus/trace` notification
-(`{ sessionId, spans }`, epoch-ms times, attributes flattened to OTel's value
-types, strings capped at 256 KB). A `session/prompt` (and `new`/`load`/`resume`)
-carrying `_meta.traceparent` runs inside that context, so the agent's spans are
-children of the harness's. The prompt answers only after its spans are flushed.
-
-What comes up (`src/tracing.ts`): an `agent turn` span per prompt
-(`daedalus.kind: "turn"`, carrying `retry` and `paused` events); the AI SDK's
-GenAI spans from `@ai-sdk/otel` — `invoke_agent <model>` (`gen_ai.agent.name` is
-`daedalus.turn`, `daedalus.subagent`, `daedalus.compaction` or
-`daedalus.sampling`), `step N`, `chat <model>` and `execute_tool <tool>`, with
-inputs and outputs recorded; a `compaction` span (`daedalus.kind: "step"`); and an
-`mcp connect <server>` span per MCP server (`daedalus.kind: "process"`). A
-subagent's run nests under its `execute_tool task` span. Every span carries
-`daedalus.acp_session_id`; one without it is not sent.
-
-Standard `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
-(and the rest of the OTLP env) additionally export every span over OTLP/HTTP.
 
 ## What is still not editable
 

@@ -131,6 +131,7 @@ import { withTaskContext } from "@/lib/tasks-board"
 import { HARNESS_MCP_ID, splitTaskContext } from "@/lib/task-mentions"
 import { mcpPromptCommands, mcpPromptFor, readMcpResourceFile, renderMcpPrompt } from "@/lib/mcp-composer"
 import { useServer } from "@/lib/server-context"
+import { useIsFrontPanel } from "@/components/workspace/dock-context"
 import { useChords } from "@/lib/keybindings"
 import { useShortcut } from "@/hooks/use-hotkey"
 import {
@@ -647,7 +648,8 @@ export const Composer = React.memo(function Composer({
        user has just arrived at.
      After a frame: dockview moves focus itself as it activates a new panel,
      and the later mover wins. */
-  const routed = currentThreadId(location.pathname, location.search) === sessionId
+  const inFront = useIsFrontPanel()
+  const routed = inFront && currentThreadId(location.pathname, location.search) === sessionId
   /* Only the composer in front of you answers the call chord, like the
      pickers' keys: a background tab's composer must not start a call. */
   const voiceChord = formatChord(useChords("voiceCall")[0] ?? "")

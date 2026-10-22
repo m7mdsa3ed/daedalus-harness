@@ -4,8 +4,9 @@ import { streamText, type ModelMessage } from "ai";
 import type { AgentEnv } from "./env.js";
 import type { ModelFactory } from "./provider.js";
 import type { Session } from "./session.js";
-import { inSpan } from "./tracing.js";
 import type { Emitter } from "./updates.js";
+import type { CallMetering } from "./metering.js";
+import { cacheAffinity } from "./provider.js";
 
 /**
  * The harness's own compaction trigger, spelled the same in
@@ -99,22 +100,8 @@ export async function compact(
   emit: Emitter,
   announce: boolean,
   signal: AbortSignal,
-): Promise<void> {
-  const before = { "daedalus.compaction.tokens_before": session.lastTokens, "daedalus.compaction.messages_before": session.messages.length };
-  return inSpan("compaction", "step", before, (span) =>
-    compactInner(session, env, makeModel, emit, announce, signal).then(() => {
-      span.setAttribute("daedalus.compaction.messages_after", session.messages.length);
-    }),
-  );
-}
-
-async function compactInner(
-  session: Session,
-  env: AgentEnv,
-  makeModel: ModelFactory,
-  emit: Emitter,
-  announce: boolean,
-  signal: AbortSignal,
+  /** The summarizer's own call, metered into the turn that asked for it. */
+  onCall?: (call: CallMetering) => void,
 ): Promise<void> {
   const compactionId = randomUUID();
   const say = async (update: acp.SessionUpdate) => {
@@ -128,7 +115,11 @@ async function compactInner(
       messages: [...session.messages, { role: "user", content: SUMMARY_PROMPT }],
       abortSignal: signal,
       maxOutputTokens: MAX_SUMMARY_TOKENS,
-      telemetry: { functionId: "daedalus.compaction", recordInputs: true, recordOutputs: true },
+      onLanguageModelCallEnd: onCall,
+      /* The turn's own affinity key: a summarizer that lands on another
+         backend re-sends the whole history uncached, which is the most
+         expensive request a session makes. */
+      providerOptions: cacheAffinity(env, session.id),
     });
     let summary = "";
     for await (const text of result.textStream) {

@@ -1197,9 +1197,8 @@ export function Favicon({ url, className }: { url: string; className?: string })
  * Shared by the search results and the per-turn Sources strip so a page looks
  * the same wherever it is mentioned.
  *
- * Inside a workspace a plain click opens it in the dock's Browser panel — the
- * source and the thread that cited it end up side by side instead of the
- * thread being left behind in another tab. It stays an anchor either way:
+ * Inside a workspace a plain click opens it in the system browser. It stays
+ * an anchor either way:
  * ⌘-click, middle-click and copy-address are the browser's, not ours (see
  * `useSourceOpener`).
  */

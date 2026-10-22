@@ -68,26 +68,6 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
 
     const usageUpdates = harness.updatesOf("usage_update");
     assert.equal((usageUpdates.at(-1)?.update as { used?: number }).used, 15);
-
-    /* The prompt split rides the same event. `used` is the provider's own
-       prompt total, so the conversation is what is left of it once the two
-       counted static parts come out — the parts must sum back to the headline
-       figure rather than to a second, independently guessed one. */
-    const meta = (usageUpdates.at(-1)?.update as { _meta?: Record<string, unknown> })._meta;
-    const split = (meta?.breakdown ?? null) as null | Record<string, number>;
-    assert.ok(split, "a measured prompt carries its breakdown");
-    assert.equal(split.total, 15, "the total is the provider's prompt figure");
-    assert.ok(split.system > 0, "the system prompt is counted");
-    assert.ok(split.tools > 0, "the tool block is counted");
-    assert.equal(
-      split.system + split.tools + split.mcp + split.user + split.assistant + split.results,
-      split.total,
-      "the split sums back to the total",
-    );
-    /* The first step of an attempt names what the prefix is made of. */
-    const items = (split as unknown as { items?: { system: { name: string }[]; tools: unknown[] } }).items;
-    assert.ok(items?.system.some((item) => item.name.startsWith("Core instructions")), "system sections ride the first step");
-    assert.ok((items?.tools.length ?? 0) > 0, "and each tool's definition");
   });
   console.log("turn: text ok");
 }

@@ -537,7 +537,11 @@ export const StepRow = React.memo(function StepRow({
             onAnimationComplete={(definition) => {
               if (finishedOpening(definition) && detailClipRef.current) detailClipRef.current.style.overflow = "visible"
             }}
-            className="overflow-hidden"
+            /* `-mx-1` on the plain row's clip: the header's hover ground
+               bleeds 4px past the content edge on each side, so a payload
+               narrower than that left the two edges 4px apart. The rail
+               layout's row does not bleed, so neither does its detail. */
+            className={cn("overflow-hidden", toolLayout !== "rail" && "-mx-1")}
           >
             {/* Spacing lives inside the clip: a margin on the animated box is
                 outside its height and snapped away after every collapse.

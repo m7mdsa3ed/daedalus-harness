@@ -30,7 +30,7 @@ import { currentThreadId, navigateTo, threadPath } from "@/lib/router"
 import { openInNewTab } from "@/lib/workspace/open-threads"
 import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem, type ToolItem } from "@/lib/store"
 import { FilePreviewContext, type FilePreviewValue } from "@/lib/file-preview"
-import { DockContext } from "@/components/workspace/dock-context"
+import { DockContext, useIsFrontPanel } from "@/components/workspace/dock-context"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useProjectScripts } from "@/lib/queries"
 import { DEFAULT_SUGGEST_KINDS, type SuggestGroup } from "@/lib/suggestions"
@@ -524,7 +524,7 @@ export function ThreadView({
         ? {
             scope: { projectId, root: projectRoot, worktree },
             open: (file) =>
-              dock.openPanel({ kind: "web", trust: "project", viewId: "default", projectId, file, diff: undefined }),
+              dock.openPanel({ kind: "web", viewId: "default", projectId, file, diff: undefined }),
           }
         : null,
     [dock, projectId, projectRoot, worktree]
@@ -633,7 +633,8 @@ export function ThreadView({
      take-back — goes through this handle rather than shared state. Declared
      above the keys because Escape is one of them. */
   const composerApiRef = React.useRef<ComposerHandle>(null)
-  const routed = currentThreadId(location.pathname, location.search) === sessionId
+  const inFront = useIsFrontPanel()
+  const routed = inFront && currentThreadId(location.pathname, location.search) === sessionId
   useThreadKeys({
     sessionId,
     thread,

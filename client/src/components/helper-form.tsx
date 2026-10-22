@@ -102,7 +102,6 @@ export function HelperForm({
     initial?.env ? Object.entries(initial.env).map(([k, v]) => `${k}=${v}`).join("\n") : ""
   )
   const [confirm, setConfirm] = React.useState(initial?.confirm ?? false)
-  const [preview, setPreview] = React.useState(initial?.preview ?? false)
   const [envProblem, setEnvProblem] = React.useState<string | null>(null)
   // What the fold holds, said on its trigger so a closed fold still tells.
   const extras = [
@@ -110,7 +109,6 @@ export function HelperForm({
     cwd.trim() && `in ${cwd.trim()}`,
     envText.trim() && "env",
     confirm && "asks first",
-    preview && "dev server",
   ].filter(Boolean) as string[]
   const [more, setMore] = React.useState(extras.length > 0)
 
@@ -136,7 +134,6 @@ export function HelperForm({
       cwd: cwd.trim() || null,
       env: Object.keys(env).length > 0 ? env : null,
       confirm,
-      preview,
     }
     setSaving(true)
     try {
@@ -235,12 +232,6 @@ export function HelperForm({
               hint="Confirm before its terminal opens — for the destructive ones."
               checked={confirm}
               onChange={setConfirm}
-            />
-            <ToggleRow
-              title="Starts the dev server"
-              hint="The Browser panel offers it when the preview URL doesn't answer."
-              checked={preview}
-              onChange={setPreview}
             />
           </div>
         </CollapsibleContent>

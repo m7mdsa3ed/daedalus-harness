@@ -56,7 +56,6 @@ const OPENABLE: { kind: PanelKind; label: string; hint: string; shortcut?: Short
     hint: "A shell in this project",
     shortcut: "terminal",
   },
-  { kind: "web", label: "Preview", hint: "Preview the current project" },
   { kind: "tasks", label: "Tasks", hint: "A board beside the work" },
 ]
 

@@ -54,7 +54,7 @@ import type { SessionMeta } from "@/lib/settings"
 import type { ThreadItem, ThreadState } from "@/lib/store"
 import { formatDuration, formatTokens, formatTps, promptTokens, sumUsage } from "@/lib/tokens"
 import { tpsAverage } from "@daedalus/tps"
-import { INSPECTOR_TILE, InspectorCard, TokensPanel } from "./tokens-panel"
+import { INSPECTOR_TILE, InspectorCard } from "./inspector-card"
 import { Count } from "@/components/settings/primitives"
 import { PanelToolbar } from "@/components/workspace/primitives"
 
@@ -635,9 +635,6 @@ export function ThreadInspector({
             <TabsTrigger value="details">
               Details
             </TabsTrigger>
-            <TabsTrigger value="tokens">
-              Tokens
-            </TabsTrigger>
           </TabsList>
           <Button
             variant="ghost"
@@ -650,7 +647,7 @@ export function ThreadInspector({
           </Button>
         </header>
 
-        {(["changes", "plan", "agents", "details", "tokens"] as const).map((section) => (
+        {(["changes", "plan", "agents", "details"] as const).map((section) => (
           <TabsContent key={section} value={section} className="flex min-h-0 flex-1 flex-col">
             <ThreadSection section={section} thread={thread} meta={meta} onJump={onJump} />
           </TabsContent>
@@ -663,7 +660,7 @@ export function ThreadInspector({
 /** One of the inspector's readings on its own — a tab of the sheet here, a
     panel of its own in the thread dock (`workspace/thread-dock.tsx`), where
     each can be moved and resized beside the transcript. */
-export type ThreadSectionKind = "changes" | "plan" | "agents" | "details" | "tokens"
+export type ThreadSectionKind = "changes" | "plan" | "agents" | "details"
 
 export function ThreadSection({
   section,
@@ -705,6 +702,5 @@ export function ThreadSection({
       </div>
     )
   if (section === "agents") return <AgentsTab thread={thread} groups={groups} onJump={onJump} />
-  if (section === "tokens") return <TokensPanel thread={thread} />
   return <DetailsTab thread={thread} meta={meta} rows={rows} />
 }

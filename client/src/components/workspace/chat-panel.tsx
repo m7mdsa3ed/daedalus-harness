@@ -3,7 +3,7 @@ import type { IDockviewPanelProps } from "dockview-react"
 
 import { ErrorBoundary } from "@/components/error-boundary"
 import { ThreadSkeleton } from "@/components/thread-view/skeleton"
-import { useDock } from "@/components/workspace/dock-context"
+import { ChatPanelFrontContext, useDock } from "@/components/workspace/dock-context"
 import { ThreadDock } from "@/components/workspace/thread-dock"
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { Actions } from "@/lib/actions"
@@ -354,6 +354,20 @@ export function ChatPanel({
     return () => sub.dispose()
   }, [api])
 
+  /* In front = the active tab of the active group. Several tabs can show one
+     thread, so the route cannot tell them apart; dockview's own state can. */
+  const front = React.useSyncExternalStore(
+    React.useCallback(
+      (onChange: () => void) => {
+        const subs = [api.onDidActiveChange(onChange), api.onDidActiveGroupChange(onChange)]
+        return () => subs.forEach((sub) => sub.dispose())
+      },
+      [api]
+    ),
+    () => api.isActive && api.isGroupActive,
+    () => false
+  )
+
   /* No row yet: the session list has not landed, so there is nothing to
      connect to and `ThreadView` cannot mount (every read below it is keyed by
      the row). That is the longest blank this panel ever shows — a cold boot
@@ -378,10 +392,10 @@ export function ChatPanel({
       {/* Kept mounted and hidden with `display: none`, never unmounted. Dockview
           hides an inactive panel with `visibility`, which the thread dock's own
           `always` overlays escape — every thread drew over the others. `display:
-          none` cannot be escaped, and it is what lets a Preview's page and a
+          none` cannot be escaped, and it is what lets a Preview's file and a
           shell come back to what they were: unmounting this on every tab switch
-          threw the `<webview>` (or iframe) away and rebuilt it on the way back,
-          so a page you were reading reloaded and its state went. */}
+          threw them away and rebuilt them on the way back, so scroll and state
+          went. */}
       <div ref={pane} className={cn("flex h-full min-h-0 flex-col", !visible && "hidden")} {...swipe}
         style={slide ? ({ "--slide-from": `${slide * 48}px` } as React.CSSProperties) : undefined}
         data-slide={slide ? "" : undefined}
@@ -391,7 +405,9 @@ export function ChatPanel({
           <ThreadLinksProvider value={links}>
             {/* The tab is a dock of the thread's own panels (`thread-dock.tsx`) —
                 on a phone too, where it stacks them as tabs. */}
-            <ThreadDock key={meta.id} sessionId={meta.id} actions={actions} />
+            <ChatPanelFrontContext.Provider value={front}>
+              <ThreadDock key={meta.id} sessionId={meta.id} actions={actions} />
+            </ChatPanelFrontContext.Provider>
           </ThreadLinksProvider>
         </ErrorBoundary>
       </div>

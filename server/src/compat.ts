@@ -32,9 +32,6 @@ export const MIN_CLIENT_API = 0;
 /** What this server can do beyond the API baseline. Everything that existed
     when versioning began is the baseline and is not listed. */
 export const FEATURES = [
-  /** A span carries OTel `SpanKind`, links, instrumentation scope, resource and
-      tracestate, and `GET …/spans` serves them. */
-  "otel-span-fields",
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];

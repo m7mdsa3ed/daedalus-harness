@@ -239,10 +239,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   streamed `update`s: a frame is self-similar JSON that deflates five to ten times over, so
   this buys window back rather than trimming it, while a few hundred bytes of streamed text
   arriving thousands of times a turn would pay more for zlib than it saves. **The HTTP
-  document is compressed too** (`hono/compress`, on `/replay`, `/earlier` and the trajectory's `/spans` and
+  document is compressed too** (`hono/compress`, on `/replay` and `/earlier` and
   nowhere else): the read moved off the socket and left the socket's compression behind, on
   the most compressible bytes this server sends — 1.35MB of frames go out as 302KB, and on a
-  phone that is the whole of the wait. Scoped to those three because everything else under
+  phone that is the whole of the wait. Scoped to those two because everything else under
   `/api` is a small JSON object, and because a codec must not sit between a line and the
   reader on the streaming routes.
   It is a container, not a sixth journaled kind: `attached`/`caught_up` still bracket it and
@@ -964,128 +964,33 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `GET /api/sessions/:id/stderr` exposes the tail. `app.onError` turns every route throw
   into the `{ error }` shape the client already parses.
 
-## Trajectory: OpenTelemetry spans
+## Output speed
 
-A thread's trajectory is its OpenTelemetry spans, stored in `trace_spans` and drawn by the
-Trajectory panel (thread dock, and `/t/:id/trace`). It replaced a trace page that re-read the
-journal: the journal says what was *said*; a span says what *happened*, when, for how long and
-under what.
+**Output speed is measured on the model's writing time, never on the turn's wall clock**
+(`tps.ts`, one pure module both halves run, the client through `@daedalus/tps`). A turn's
+`TurnGeneration` — output tokens over decode time — rides `turn_ended.generation`. **The runtime's
+own reading wins** (`_meta.daedalus.generation` on the prompt answer, `generationFromMeta`): our
+runtime times every model call with the SDK, which sees the tool-call arguments it streams. The
+bridge's `DecodeClock` (`decode-clock.ts`) is the fallback for a runtime that sends none, and it
+answers **only for a turn that made no tool call** — it sees prose, while the usage it divides into
+also counts the arguments of every tool call, so a tool turn would be a rate over tokens it never
+timed. It counts only the thread's own updates — a subagent's decode is not the parent's.
+**Time to first token is the model's first output** (`isModelOutput`: prose, thought or the opening
+of a tool call, on the thread's own stream) — never the first update, because the runtime sends the
+session title and mode before it has called the model. A turn that throws still reports what it
+spent: the runtime rides `usage` and `generation` on the error's `data.daedalus` and
+`spendFromError` takes them off before the error is drawn. Tool calls,
+prefill, permission waits and holds are never in the denominator — dividing by `durationMs` drew a
+tool-heavy turn at a fraction of its real speed. Wall-clock throughput survives only as the
+labelled fallback for a turn with no generation, and `TpsStats` switches a thread's extrema over to
+generation on its first measured turn rather than mixing the two quantities. Every average is
+token-weighted.
 
-- **One tracer, two sources.** `server/src/tracing.ts` owns a `BasicTracerProvider` whose store
-  processor keeps open spans in memory (served with `end: null`, so a running turn draws live)
-  and batches finished ones into the table. The harness's spans are read off ACP by
-  `server/src/bridge-trace.ts`, which the bridge *tells* at the moments it already knows about
-  and never asks. A runtime's own spans arrive finished over `_daedalus/trace` and are written by
-  `ingest` with `source: "agent"` — never re-started through the tracer, which would mint new ids
-  and break the tree.
-- **One trace per turn.** The turn is the root; `session/prompt` is under it and carries its
-  W3C `traceparent` in `_meta`. A runtime that advertises `daedalus/trace` in its `initialize`
-  `_meta` (ours) parents its spans under that request — the AI SDK's GenAI spans via
-  `@ai-sdk/otel`: `invoke_agent`, `step N`, `chat <model>` with time to first chunk, prompt and
-  answer, `execute_tool <name>` with arguments and result. **For every other runtime the bridge
-  derives them** from updates — a model span from the last boundary to the next tool call (its
-  duration is request *and* decode; `daedalus.ttft_ms` is the first chunk), a tool span from
-  `tool_call` to its terminal status, a subagent under the tool call that spawned it. Never both:
-  a self-tracing runtime's calls would be drawn twice and its tokens counted twice.
-- **A runtime that exports OpenTelemetry reports itself** (`AgentDef.telemetryVia`, a dialect:
-  `"claude-otlp"`; `server/src/otlp.ts`). Its env template names `{otlpUrl}` —
-  `/otlp/<key>/<threadId>`, the derived key in the path being the credential, outside `/api` like
-  `/gw` — and it posts OTLP/JSON to `…/v1/traces` and `…/v1/logs`. Its interaction is hung under
-  the harness's `session/prompt` span that was running (`requestSpanAt`), a model call is
-  `chat <model>` with the provider's exact usage, a tool is `execute_tool <name>`, and
-  **`AcpBridge.selfTraced` is true for it**, so the bridge derives none of those: never both. Identity
-  attributes a runtime stamps on every span (email, account and organisation ids) are dropped on the
-  way in. Verified end to end against Claude Code on a subscription login, env only — no gateway.
-- **For every runtime**: the handshake (`session/new|load|resume`), permission and elicitation
-  waits with their outcome, and `retry`/`paused`/`cancel`/`steer` as span events.
-- **`kind` is decided at write time** (`daedalus.kind`, else the GenAI operation), so the list
-  never parses attributes. A runtime's own `turn` is stored as `agent`: the turn is ours.
-- **A span is stored as OpenTelemetry says it, not as the panel draws it.** Beside the
-  attributes and events it keeps `spanKind` (`client` for a model call and the prompt request,
-  `internal` otherwise — read off the SDK span, or the OTLP `kind`), `links`, the
-  instrumentation `scope`, the producer's `resource` and `traceState`, on every path in: the
-  tracer, `ingest`, the OTLP intake (which reads the resource and scope from above each span,
-  where OTLP nests them, and still drops identity attributes from the resource) and the
-  agent's `_daedalus/trace` (`toWire`). All optional and nullable columns: a row from before
-  `otel-span-fields` reads as a span that said none of them. The feature name is listed in
-  `FEATURES` for a client that wants to know; the Trajectory does not gate on it, because every
-  reader already treats an absent field as absent. **`daedalus.kind` is the harness's own bucket for
-  icons and filters; it is never the span's identity** — the Trajectory's Overview tab names
-  `SpanKind` and the instrumentation scope, and its OTLP tab and Export are the span in the
-  wire format a collector reads.
-- **The list elides, the span route does not.** A model span's input is the whole prompt every
-  step; `GET /api/sessions/:id/spans` cuts strings at `TRACE_LIST_VALUE_LIMIT` and names them in
-  `elided`, and `GET …/spans/:spanId` returns the span whole. Storage caps one value at 256KB.
-- **Export is standard OTLP** when `OTEL_EXPORTER_OTLP_(TRACES_)ENDPOINT` is set — the harness
-  exports its spans, the agent exports its own from the same env. Not backed up: a restored
-  install starts recording afresh. Deleting a thread cascades its spans.
-
-## What a prompt held: four sources, one rule
-
-The Tokens panel divides each request's prompt by part. **Where the division comes
-from is per request, in this order, and a request is only ever read by the first that
-answers** (`sessions.ts` `emit`, on the `usage_update`):
-
-1. **The agent's own measurement** (`_meta.daedalus.breakdown`, `source: "agent"`) —
-   our runtime tokenizes what it sends, so it needs nothing from anyone else.
-2. **The runtime's saved files** (`_meta.daedalus.prefix`, `source: "files"`) —
-   `server/src/prompt-files.ts`, chosen by `AgentDef.promptFiles` (a **format**, never
-   an id): `claude-jsonl` (the session JSONL's `prompt_snapshot` and context
-   attachments), `codex-rollout` (`base_instructions` and the developer/environment
-   messages) and `opencode-sqlite` (`instruction_state`). It carries the *static*
-   part only — system, tools, MCP — and the client still reads the history off the
-   transcript. **This is the one place the server reads a runtime's own files**; import
-   stays ACP's `session/list`, because this reads a file the runtime already wrote to
-   *explain* a request, never to resume or list a conversation. The read is off the
-   event path (`refreshPromptPrefix` schedules it, `promptPrefixOf` is a cache read, a
-   JSONL is read from where it stopped), so the first update of a thread may carry none.
-3. **The transcript** — about four characters a token; what is left is "Agent overhead".
-
-**The request itself is the better source, and it lives on the span, not on the usage
-update.** When a runtime hands over the request it sent — Claude Code's raw API body over
-OTLP (`OTEL_LOG_RAW_API_BODIES=file:<dir>`, read from that thread's own directory only,
-**never any other path**, and deleted once read), or the GenAI attributes `@ai-sdk/otel`
-puts on every `chat` span of our own agent (`gen_ai.system_instructions`,
-`gen_ai.tool.definitions`, `gen_ai.input.messages`) — `prompt-parts.ts` counts the system
-prompt, tools, MCP tools and the conversation and scales them to the provider's total for
-*that request*, and the result is written beside the model span as
-**`daedalus.prompt_parts`** (not `daedalus.prompt`, which is the person's own words on a
-turn's span). It is counted from the whole attribute at ingest, because storage caps one
-value at 256KB and a long thread's messages are past it. A user message's
-`<system-reminder>` blocks are the runtime's context (instructions, skills, MCP guidance),
-so they count as system under "Injected context", not as the person's words. The Trajectory
-draws it ("Prompt by part" on a model span, `components/trajectory/prompt-parts.tsx`); the
-Tokens panel still reads usage updates, so folding the two into one panel is the next step.
-
-**Output speed is measured on the model spans, never on the turn's wall clock** (`tps.ts`,
-one pure module both halves run, the client through `@daedalus/tps`). A turn's
-`TurnGeneration` — output tokens over decode time — rides `turn_ended.generation` and is
-written on the turn span as `daedalus.decode_ms` / `daedalus.generated_tokens`. `BridgeTrace`
-reads it from the runtime's own `model` spans of that turn's trace (`gen_ai.usage.output_tokens`,
-duration less TTFT — `daedalus.ttft_ms` or the AI SDK's seconds attribute), and when none have
-arrived by the settle (Claude Code exports OTLP on an interval), from the thread's own stream:
-first chunk to the tool call that ends the generation, divided into the turn's usage. Tool calls,
-prefill, permission waits and holds are never in the denominator — dividing by `durationMs`
-drew a tool-heavy turn at a fraction of its real speed. Wall-clock throughput survives only as
-the labelled fallback for a turn with no generation, and `TpsStats` switches a thread's
-extrema over to generation on its first measured turn rather than mixing the two quantities.
-Every average is token-weighted.
-
-**Counting never holds the event loop.** The gateway shim used to buffer, parse and tokenize
-every `/messages` and `/chat/completions` request (43–156 ms of the single loop per model
-request, for a 50k–400k-token prompt); that is gone, and the shim reads a body only for the
-two repairs that need one (Codex's namespace tools and a moved thread's model). `prompt-parts.ts`
-counts each piece separately, gives the loop back every few milliseconds, and remembers a text
-by its hash, so a step pays for what is new. A journal written while the shim still split its
-requests keeps its `source: "gateway"` breakdowns and the client still draws them — **an old
-reader is never deleted**.
-
-**`missing` is part of the answer.** Each file reader says what its file does not hold (Codex:
-tool schemas; OpenCode: its own system prompt and tool schemas; Claude Code: nothing,
-unless the version predates `prompt_snapshot`), and the panel says it back in a warning
-above the numbers. With nothing missing the file's tokenizer gap is spread over every
-part; with something missing the known parts are never inflated and the unknown part is
-the named overhead. Old journal rows keep the shape they had; nothing is rebuilt for them.
+There is no span store: the harness records no OpenTelemetry, `session/prompt` carries no
+`traceparent`, and a runtime's own `_daedalus/trace` notification is not listened for. The
+`trace_spans` table and the agents' `prompt_files`/`telemetry_via` columns are dropped at boot
+(`db/index.ts`), and seed 35 takes Claude Code's `OTEL_*` env keys back where they still hold the
+seeded template.
 
 ## Durable agent processes (`DAEDALUS_SANDBOX=hosted`)
 

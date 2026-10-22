@@ -126,7 +126,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
   const dock = React.useContext(DockContext)
   const showDiff = (next: OpenDiff) =>
     dock
-      ? dock.openPanel({ kind: "web", trust: "project", viewId: "default", projectId, file: undefined, diff: next as WebDiff })
+      ? dock.openPanel({ kind: "web", viewId: "default", projectId, file: undefined, diff: next as WebDiff })
       : setDiff(next)
   const [collapsed, setCollapsed] = React.useState<ReadonlySet<GroupId>>(() => new Set())
   /* An undone commit's message, handed back to the box it came from. */

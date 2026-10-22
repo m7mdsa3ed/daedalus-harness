@@ -13,9 +13,9 @@ import * as React from "react"
 
 import { createLocalStore } from "@/lib/local-store"
 
-export type InspectorTab = "changes" | "plan" | "agents" | "details" | "tokens"
+export type InspectorTab = "changes" | "plan" | "agents" | "details"
 
-const TABS: readonly InspectorTab[] = ["changes", "plan", "agents", "details", "tokens"]
+const TABS: readonly InspectorTab[] = ["changes", "plan", "agents", "details"]
 
 /** How the Agents reading is laid out: one of a workflow run's layouts over
     every agent in the thread. A stored "runs" (removed) falls back to List. */

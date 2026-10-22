@@ -64,4 +64,9 @@ rows = layoutBatches([{ start: 0, end: 900 }, { start: 5 }], timing)
 assert.ok(rows.every((r) => r.spanMs === undefined))
 rows = layoutBatches([{ start: 0, end: 10 }, { start: 5000, end: 5100 }], timing)
 assert.ok(rows.every((r) => r.spanMs === undefined)) // a lone call has no batch
+// While calls are out, the last call says how many: nothing once all have ended.
+rows = layoutBatches([{ start: 0, end: 900 }, { start: 5 }, { start: 8 }], timing)
+assert.deepEqual(rows.map((r) => r.running), [undefined, undefined, 2])
+rows = layoutBatches([{ start: 0, end: 900 }, { start: 5, end: 300 }], timing)
+assert.ok(rows.every((r) => r.running === undefined))
 console.log("tool-batches: ok")

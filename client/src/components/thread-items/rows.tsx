@@ -1423,50 +1423,54 @@ function ThoughtDetail({ text, streaming, label }: { text: string; streaming: bo
 
 // ─── Per-kind layouts ────────────────────────────────────────────────────────
 
-/** The ground behind a parallel batch: a faint `primary` wash with a 2px bar
-    down its end edge, rounded where the batch begins and ends, so the calls
-    that went out in one response read as one object whatever the layout draws
-    on the other side. It paints behind the rows (`-z-10` inside the row
-    wrapper's `isolate`), so nothing is tinted over text, and it bleeds into the
-    4px the run's clip keeps past the rows — a row's own hover ground bleeds the
-    same 4px, so the two meet. `primary` is the one tint a row leaves for
-    something about the run rather than the call. */
+/** The ground behind a parallel batch: a faint `primary` wash, rounded where the
+    batch begins and ends, so the calls that went out in one response read as one
+    object whatever the layout draws on the other side. It paints behind the rows
+    (`-z-10` inside the row wrapper's `isolate`), so nothing is tinted over text,
+    and it bleeds into the 4px the run's clip keeps past the rows — a row's own
+    hover ground bleeds the same 4px, so the two meet. `primary` is the one tint a
+    row leaves for something about the run rather than the call. No edge line: the
+    wash and the foot strip are the whole frame. */
 function BatchBand({ batch }: { batch: StepBatch }) {
   if (!batch.edge) return null
   return (
     <span
       aria-hidden
       className={cn(
-        "pointer-events-none absolute -inset-x-1 -z-10 bg-primary/[0.045] -top-0.5 -bottom-0.5",
+        "pointer-events-none absolute -inset-x-1 -z-10 bg-primary/[0.06] -top-0.5 -bottom-0.5",
         batch.edge === "start" && "top-0 rounded-t-xl",
         batch.edge === "end" && "bottom-0 rounded-b-xl"
       )}
-    >
-      <span
-        className={cn(
-          "absolute end-0 w-0.5 bg-primary/40",
-          batch.edge === "start" ? "top-2 bottom-0 rounded-t-full" : "top-0",
-          batch.edge === "end" ? "bottom-2 rounded-b-full" : batch.edge === "middle" && "bottom-0"
-        )}
-      />
-    </span>
+    />
   )
 }
 
-/** What the batch is, said once under its last call: how many went out together
-    and, once they have all ended, what they cost together — the time of the
-    slowest, not the sum, because they ran side by side. Inside the band, so it
-    belongs to the group; aligned to the title column like `StepGap`. */
+/** The batch's own row, closing it under its last call: a background strip of
+    the same faint `primary` wash, one line box (`h-6`), bleeding the band's 4px so
+    it meets the band's edges. It is what the batch *is* — how many calls went
+    out in one response — and how it stands: "1 of 3 running" while any call is
+    out (the shimmer the rows use for live work), then what they cost together
+    once every one has ended, the time of the slowest and not the sum, because
+    they ran side by side. Never a row of its own on the rail: it sits inside the
+    last call's wrapper, so it takes no mark and no elbow. */
 function BatchFoot({ batch }: { batch: StepBatch }) {
   if (batch.edge !== "end" || !batch.size) return null
+  const running = batch.running ?? 0
   return (
     <div
       title="Calls the agent made in one response, run side by side"
-      className="flex items-center gap-1.5 ps-7 pe-3 pb-1 text-[0.625rem] leading-4 tabular-nums text-primary/80"
+      className="-mx-1 mt-0.5 flex h-6 items-center gap-1.5 rounded-b-xl bg-primary/[0.06] ps-8 pe-3 text-xs tabular-nums text-muted-foreground"
     >
-      <LayersIcon aria-hidden className="size-2.5 shrink-0" />
-      <span className="shrink-0">{batch.size} in parallel</span>
-      {batch.spanMs !== undefined && <span className="shrink-0 text-muted-foreground">· {formatElapsed(batch.spanMs)}</span>}
+      <LayersIcon aria-hidden className="size-3 shrink-0" />
+      <span className="shrink-0 font-medium">{batch.size} in parallel</span>
+      <span className="min-w-0 flex-1" />
+      {running > 0 ? (
+        <span className="harness-shimmer shrink-0 text-muted-foreground">
+          {running} of {batch.size} running
+        </span>
+      ) : (
+        batch.spanMs !== undefined && <span className="shrink-0 text-muted-foreground">{formatElapsed(batch.spanMs)}</span>
+      )}
     </div>
   )
 }

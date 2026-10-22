@@ -28,6 +28,7 @@ import { generationRate } from "@daedalus/tps"
 import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import { ReadingPopoverContent } from "@/components/composer/indicator"
 import { formatDuration, formatRate, formatTokens, formatTps, promptTokens, windowEstimated } from "@/lib/tokens"
+import { vendorMeta } from "@/lib/tools"
 import { cn } from "@/lib/utils"
 
 /* The trigger box both popover figures wear. One padding, one line box, one
@@ -168,9 +169,17 @@ export function StepTokens({
   /* Both figures are a fraction of a window the runtime had to guess at — the
      request count beside them is real either way. */
   const about = windowEstimated(usage) ? "~" : ""
-  const turn = useStepTurnUsage(itemId ?? "")
-  const prompt = turn ? promptTokens(turn) : 0
-  const cacheRate = turn && prompt > 0 ? Math.round(((turn.cachedReadTokens ?? 0) / prompt) * 100) : null
+  const turnUsage = useStepTurnUsage(itemId ?? "")
+  /* The step's own bill, when the runtime says it (`_meta.daedalus.step` on
+     our runtime's `usage_update`): exact, so the split is the step's and the
+     figure loses its tilde. Otherwise the turn's split stands in, as it always
+     did for a runtime that reports one total per request. */
+  const own = vendorMeta(usage._meta, "daedalus")?.step as acp.Usage | null | undefined
+  const exact = own != null
+  const split = own ?? turnUsage
+  const prompt = split ? promptTokens(split) : 0
+  const cacheRate = split && prompt > 0 ? Math.round(((split.cachedReadTokens ?? 0) / prompt) * 100) : null
+  const approx = exact ? "" : "~"
   return (
     <Popover>
       <PopoverTrigger
@@ -179,10 +188,10 @@ export function StepTokens({
         render={
           <button
             type="button"
-            aria-label={`This step: about ${usage.used} tokens`}
+            aria-label={`This step: ${exact ? "" : "about "}${usage.used} tokens`}
             className={cn(FIGURE, className)}
           >
-            <CoinsIcon aria-hidden className="size-3 shrink-0" />~{formatTokens(usage.used)} tokens
+            <CoinsIcon aria-hidden className="size-3 shrink-0" />{approx}{formatTokens(usage.used)} tokens
           </button>
         }
       />
@@ -198,22 +207,22 @@ export function StepTokens({
             />
           )}
         </dl>
-        {turn ? (
+        {split ? (
           <>
             <p className="pt-1 text-xs font-medium text-muted-foreground">
-              This turn
+              {exact ? "This request" : "This turn"}
             </p>
             <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
               <Stat label="Prompt" value={formatTokens(prompt)} />
-              <Stat label="Output" value={formatTokens(turn.outputTokens)} />
-              <Stat label="New in" value={formatTokens(turn.inputTokens)} />
-              {turn.thoughtTokens ? <Stat label="Thinking" value={formatTokens(turn.thoughtTokens)} /> : null}
-              {turn.cachedReadTokens ? <Stat label="Cached" value={formatTokens(turn.cachedReadTokens)} /> : null}
-              {turn.cachedWriteTokens ? (
-                <Stat label="Cache write" value={formatTokens(turn.cachedWriteTokens)} />
+              <Stat label="Output" value={formatTokens(split.outputTokens)} />
+              <Stat label="New in" value={formatTokens(split.inputTokens)} />
+              {split.thoughtTokens ? <Stat label="Thinking" value={formatTokens(split.thoughtTokens)} /> : null}
+              {split.cachedReadTokens ? <Stat label="Cached" value={formatTokens(split.cachedReadTokens)} /> : null}
+              {split.cachedWriteTokens ? (
+                <Stat label="Cache write" value={formatTokens(split.cachedWriteTokens)} />
               ) : null}
               {cacheRate !== null && <Stat label="Cache rate" value={`${cacheRate}%`} />}
-              <Stat label="Total" value={formatTokens(turn.totalTokens)} />
+              <Stat label="Total" value={formatTokens(split.totalTokens)} />
             </dl>
           </>
         ) : null}
@@ -222,9 +231,9 @@ export function StepTokens({
             it belongs to is inferred from where it landed. Both halves of that
             are why the figure is written with a tilde. */}
         <p className="text-xs text-muted-foreground">
-          Roughly what the model request behind this step cost — the context it carried plus what it
-          wrote. The split is the whole turn's: runtimes report a per-step total, and the
-          prompt/output/cache breakdown only when a turn ends.
+          {exact
+            ? "What the model request behind this step was billed, as the runtime counted it."
+            : "Roughly what the model request behind this step cost — the context it carried plus what it wrote. The split is the whole turn's: this runtime reports a per-step total, and the prompt/output/cache breakdown only when a turn ends."}
         </p>
       </ReadingPopoverContent>
     </Popover>

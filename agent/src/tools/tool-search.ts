@@ -67,9 +67,6 @@ export interface Deferral {
       at the next turn, and everything after the list (most of the prompt) went
       uncached on that turn's first call. Measured: 12% cached against 94%. */
   base: string[];
-  /** The tool names a step sends, given the messages it sends — the SDK's
-      own choice, mirrored for the token breakdown. */
-  activeFor(messages: ModelMessage[]): string[];
 }
 
 /**
@@ -103,10 +100,7 @@ MCP tools, by server:
 ${catalogue(mcp, tools)}`,
   };
   const base = Object.keys(tools).filter((name) => !deferred.has(name));
-  return {
-    base,
-    activeFor: (stepMessages) => [...base, ...loadedIn(stepMessages, deferred)],
-  };
+  return { base };
 }
 
 /* The catalogue: every tool, grouped under the server it came from, one line
@@ -352,11 +346,6 @@ function stem(term: string): string {
   }
   if (term.length > 3 && term.endsWith("s") && !term.endsWith("ss") && !term.endsWith("us")) return term.slice(0, -1);
   return term;
-}
-
-/** The subset of `tools` named by `names` — what a step's request carries. */
-export function pickTools(tools: ToolSet, names: string[]): ToolSet {
-  return Object.fromEntries(names.filter((n) => n in tools).map((n) => [n, tools[n]])) as ToolSet;
 }
 
 /* The SDK's search answers `{ tools: [{ name, description }] }`. A deferred

@@ -38,9 +38,7 @@ import {
   Maximize2Icon,
   Minimize2Icon,
   ListChecksIcon,
-  CoinsIcon,
   PlusIcon,
-  RouteIcon,
   SquareTerminalIcon,
   XIcon,
   type LucideIcon,
@@ -94,24 +92,18 @@ const WebPanel = React.lazy(async () => ({
   default: (await import("@/components/workspace/web-panel")).WebPanel as React.FC<IDockviewPanelProps>,
 }))
 
-const Trajectory = React.lazy(async () => ({
-  default: (await import("@/components/trajectory/trajectory")).Trajectory,
-}))
-
 const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }> = {
   transcript: { title: "Thread", icon: null },
   changes: { title: "Source Control", icon: GitCompareIcon },
   plan: { title: "Plan", icon: ListChecksIcon },
   agents: { title: "Agents", icon: BotIcon },
   details: { title: "Details", icon: InfoIcon },
-  tokens: { title: "Tokens", icon: CoinsIcon },
   terminal: { title: "Terminal", icon: SquareTerminalIcon },
   web: { title: "Preview", icon: AppWindowIcon },
-  trajectory: { title: "Trajectory", icon: RouteIcon },
 }
 
 /** The readings — one panel each, the id is the kind. */
-const SECTIONS: ThreadSectionKind[] = ["changes", "plan", "agents", "details", "tokens"]
+const SECTIONS: ThreadSectionKind[] = ["changes", "plan", "agents", "details"]
 
 /* ── Where each kind lives ──
    A panel opens at its kind's own place, not wherever the focus happens to be:
@@ -123,9 +115,7 @@ const SLOT: Record<Exclude<ThreadPanelKind, "transcript">, Slot> = {
   plan: "side",
   agents: "side",
   details: "side",
-  tokens: "side",
   web: "beside",
-  trajectory: "beside",
   terminal: "below",
 }
 
@@ -245,10 +235,6 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
         apiRef.current?.getPanel("transcript")?.api.setActive()
         jumpRef.current?.(id, turn)
       },
-      openWeb(url) {
-        const panel: PanelDescriptor = { kind: "web", trust: "external", viewId: uuid().slice(0, 8), url }
-        add(panelId(panel), "web", panel)
-      },
       open(kind, reuse) {
         const api = apiRef.current
         const current = metaRef.current
@@ -272,17 +258,6 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
             (err) => reportError(err, "Couldn't open a terminal")
           )
           return
-        }
-        if (kind === "web") {
-          const url = projectsRef.current.find((p) => p.id === current.projectId)?.previewUrl
-          const panel: PanelDescriptor = {
-            kind: "web",
-            trust: "project",
-            viewId: "default",
-            ...(current.projectId ? { projectId: current.projectId } : {}),
-            ...(url ? { url } : {}),
-          }
-          return add(panelId(panel), "web", panel)
         }
         if (kind === "transcript") return api.getPanel("transcript")?.api.setActive()
         add(kind, kind)
@@ -418,7 +393,6 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
       )),
       terminal: contained(TerminalPanel),
       web: contained(WebPanel),
-      trajectory: contained(() => <Trajectory sessionId={sessionId} variant="panel" />),
     }
     for (const section of SECTIONS)
       map[section] = contained(() => <SectionPanel section={section} sessionId={sessionId} />)
@@ -625,8 +599,6 @@ function ThreadPanelsMenu() {
           {SECTIONS.map((kind) => row(kind))}
           <DropdownMenuSeparator />
           {row("terminal", "New terminal")}
-          {row("web")}
-          {row("trajectory")}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

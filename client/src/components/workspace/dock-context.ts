@@ -222,6 +222,18 @@ export function useDockOpeners(): DockOpeners {
   return React.useContext(DockOpenersContext)
 }
 
+/** Whether the chat panel this subtree lives in is the one in front: its tab is
+    the active one of its group, and that group has the focus. `null` outside a
+    chat panel (the landing console, an aside window), where there is no tab to
+    ask. The URL cannot answer this alone — two tabs of one thread share a path. */
+export const ChatPanelFrontContext = React.createContext<boolean | null>(null)
+
+/** The URL says this thread is the routed one; two tabs of it say the same, so a
+    key bound per composer also asks which tab is in front. */
+export function useIsFrontPanel(): boolean {
+  return React.useContext(ChatPanelFrontContext) !== false
+}
+
 /** The descriptor a live Dockview panel was opened with, or null. */
 export function descriptorOf(panel: IDockviewPanel): PanelDescriptor | null {
   return parsePanel(panel.api.component, panel.params)

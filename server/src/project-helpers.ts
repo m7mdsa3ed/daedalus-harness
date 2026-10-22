@@ -34,9 +34,6 @@ export const HelperInputSchema = z.object({
   env: z.record(z.string(), z.string()).nullish(),
   description: z.string().nullish(),
   confirm: z.boolean().nullish(),
-  /** This helper starts the project's dev server — the command the Browser
-      panel offers when a preview URL is set but nothing answers on it. */
-  preview: z.boolean().nullish(),
 });
 export type HelperInput = z.infer<typeof HelperInputSchema>;
 
@@ -49,8 +46,6 @@ export interface HelperCommand {
   env: Record<string, string> | null;
   description: string | null;
   confirm: boolean;
-  /** True when this helper is the one that starts the dev server. */
-  preview: boolean;
   createdAt: number;
 }
 
@@ -78,7 +73,6 @@ const rowToHelper = (row: typeof helpersTable.$inferSelect): HelperCommand => ({
   env: parseEnv(row.env),
   description: row.description,
   confirm: row.confirm,
-  preview: row.preview === true,
   createdAt: row.createdAt,
 });
 
@@ -98,7 +92,6 @@ const toColumns = (input: HelperInput) => ({
       : null,
   description: input.description?.trim() || null,
   confirm: input.confirm === true,
-  preview: input.preview === true,
 });
 
 export async function listHelpers(projectId: string): Promise<HelperCommand[]> {

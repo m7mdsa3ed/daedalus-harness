@@ -43,8 +43,6 @@ export interface HelperInput {
   description?: string | null
   /** Ask before running. */
   confirm?: boolean
-  /** This helper starts the project's dev server. */
-  preview?: boolean
 }
 
 export function addHelper(

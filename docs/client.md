@@ -514,9 +514,12 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   runtime, an older journal — falls back to timing: starting within `batchBurst` of the batch's
   first call, or before its latest call has ended. A step with neither (a notice, a `session/load`
   replay, whose stamps are the reload's) never joins, so no evidence marks nothing. The batch is
-  drawn as a band: a faint `primary` wash behind its rows with a 2px bar down the end edge, and one
-  foot line under the last call (`3 in parallel · 2.4s`, the span from first start to latest end —
-  the calls ran side by side, so it is never a sum, and it waits until every call has ended). The
+  drawn as a band: a faint `primary` wash behind its rows (no edge line), closed
+  by a foot strip under the last call — its own `h-6` row on a second, equally faint `primary` wash (muted text), inside
+  the band (`BatchFoot`). It says `3 in parallel` and, at its end, how
+  the batch stands: `1 of 3 running` (`StepBatch.running`, shimmering) while any call is out,
+  then the span from first start to latest end once every call has ended — the calls ran side by
+  side, so it is never a sum. The
   band paints behind the rows (`-z-10` in the row's `isolate`) and bleeds into the 4px the run's
   clip keeps past them, so no row moves and every tool layout gets it; a notice between two calls
   of one batch is inside it. The wait (`gapMin`, Off draws
@@ -1527,18 +1530,17 @@ double-click on a divider evens out the views it separates — in the main dock 
   a routed draft, which is what the console mints before it sends. The tab's mark is its
   sidebar row's (`PageIcon` in `panel-kinds.tsx`); its title is written forward only, so a
   restored tab never flashes "Page".
-- **The Browser panel's toolbar carries its own tools.** A project's Preview is the one
-  page this app can read, so two buttons are the page's: **Pick element** turns one click
-  into a selector for the composer — the way to tell an agent *which* element without
-  describing it, handed over through `lib/composer-insert.ts` by `Send to agent` — and
-  **Console** opens a drawer of the page's own log, with a dot when it holds warnings or
-  errors. Both ride the desktop shell's `<webview>` guest (`electron/main.cjs` relays the
-  console per guest and runs the picker with `executeJavaScript`); a browser's sandboxed
-  iframe has no console to read and no DOM to inspect, so neither is drawn there.
+- **The Preview panel is a viewer for project files and diffs, never a browser.** A mention,
+  a file link or a source-control row opens it (`web-panel.tsx`): a file is drawn by
+  `FilePreview`, a diff by `DiffTab`, and there is no address bar, no embedded page, no
+  `<webview>`, no console and no element picker. It was a browser once; **driving it from an
+  agent never worked with the desktop shell**, so the shell no longer opens a debugging port
+  and nothing in Electron touches CDP. `parsePanel` drops a stored `web` panel that names no
+  project and no file or diff (a layout from the browser days).
 - **A hidden chat tab is `display: none` while its thread dock stays mounted.** Dockview's
   `always` renderer hides an inactive panel with `visibility`, which the inner dock's own
   overlays escape; `display: none` cannot be escaped, and keeping the dock mounted is what
-  lets a Preview's page and a shell come back to what they were instead of reloading.
+  lets a Preview's file and a shell come back to what they were instead of reloading.
 - **A panel kind is a surface, and a surface that reads the URL cannot be one.** The tasks
   panel is the case that proved it: the board workspace answered "which board, which task"
   from `useParams`/`useSearchParams`/`useNavigate`, so a panel switching board would have
@@ -2120,50 +2122,6 @@ enabled ones), the landing chips and the palette name the same noun. Code is
     provider. A native workflow step's transcript is still fetched only when its row opens
     (`loadAgentTranscript`). A sheet closes itself on a jump.
   - **Details** — model, workspace, usage, workflow runs and history.
-  - **The Trajectory is a trace viewer, not a turn list** (`components/trajectory/`, readers in
-    `lib/trajectory.ts`, checked by `trajectory.check.mjs`). Spans are grouped by **trace** (the
-    harness roots one per turn), each trace a sticky header carrying its own time axis (`niceTicks`)
-    and its bars placed on *that trace's* window, with the span's events marked on the bar. The
-    selected span is drawn as OpenTelemetry says it (`span-detail.tsx`): Overview (timing, **self
-    time** — children's intervals merged so parallel ones are not subtracted twice — identity with
-    the parent as a jump, `SpanKind`, tracestate, instrumentation scope, resource), every
-    attribute unfiltered with a filter, events on the span's own timeline, links (a link to a span
-    in the thread jumps to it) and **OTLP**, the span as OTLP/JSON. **GenAI is a lens beside
-    those, shown only for a span that carries `gen_ai.*`** (`genai.tsx`: payloads, prompt by part,
-    prompt change) — never the shape the panel is built around. Export is one OTLP/JSON document
-    (`toOtlpDocument`), not the harness's own shape. A span stored before `otel-span-fields` has no
-    kind, scope, resource or links; every reader treats those as absent, not as an error.
-- **A model span's detail draws its prompt by part** (`trajectory/prompt-parts.tsx`, read from `daedalus.prompt_parts` by `spanPromptParts`): the same parts, labels and swatches as the Tokens tab, each static part opening onto its items, for any runtime whose request the server could divide (Claude Code over OTLP, our agent's GenAI attributes).
-- **Tokens** (`thread-view/tokens-panel.tsx`, arithmetic in `lib/token-breakdown.ts`,
-    checked by `token-breakdown.check.mjs`) — two readings kept apart. **Billed** is the
-    provider's own count (new input, cache read, cache write, output, reasoning — exact,
-    every runtime), headlined by its total. **Prompt** is what a request held, drawn as one
-    column per request (stacked by part, click one to read it) over a table of that request
-    beside all of them, then turn by turn with a bar per request. **Every part opens onto
-    what it was made of**: the system prompt by section and `##` heading, each built-in
-    tool's definition, MCP tools folded by server, each of your messages, the assistant's
-    replies and calls by tool, tool results by tool and call — scaled so a part's rows add
-    up to the part. The prefix lists ride our runtime's first step of each attempt
-    (`_meta.daedalus.breakdown.items`) and carry forward to the steps after it; the history
-    lists are the transcript the request carried. For our runtime the parts are
-    **measured**; a request that went through the gateway shim (any runtime on a profile with a
-    base URL) was **estimated from its body** by the gateway shim in an older version (those rows still draw); a runtime that keeps its prompt
-    in its own saved files (`AgentDef.promptFiles`) gets its **static part from those files**
-    (system, tools, MCP — `docs/protocol.md` "What a prompt held"), with a **Not available**
-    warning naming what its file does not hold; for any other they are **inferred**: the transcript up to the request is
-    counted at about four characters a token, a finished compaction replaces what preceded
-    it, and what is left of the request's `used` is "Agent overhead" — the system prompt and
-    tool schemas inside that agent's process, which have no item list. Every figure carries
-    a `~`. **It is the only surface that prints an estimate**: the context popover shows a
-    plain fill and a "Token breakdown" button that opens this tab, and the step/turn popovers
-    show only what was reported. Older journal entries lack the by-role split and draw their
-    history as one "unsplit" row; nothing is reconstructed for past requests. **Its colours
-    are fixed hues (`PROMPT_PARTS`/`BILLED_PARTS` swatches), never `--chart-*`**: the default
-    theme makes those five greys, which draws a stacked bar as one colour in five shades.
-    Billed opens on tiles for what the thread already knows (context window, cache hit,
-    average turn, largest prompt, reported cost, output share), every row carries a share
-    bar, and a turn says its requests, wall time and cache rate (`TurnTokens.turnId` keys
-    `turnDuration`).
 - **A review is written on the diff and sent as one ordinary message.** In the Changes tab's
   diff, a "+" follows the pointer down the gutter (`DiffEditor`'s `review` opt-in: a glyph
   decoration, `glyphMargin` on only then); a click anchors a comment at that line — or at the

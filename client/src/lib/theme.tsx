@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from "react"
 import { BOOT_COLORS } from "./boot-colors"
-import type { ConsoleEntry, GuestConsoleMessage, PickedElement } from "./browser-preview"
 import { BUILTIN_THEMES, type BuiltinTheme } from "./builtin-themes"
 import {
   customThemeId,
@@ -311,20 +310,6 @@ declare global {
       closeWindow?: () => Promise<boolean>
       /** Notify the main process after the full app workspace mounts. */
       signalWorkspaceReady?: () => void
-      /** The Preview's page console (lib/browser-preview.ts). */
-      guestConsole?: {
-        read: (guestId: number) => Promise<ConsoleEntry[]>
-        onMessage: (handler: (guestId: number, message: GuestConsoleMessage) => void) => () => void
-      }
-      /** The Preview's "Pick element" (lib/browser-preview.ts). */
-      previewPicker?: {
-        pick: (guestId: number) => Promise<PickedElement | null>
-        cancel: (guestId: number) => void
-      }
-      /** The Preview's docked DevTools (web-panel.tsx `DevtoolsHost`). */
-      previewDevtools?: {
-        open: (guestId: number, hostId: number) => Promise<boolean>
-      }
       /** electron-updater: `check` resolves once a found update has downloaded. */
       update?: {
         check: () => Promise<{ available: boolean; version?: string }>
@@ -332,8 +317,6 @@ declare global {
       }
       /** A ShortcutId the native menu / tray / hotkey wants run; returns an unsubscribe. */
       onShortcut?: (handler: (id: string) => void) => () => void
-      /** An agent's `new_page` asked for a Preview panel on this address. */
-      onOpenPreview?: (handler: (request: { url: string }) => void) => () => void
     }
   }
   interface DesktopActivity {

@@ -16,7 +16,6 @@ import {
   READING_TRIGGER,
   ReadingBubble,
   ReadingFace,
-  OpenInInspector,
   ReadingPopoverContent,
   Ring,
 } from "@/components/composer/indicator"
@@ -35,7 +34,7 @@ import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import { addUsage, type ThreadState } from "@/lib/store"
-import { spendTime, subagentSpend } from "@/lib/token-breakdown"
+import { spendTime, subagentSpend } from "@/lib/subagent-spend"
 import {
   formatDuration,
   formatTokens,
@@ -429,7 +428,6 @@ export function ContextIndicator({
         wide
         heading="Context window"
         meta={estimated ? "Size estimated" : undefined}
-        action={context ? <OpenInInspector tab="tokens" label="Token breakdown" onOpen={() => setOpen(false)} /> : undefined}
         className="gap-3"
       >
         {/* The window, first and largest: the dial the footer wears, at a size
