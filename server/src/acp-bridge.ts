@@ -327,9 +327,8 @@ export const parseRetryParams = (params: unknown): RetryParams => (params ?? {})
  *
  * `_daedalus/subagent_usage` rides the same detour. It is ours, not the RFD's
  * — the workflow runner emits it server-side, where no validator ever sees it
- * — and it is listed here so an agent may say it too: the fake agent draws a
- * whole run with it, and a runtime that one day reports what a child spent has
- * somewhere to put it. The bridge forwards it whole either way, as it does
+ * — and it is listed here so an agent may say it too: a runtime that one day
+ * reports what a child spent has somewhere to put it. The bridge forwards it whole either way, as it does
  * every other update.
  */
 export const SUBAGENT_UPDATE_METHOD = "_daedalus/subagent_update";
@@ -1964,8 +1963,8 @@ export class AcpBridge implements ConnectionRoute {
       ...(turnFailure ? { failure: turnFailure } : {}),
       ...(this.lastSeenMessageId ? { lastMessageId: this.lastSeenMessageId } : {}),
       ...(durationMs !== undefined ? { durationMs } : {}),
-      ...(generation ? { generation } : {}),
       ...(toolDurationMs !== undefined ? { toolDurationMs } : {}),
+      ...(generation ? { generation } : {}),
     });
     this.releaseIdle();
     this.host.onTurnSettled({ error: failed, interrupted, continued, turnId, promptText: promptText ?? undefined });

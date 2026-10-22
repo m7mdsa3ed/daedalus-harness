@@ -520,8 +520,7 @@ beside Import in Settings › MCP.
   `disconnected` on each parent instead of replaying prompts whose side effects may already
   have happened. Boot awaits this recovery before starting schedulers, so a due fire cannot
   race an unfinished recovery.
-  `pnpm test:workflow-schema` is the pure half; `pnpm test:workflow` drives the engine
-  against the fake agent (`echo:` prompts).
+  `pnpm test:workflow-schema` covers the definition schema.
 
 ## Asking another agent
 

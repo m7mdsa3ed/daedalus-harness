@@ -93,7 +93,7 @@ await test("backfill on an empty journal is a no-op that marks done", async () =
 const now = Date.now();
 const session = async (id: string, title: string, projectId: string, deletedAt: number | null = null) =>
   await db.insert(schema.sessions).values({
-    id, profileId: "prof", projectId, agentId: "fake-echo", model: "", effort: "",
+    id, profileId: "prof", projectId, agentId: "test-agent", model: "", effort: "",
     title, createdAt: now, deletedAt,
   });
 

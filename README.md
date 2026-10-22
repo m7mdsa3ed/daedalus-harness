@@ -73,8 +73,7 @@ set — combined with JSON pruning this lets a template emit whole config blocks
 Shipped agents: **Claude Code** (`ANTHROPIC_*` env), **Codex** (`CODEX_API_KEY`, or ChatGPT
 OAuth via `codex login` on the server; model/effort/base-URL via `CODEX_CONFIG` — a profile
 Base URL generates a `model_providers` gateway entry using `wire_api: "responses"`; edit the
-agent entry to `"chat"` for chat-completions-only gateways), and a `fake-echo` test agent for
-smoke tests (`server/test/fake-agent.mjs`).
+agent entry to `"chat"` for chat-completions-only gateways).
 
 ## Push notifications (FCM)
 
@@ -104,8 +103,5 @@ requests and finished turns while no client is attached. Notification clicks dee
 ## Tests
 
 ```bash
-cd server && pnpm test      # WS<->stdio pipe, sniffing, journal replay (fake agent)
+cd server && pnpm test
 ```
-
-The `fake-echo` agent (`server/test/fake-agent.mjs`) also emits modes, config options, a tool
-call and usage numbers, so the full UI can be exercised without credentials.

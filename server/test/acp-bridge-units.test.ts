@@ -336,8 +336,8 @@ test("OpenCode 2's child_update is said as the RFD sequence the feed used to syn
   assert.deepEqual(translateOpencodeChildUpdate({ type: "status" }), [], "a frame with no child is nobody's");
 });
 
-test("the method table still names the wire strings the fake agent answers to", () => {
-  // The fake agent (test/fake-agent.mjs) and the agent runtime match on the
+test("the method table still names the ACP wire strings", () => {
+  // The agent runtime and every ACP peer match on the
   // raw strings, so an SDK that renamed a method under the same key would
   // break both without a type error anywhere.
   assert.equal(acp.methods.agent.initialize, "initialize");

@@ -184,7 +184,7 @@ export interface AgentDef {
    *    answer until it is resumed (`pause-hooks.ts`).
    *
    * Null means the runtime's own `_daedalus/session/pause` if it advertises
-   * one at the handshake (daedalus, the fake agent), and no pause otherwise —
+   * one at the handshake (daedalus), and no pause otherwise —
    * the UI draws no control for it. Codex's hooks are the obvious next door
    * (`"env"`, through its config template), once their trust review is solved.
    */

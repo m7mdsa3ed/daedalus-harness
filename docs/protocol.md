@@ -837,9 +837,8 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `bridge.canPause`, answered with the **absolute, live-only `paused` event** to every peer
   including the one that asked — it is current state like `queue`, never journaled, and
   `caught_up` carries it on attach. `session_config.canPause` is the offer, on the same
-  carrier and by the same rules as `promptCapabilities`. The fake agent takes the pair with
-  a flag and nothing else, which is what `test:workflow` exercises the bridge path with;
-  the gate itself is `agent/test/turn.test.ts`.
+  carrier and by the same rules as `promptCapabilities`. The gate itself is
+  `agent/test/turn.test.ts`.
 - **A runtime that owns no loop we reach is held from inside its own hooks** — same API, a
   different mechanism, picked by the agent row (`pauseVia`), never by the agent's id. For
   `"acp-meta"` (Claude Code) the bridge puts
@@ -965,54 +964,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `GET /api/sessions/:id/stderr` exposes the tail. `app.onError` turns every route throw
   into the `{ error }` shape the client already parses.
 
-## Test agent
-
-- Test agent: `server/test/fake-agent.mjs` (registered as `fake-echo`), drives the UI without
-  credentials. It answers raw NDJSON, which the SDK on the other end is happy with — it
-  validates inbound `session/update` params but not responses.
-- **It reaches a real install through `pnpm fake:agent`** (`test/install-fake-agent.ts`),
-  which writes the `fake-echo` row into `data/daedalus.db` and nothing else. There is no
-  `POST /api/agents` — an agent row is a contract with a binary somebody else ships, so the
-  API only edits and resets seeded rows — and the fake is deliberately not in
-  `DEFAULT_AGENTS`: seeding is what every install gets, and a test double is not something to
-  ship into other people's pickers. Restart the server, start a thread on it (profile
-  *Default*), delete the row from Settings › Agents when done.
-- **The transcript is developed against it, so its samples are grouped into scenes.** An
-  ordinary prompt streams `default` — the step rows plus the two subagent mechanisms — and
-  `scene:<name>` streams one on its own (`steps`, `subagents`, `questions`, `other`,
-  `workflow`, `all`; a bare `scene:` lists them). Everything else stays keyword-driven:
-  `echo:`, `attachments:`, `perm:<kind>`, `perm-noallow`, `elicit:`, `ask:` (a full
-  AskUserQuestion form — titled options with previews, an "Other" companion, a multi-select
-  — answered back as the settled tool call that records the pick), `plan:` (a `switch_mode`
-  permission carrying markdown), and the words `permission`, `fail`, `crash`, `compact`.
-- **The default turn is deliberately not the whole catalogue.** A turn is the unit the replay
-  window is measured in, so a fake turn heavy enough to pass `REPLAY_WINDOW_BYTES` would
-  change what every windowing test is testing.
-- `scene:workflow` fakes what the *server* stamps, not what an agent says: RFD spawns
-  carrying `_meta.daedalus.workflow` (run id, the definition's whole outline, the phase) and
-  the per-step `_daedalus/subagent_usage`. No runtime emits these — a real run is the
-  harness's own engine — and without the scene the run row could only be seen by running a
-  multi-step workflow against a real provider. `_daedalus/subagent_usage` is listed in
-  `SUBAGENT_UPDATE_KINDS` for that reason: the SDK's closed union would otherwise drop it
-  before the bridge saw it.
-
 ## Trajectory: OpenTelemetry spans
 
 A thread's trajectory is its OpenTelemetry spans, stored in `trace_spans` and drawn by the
 Trajectory panel (thread dock, and `/t/:id/trace`). It replaced a trace page that re-read the
-- **A span is stored as OpenTelemetry says it, not as the panel draws it.** Beside the
-  attributes and events it keeps `spanKind` (`client` for a model call and the prompt request,
-  `internal` otherwise — read off the SDK span, or the OTLP `kind`), `links`, the
-  instrumentation `scope`, the producer's `resource` and `traceState`, on every path in: the
-  tracer, `ingest`, the OTLP intake (which reads the resource and scope from above each span,
-  where OTLP nests them, and still drops identity attributes from the resource) and the
-  agent's `_daedalus/trace` (`toWire`). All optional and nullable columns: a row from before
-  `otel-span-fields` reads as a span that said none of them. The feature name is listed in
-  `FEATURES` for a client that wants to know; the Trajectory does not gate on it, because every
-  reader already treats an absent field as absent. **`daedalus.kind` is the harness's own bucket for
-  icons and filters; it is never the span's identity** — the Trajectory's Overview tab names
-  `SpanKind` and the instrumentation scope, and its OTLP tab and Export are the span in the
-  wire format a collector reads.
 journal: the journal says what was *said*; a span says what *happened*, when, for how long and
 under what.
 
@@ -1045,6 +1000,19 @@ under what.
   waits with their outcome, and `retry`/`paused`/`cancel`/`steer` as span events.
 - **`kind` is decided at write time** (`daedalus.kind`, else the GenAI operation), so the list
   never parses attributes. A runtime's own `turn` is stored as `agent`: the turn is ours.
+- **A span is stored as OpenTelemetry says it, not as the panel draws it.** Beside the
+  attributes and events it keeps `spanKind` (`client` for a model call and the prompt request,
+  `internal` otherwise — read off the SDK span, or the OTLP `kind`), `links`, the
+  instrumentation `scope`, the producer's `resource` and `traceState`, on every path in: the
+  tracer, `ingest`, the OTLP intake (which reads the resource and scope from above each span,
+  where OTLP nests them, and still drops identity attributes from the resource) and the
+  agent's `_daedalus/trace` (`toWire`). All optional and nullable columns: a row from before
+  `otel-span-fields` reads as a span that said none of them. The feature name is listed in
+  `FEATURES` for a client that wants to know; the Trajectory does not gate on it, because every
+  reader already treats an absent field as absent. **`daedalus.kind` is the harness's own bucket for
+  icons and filters; it is never the span's identity** — the Trajectory's Overview tab names
+  `SpanKind` and the instrumentation scope, and its OTLP tab and Export are the span in the
+  wire format a collector reads.
 - **The list elides, the span route does not.** A model span's input is the whole prompt every
   step; `GET /api/sessions/:id/spans` cuts strings at `TRACE_LIST_VALUE_LIMIT` and names them in
   `elided`, and `GET …/spans/:spanId` returns the span whole. Storage caps one value at 256KB.
@@ -1057,20 +1025,6 @@ under what.
 The Tokens panel divides each request's prompt by part. **Where the division comes
 from is per request, in this order, and a request is only ever read by the first that
 answers** (`sessions.ts` `emit`, on the `usage_update`):
-**Output speed is measured on the model spans, never on the turn's wall clock** (`tps.ts`,
-one pure module both halves run, the client through `@daedalus/tps`). A turn's
-`TurnGeneration` — output tokens over decode time — rides `turn_ended.generation` and is
-written on the turn span as `daedalus.decode_ms` / `daedalus.generated_tokens`. `BridgeTrace`
-reads it from the runtime's own `model` spans of that turn's trace (`gen_ai.usage.output_tokens`,
-duration less TTFT — `daedalus.ttft_ms` or the AI SDK's seconds attribute), and when none have
-arrived by the settle (Claude Code exports OTLP on an interval), from the thread's own stream:
-first chunk to the tool call that ends the generation, divided into the turn's usage. Tool calls,
-prefill, permission waits and holds are never in the denominator — dividing by `durationMs`
-drew a tool-heavy turn at a fraction of its real speed. Wall-clock throughput survives only as
-the labelled fallback for a turn with no generation, and `TpsStats` switches a thread's
-extrema over to generation on its first measured turn rather than mixing the two quantities.
-Every average is token-weighted.
-
 
 1. **The agent's own measurement** (`_meta.daedalus.breakdown`, `source: "agent"`) —
    our runtime tokenizes what it sends, so it needs nothing from anyone else.
@@ -1102,6 +1056,20 @@ value at 256KB and a long thread's messages are past it. A user message's
 so they count as system under "Injected context", not as the person's words. The Trajectory
 draws it ("Prompt by part" on a model span, `components/trajectory/prompt-parts.tsx`); the
 Tokens panel still reads usage updates, so folding the two into one panel is the next step.
+
+**Output speed is measured on the model spans, never on the turn's wall clock** (`tps.ts`,
+one pure module both halves run, the client through `@daedalus/tps`). A turn's
+`TurnGeneration` — output tokens over decode time — rides `turn_ended.generation` and is
+written on the turn span as `daedalus.decode_ms` / `daedalus.generated_tokens`. `BridgeTrace`
+reads it from the runtime's own `model` spans of that turn's trace (`gen_ai.usage.output_tokens`,
+duration less TTFT — `daedalus.ttft_ms` or the AI SDK's seconds attribute), and when none have
+arrived by the settle (Claude Code exports OTLP on an interval), from the thread's own stream:
+first chunk to the tool call that ends the generation, divided into the turn's usage. Tool calls,
+prefill, permission waits and holds are never in the denominator — dividing by `durationMs`
+drew a tool-heavy turn at a fraction of its real speed. Wall-clock throughput survives only as
+the labelled fallback for a turn with no generation, and `TpsStats` switches a thread's
+extrema over to generation on its first measured turn rather than mixing the two quantities.
+Every average is token-weighted.
 
 **Counting never holds the event loop.** The gateway shim used to buffer, parse and tokenize
 every `/messages` and `/chat/completions` request (43–156 ms of the single loop per model

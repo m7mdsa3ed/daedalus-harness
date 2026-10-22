@@ -173,9 +173,6 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the conversation, not an in-flight model request or unfinished tool call.
 - Agent stderr is spliced into errors on the way out; every route throw becomes the
   `{ error }` shape the client parses.
-- **Test agent** `server/test/fake-agent.mjs` (`fake-echo`) drives the UI without credentials
-  (`pnpm fake:agent` writes its row). Samples are scenes; the default turn stays small,
-  because a turn is what the replay window is measured in.
 
 ## Profiles, models, config, personas → `docs/profiles-and-config.md`
 

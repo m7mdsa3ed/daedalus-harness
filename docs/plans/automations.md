@@ -88,7 +88,7 @@ Per CLAUDE.md: edit `server/src/db/schema.ts`, `pnpm db:push`, **no backup is ta
 
 - Delete `schedule-page.tsx`, `lib/schedule.ts`; split `routines-page.tsx` (1050 lines) into `automations/` pages built on the kit; one `lib/queries/automations.ts`; one set of keys; `settings.ts` types merge (booleans, not 0/1).
 - Rewire: sidebar nav (two rows -> one), landing chips, palette pages (`routine-pages.tsx`, `root-page.tsx` rows), `layout-options` "Tasks, Routines, Scheduled" toggle, `panel-kinds`, `project-page.tsx` (`useScheduled` -> automations by project), composer `/schedule` -> `/automate` + `core.ts createSchedule`.
-- Tests to keep green: `test:scheduler` (pure `nextSlot/staggerMs/fnv1a`: keep those exports), `test:routines`, `test:git-trigger`, `backup.test.ts`. Add tests for: session-mode delivery, catch-up once, skip reasons, the migration, alias routes (none exist today for `createScheduled`/`/api/scheduled`).
+- Tests to keep green: `test:scheduler` (pure `nextSlot/staggerMs/fnv1a`: keep those exports), `test:git-trigger`, `backup.test.ts`. Add tests for: session-mode delivery, catch-up once, skip reasons, the migration, alias routes (none exist today for `createScheduled`/`/api/scheduled`).
 - Docs: rewrite `docs/client.md` "Routines and schedules pages", update `docs/mcp-and-workflows.md:470-475`, `CLAUDE.md`/`AGENT.md` (they currently say the two are "not folded together"; that rule is what this plan reverses, so edit it deliberately).
 
 ## Phases
