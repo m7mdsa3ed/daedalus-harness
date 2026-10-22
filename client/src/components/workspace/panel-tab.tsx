@@ -83,6 +83,7 @@ import { useAgents, useProjects } from "@/lib/queries/catalog"
 import { settingsFormPath, threadPath } from "@/lib/router"
 import { useSessionMeta } from "@/lib/store"
 import { toast } from "@/lib/toast"
+import { useThreadFullscreen } from "@/lib/workspace/fullscreen"
 import { usePanelPinned } from "@/lib/workspace/panel-pins"
 import { usePanelStatus } from "@/lib/workspace/panel-status"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
@@ -565,6 +566,7 @@ function useTabMenuItems({
      the whole dock and a popout is a second browser window, neither of which is
      the "panel beside a panel" these rows exist for. */
   const isMobile = useIsMobile()
+  const fullscreen = useThreadFullscreen()
   /* The thread's row, for the project it belongs to — not drawn on the face,
      but "Project commands" below is this thread's project's. A row keeps its
      identity unless it changes (see `useSessionMeta`), so this is not a
@@ -641,6 +643,11 @@ function useTabMenuItems({
                 shortcut: "fillPanel",
                 disabled: !hasOtherGroups || isMobile,
                 onClick: () => dock.toggleMaximize(api.id),
+              },
+              {
+                label: fullscreen ? "Leave full screen" : "Full screen",
+                shortcut: "fullscreen",
+                onClick: () => dock.toggleFullscreen(api.id),
               },
               {
                 label: "Move left",

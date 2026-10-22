@@ -81,6 +81,12 @@ contextBridge.exposeInMainWorld("desktop", {
     : undefined,
   /** A ShortcutId the native menu, the tray or the quick-entry hotkey asked
       the renderer to run. Returns an unsubscribe. */
+  /** The Preview panel an agent's `new_page` asked for (main.cjs `createAgentPage`). */
+  onOpenPreview: (handler) => {
+    const listener = (_event, request) => handler(request)
+    ipcRenderer.on("open-preview", listener)
+    return () => ipcRenderer.off("open-preview", listener)
+  },
   onShortcut: (handler) => {
     const listener = (_event, id) => handler(id)
     ipcRenderer.on("shortcut", listener)

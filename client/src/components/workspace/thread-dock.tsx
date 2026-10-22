@@ -73,6 +73,7 @@ import { useProjects } from "@/lib/queries/catalog"
 import { useSessionMeta, useThread } from "@/lib/store"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
+import { uuid } from "@/lib/uuid"
 import { HOME_PROJECT_ID, panelId, type PanelDescriptor } from "@/lib/workspace/panels"
 import { createTerminal } from "@/lib/workspace/terminals"
 import {
@@ -243,6 +244,10 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
       jump(id, turn) {
         apiRef.current?.getPanel("transcript")?.api.setActive()
         jumpRef.current?.(id, turn)
+      },
+      openWeb(url) {
+        const panel: PanelDescriptor = { kind: "web", trust: "external", viewId: uuid().slice(0, 8), url }
+        add(panelId(panel), "web", panel)
       },
       open(kind, reuse) {
         const api = apiRef.current

@@ -346,8 +346,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   --browserUrl http://127.0.0.1:9222` against Electron's own `--remote-debugging-port`
   (`DAEDALUS_DEBUG_PORT`, `"0"` = off; `electron/main.cjs`). That port is **every window of the
   app, the harness page and its token included, to anything local** - a deliberate trade for a
-  stock MCP, replacing the per-thread `builtin:browser` pipe. Desktop shell only; the PWA's
-  iframe has no CDP. Boot deletes any leftover `builtin:browser` row.
+  stock MCP, replacing the per-thread `builtin:browser` pipe. **It is `electron/cdp-proxy.cjs`,
+  not Chromium's own port** (that one is ephemeral): a byte-for-byte relay with one repair,
+  because Electron answers `Target.createTarget` - the MCP's `new_page` - with "Not supported".
+  The page it opens is a pinned window (`createAgentPage`: sandboxed, no preload, the
+  `persist:preview` session, http(s) only). Desktop shell only; the PWA's iframe has no CDP.
+  Boot deletes any leftover `builtin:browser` row.
 - **The marketplace indexes nothing** (`server/src/mcp-registry.ts`): Browse proxies an MCP
   Registry's `GET /v0/servers` (`config.mcpRegistryUrl`, the official one by default) and maps
   `server.json` onto `McpServerInput` — `version=latest` or a search is twenty copies of one

@@ -507,15 +507,19 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   does not change its name depending on whether it is read inside the run or on
   its own.
   **Parallel calls are bracketed, and the wait between steps is said under the step it follows**
-  (`lib/tool-batches.ts`, `BatchBracket`/`StepGap` in `thread-items/rows.tsx`). A batch is the
+  (`lib/tool-batches.ts`, `BatchBand`/`BatchFoot`/`StepGap` in `thread-items/rows.tsx`). A batch is the
   calls of one model request. **The runtime's word beats a guess**: our agent stamps every call
   with `_meta.daedalus.stepId` (one per `start-step`, read through `stepIdOf`), and two
   neighbours are one batch exactly when the ids are equal. Only a call with no id — another
   runtime, an older journal — falls back to timing: starting within `batchBurst` of the batch's
   first call, or before its latest call has ended. A step with neither (a notice, a `session/load`
-  replay, whose stamps are the reload's) never joins, so no evidence marks nothing. The bracket
-  lives in the 4px the run's clip keeps past the rows, so no row moves and every tool layout
-  gets it; a notice between two calls of one batch is inside it. The wait (`gapMin`, Off draws
+  replay, whose stamps are the reload's) never joins, so no evidence marks nothing. The batch is
+  drawn as a band: a faint `primary` wash behind its rows with a 2px bar down the end edge, and one
+  foot line under the last call (`3 in parallel · 2.4s`, the span from first start to latest end —
+  the calls ran side by side, so it is never a sum, and it waits until every call has ended). The
+  band paints behind the rows (`-z-10` in the row's `isolate`) and bleeds into the 4px the run's
+  clip keeps past them, so no row moves and every tool layout gets it; a notice between two calls
+  of one batch is inside it. The wait (`gapMin`, Off draws
   none) is measured from the batch's *latest* end to the next batch's start, hangs off the batch's
   last call, and never reads as a row of its own, because a row would take a mark and a rail
   elbow. A reader's approval time is already out of a call's length (`waitedMs`), so the figure
@@ -1279,6 +1283,14 @@ landed. Every rule here is gated on `useIsMobile()` (the device), never a panel'
   the caret nearly always is. `splitDown` and `fillPanel` sat in the table and
   the tab menu with no handler for a while: **a row in `SHORTCUTS` is not a
   binding until a `useShortcut` names it.**
+- **Full screen is the window, "Fill the dock" is only the dock** (`lib/workspace/fullscreen.ts`,
+  `fullscreen` ⌘/Ctrl+Alt+F, the tab's Arrange menu, the palette). Three things move and one
+  `leave()` puts all three back, whichever door the reader used: the group is maximized (only
+  if we did it, and only when there is another group to fill over), the sidebar is collapsed
+  (its prior state is restored, and handed back on `pagehide` because that state persists),
+  and the page asks the browser's Fullscreen API where `fullscreenEnabled` (absent on an
+  iPhone, where the in-app half stands alone). The browser's own Esc and dockview's restore
+  both route to `leave()`. The mode is not persisted: a reload is a way out.
 
 ## The desktop shell
 

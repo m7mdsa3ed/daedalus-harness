@@ -27,7 +27,7 @@ import {
   SquareIcon,
   WrenchIcon,
 } from "lucide-react"
-import { ChevronRightIcon, ClockIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon } from "lucide-react"
+import { ChevronRightIcon, ClockIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon, Layers as LayersIcon } from "lucide-react"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu } from "@/components/item-context-menu"
@@ -398,8 +398,8 @@ export const ToolRun = React.memo(function ToolRun({
                 )}
                 {/* The entrance rides an inner box: the rail is this wrapper's
                     pseudos, and a row sliding in must not take the line with it. */}
-                <div className={cn("relative", !branch && !already.has(item.id) && "harness-item-in")}>
-                  <BatchBracket batch={batches[index]} />
+                <div className={cn("relative isolate", !branch && !already.has(item.id) && "harness-item-in")}>
+                  <BatchBand batch={batches[index]} />
                   {/* Nested rows retain their own same-view fold; direct items use
                       the ordinary step renderer and preserve a live thought tail. */}
                   {item.kind === "run" ? (
@@ -413,6 +413,7 @@ export const ToolRun = React.memo(function ToolRun({
                       streaming={tail && index === showing.length - 1}
                     />
                   )}
+                  <BatchFoot batch={batches[index]} />
                 </div>
                 {batches[index].gapMs !== undefined && <StepGap ms={batches[index].gapMs} />}
               </div>
@@ -1422,27 +1423,51 @@ function ThoughtDetail({ text, streaming, label }: { text: string; streaming: bo
 
 // ─── Per-kind layouts ────────────────────────────────────────────────────────
 
-/** One bracket down the end edge of every row of a parallel batch: a tick in at
-    the first call, a line past the ones between, a tick in at the last — so the
-    calls that went out in one response read as one group, whatever the layout
-    draws on the other side. It lives in the 4px the run's clip already keeps
-    past the rows, so no row moves, and it is `primary` — the one tint a row
-    leaves for something about the run rather than the call. Rows are 24px
-    lines, so a tick lands on the first line's centre. */
-function BatchBracket({ batch }: { batch: StepBatch }) {
+/** The ground behind a parallel batch: a faint `primary` wash with a 2px bar
+    down its end edge, rounded where the batch begins and ends, so the calls
+    that went out in one response read as one object whatever the layout draws
+    on the other side. It paints behind the rows (`-z-10` inside the row
+    wrapper's `isolate`), so nothing is tinted over text, and it bleeds into the
+    4px the run's clip keeps past the rows — a row's own hover ground bleeds the
+    same 4px, so the two meet. `primary` is the one tint a row leaves for
+    something about the run rather than the call. */
+function BatchBand({ batch }: { batch: StepBatch }) {
   if (!batch.edge) return null
   return (
     <span
-      aria-hidden={batch.edge !== "start"}
+      aria-hidden
       className={cn(
-        "pointer-events-none absolute -end-1 w-1 border-e border-primary/50",
-        batch.edge === "start" && "top-3.5 -bottom-0.5 border-t rounded-te-sm",
-        batch.edge === "middle" && "-top-0.5 -bottom-0.5",
-        batch.edge === "end" && "-top-0.5 bottom-3.5 border-b rounded-be-sm"
+        "pointer-events-none absolute -inset-x-1 -z-10 bg-primary/[0.045] -top-0.5 -bottom-0.5",
+        batch.edge === "start" && "top-0 rounded-t-xl",
+        batch.edge === "end" && "bottom-0 rounded-b-xl"
       )}
     >
-      {batch.edge === "start" && <span className="sr-only">Start of {batch.size} parallel calls</span>}
+      <span
+        className={cn(
+          "absolute end-0 w-0.5 bg-primary/40",
+          batch.edge === "start" ? "top-2 bottom-0 rounded-t-full" : "top-0",
+          batch.edge === "end" ? "bottom-2 rounded-b-full" : batch.edge === "middle" && "bottom-0"
+        )}
+      />
     </span>
+  )
+}
+
+/** What the batch is, said once under its last call: how many went out together
+    and, once they have all ended, what they cost together — the time of the
+    slowest, not the sum, because they ran side by side. Inside the band, so it
+    belongs to the group; aligned to the title column like `StepGap`. */
+function BatchFoot({ batch }: { batch: StepBatch }) {
+  if (batch.edge !== "end" || !batch.size) return null
+  return (
+    <div
+      title="Calls the agent made in one response, run side by side"
+      className="flex items-center gap-1.5 ps-7 pe-3 pb-1 text-[0.625rem] leading-4 tabular-nums text-primary/80"
+    >
+      <LayersIcon aria-hidden className="size-2.5 shrink-0" />
+      <span className="shrink-0">{batch.size} in parallel</span>
+      {batch.spanMs !== undefined && <span className="shrink-0 text-muted-foreground">· {formatElapsed(batch.spanMs)}</span>}
+    </div>
   )
 }
 

@@ -56,6 +56,7 @@ import {
   saveNamedLayout,
 } from "@/lib/workspace/layout"
 import { loadActiveSpace } from "@/lib/spaces"
+import { toggleFullscreen as toggleThreadFullscreen } from "@/lib/workspace/fullscreen"
 import { forgetPanelPin, isPanelPinned, pinnedPanels, togglePanelPin } from "@/lib/workspace/panel-pins"
 import {
   setActiveChat,
@@ -557,6 +558,15 @@ export function useWorkspaceDock(): DockController {
       if (!api || !panel) return
       if (api.hasMaximizedGroup()) api.exitMaximizedGroup()
       else if (isGrid(panel.group)) api.maximizeGroup(panel)
+    },
+    [panelFor]
+  )
+
+  const toggleFullscreen = React.useCallback(
+    (id?: string) => {
+      const api = apiRef.current
+      if (!api) return
+      toggleThreadFullscreen(api, panelFor(id))
     },
     [panelFor]
   )
@@ -1195,6 +1205,7 @@ export function useWorkspaceDock(): DockController {
   useShortcut("splitRight", () => splitActive("right"))
   useShortcut("splitDown", () => splitActive("below"))
   useShortcut("fillPanel", () => toggleMaximize())
+  useShortcut("fullscreen", () => toggleFullscreen())
   useShortcut("nextPane", () => walkPanes(true))
   useShortcut("prevPane", () => walkPanes(false))
   useShortcut("resizePane", (event) => resizeActive(event.key), { allowRepeat: true })
@@ -1230,6 +1241,7 @@ export function useWorkspaceDock(): DockController {
       splitActive,
       targetNext,
       toggleMaximize,
+      toggleFullscreen,
       moveTab,
       sendTab,
       equalizePanes,
@@ -1280,6 +1292,7 @@ export function useWorkspaceDock(): DockController {
       splitActive,
       targetNext,
       toggleMaximize,
+      toggleFullscreen,
       moveTab,
       sendTab,
       equalizePanes,

@@ -40,6 +40,7 @@ import {
   Keyboard,
   LogOut,
   MessageSquarePlusIcon,
+  Maximize,
   Minus,
   Monitor,
   MonitorIcon,
@@ -609,6 +610,15 @@ export function RootPage() {
       icon: <Square />,
       chord: binds.fillPanel.chords[0],
       onSelect: () => palette.run(() => palette.dock.toggleMaximize()),
+    },
+    {
+      id: "dock:fullscreen",
+      group: "Workspace",
+      title: "Full screen",
+      keywords: "fullscreen focus zen immersive hide sidebar thread",
+      icon: <Maximize />,
+      chord: binds.fullscreen.chords[0],
+      onSelect: () => palette.run(() => palette.dock.toggleFullscreen()),
     },
     {
       id: "dock:stack",

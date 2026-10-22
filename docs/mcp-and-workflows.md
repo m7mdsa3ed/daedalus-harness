@@ -608,7 +608,20 @@ beside Import in Settings › MCP.
   `--wsEndpoint` pipe through the server and an Electron CDP shim that exposed only the one
   Drive-enabled guest); `retitleBuiltinMcp` deletes a leftover row at boot, links cascade.
 - **Electron main opens `--remote-debugging-port`** on 127.0.0.1 (`DAEDALUS_DEBUG_PORT`, default
-  9222, `"0"` disables; set before `ready`). The cost is the reason the shim existed: the port is
+  9222, `"0"` disables; set before `ready`) - **but on port 0, behind `electron/cdp-proxy.cjs`**,
+  which listens on the advertised port and relays HTTP and WebSocket byte for byte to the real
+  one (found in `DevToolsActivePort`). It makes exactly one repair: Electron's browser target
+  refuses `Target.createTarget` ("Not supported"), which is what `new_page` sends, so the proxy
+  answers it (and `PUT /json/new`) itself with `createAgentPage`. **The page is the Preview
+  panel, never a window**: main sends `open-preview` to the main window, the renderer opens an
+  external-trust web panel (`viewId` minted, so a second page is a second tab) in the routed
+  thread's dock - else the outer dock - and main matches the `<webview>` that attaches to the
+  address it asked for (`will-attach-webview` records it, `did-attach-webview` resolves it) and
+  answers with that guest's CDP target id. The guest is pinned like any Preview (sandbox, no
+  preload, `persist:preview`, http(s) only). No panel within 10s is an error the agent reads,
+  never a fallback window. Webviews are listed by the MCP only with `--experimentalIncludeAllPages`,
+  which the library row carries. Every other message, including flattened sessions and events,
+  is untouched. The cost is the reason the shim existed: the port is
   every window of the app, the harness page and its token included, to anything local, and the
   MCP sees all of them (`list_pages` / `select_page`). It is per desktop app, not per thread - two
   threads share one browser.

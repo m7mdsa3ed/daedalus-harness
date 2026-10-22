@@ -3,6 +3,7 @@ const path = require("node:path")
 const fs = require("node:fs")
 const http = require("node:http")
 const { installTray, setActivity, refreshTray } = require("./tray.cjs")
+const { startCdpProxy, findUpstream } = require("./cdp-proxy.cjs")
 
 const DEV_URL = process.env.ELECTRON_DEV_URL || ""
 
@@ -20,7 +21,10 @@ if (IS_WSL || process.env.ELECTRON_DISABLE_GPU) {
    DAEDALUS_DEBUG_PORT; "0" turns it off. Must be set before `ready`. */
 const DEBUG_PORT = process.env.DAEDALUS_DEBUG_PORT ?? "9222"
 if (DEBUG_PORT !== "0") {
-  app.commandLine.appendSwitch("remote-debugging-port", DEBUG_PORT)
+  /* Chromium's own port is an ephemeral one nobody is told about; DEBUG_PORT is
+     `cdp-proxy.cjs`, which relays to it and answers the one call Electron
+     refuses (`Target.createTarget`, i.e. the MCP's `new_page`). */
+  app.commandLine.appendSwitch("remote-debugging-port", "0")
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1")
 }
 
@@ -531,11 +535,18 @@ app.on("web-contents-created", (_event, contents) => {
     prefs.contextIsolation = true
     prefs.sandbox = true
     params.partition = PREVIEW_PARTITION
+    attachingAgentPage = pendingAgentPages.find((entry) => entry.src === params.src) ?? null
     /* about:blank is the docked DevTools' host (`preview-devtools-open`), which
        must not have navigated before DevTools takes it over. */
     if (!isWebUrl(params.src) && params.src !== "about:blank") event.preventDefault()
   })
   contents.on("did-attach-webview", (_e, guest) => {
+    const requested = attachingAgentPage
+    attachingAgentPage = null
+    if (requested) {
+      pendingAgentPages.splice(pendingAgentPages.indexOf(requested), 1)
+      requested.resolve(guest)
+    }
     /* A popup is a link the person followed out of the page: the real
        browser, never a window of the app shell. */
     guest.setWindowOpenHandler(({ url }) => {
@@ -702,6 +713,52 @@ ipcMain.handle("preview-devtools-open", (event, guestId, hostId) => {
   guest.openDevTools()
   return true
 })
+/* ── Pages an agent opens ──
+   `Target.createTarget` (the MCP's `new_page`), answered by `cdp-proxy.cjs`.
+   The page is the app's own Preview panel, not a window: main asks the renderer
+   to open one on the address (`open-preview`), waits for that panel's
+   `<webview>` to attach, and answers with the guest's CDP target id. So the
+   person watches the agent browse in the panel, and the guest is pinned exactly
+   as any Preview is (`will-attach-webview`) - no preload, no Node, sandboxed,
+   `persist:preview`, http(s) only. There is no second kind of page, and no
+   fallback to a window: a panel that never opened is an error the agent can read.
+
+   The guest is matched to its request by the address it was asked to load, read
+   in `will-attach-webview` and consumed by the `did-attach-webview` that
+   follows it. */
+const AGENT_PAGE_TIMEOUT_MS = 10000
+const pendingAgentPages = []
+let attachingAgentPage = null
+async function createAgentPage({ url } = {}) {
+  /* about:blank is what the MCP asks for first and navigates from. */
+  if (url !== "about:blank" && !(url && isWebUrl(url)))
+    throw new Error(`Only http(s) pages can be opened, not ${url || "an empty address"}`)
+  const src = url === "about:blank" ? url : new URL(url).toString()
+  const main = await showMain()
+  const guest = await new Promise((resolve, reject) => {
+    const entry = { src, resolve: undefined }
+    const timer = setTimeout(() => {
+      pendingAgentPages.splice(pendingAgentPages.indexOf(entry), 1)
+      reject(new Error("The Preview panel did not open - is the app's window ready?"))
+    }, AGENT_PAGE_TIMEOUT_MS)
+    entry.resolve = (guest) => {
+      clearTimeout(timer)
+      resolve(guest)
+    }
+    pendingAgentPages.push(entry)
+    main.webContents.send("open-preview", { url: src })
+  })
+  /* The CDP id is the target's, not the webContents' - Chromium names it. */
+  const dbg = guest.debugger
+  const wasAttached = dbg.isAttached()
+  if (!wasAttached) dbg.attach("1.3")
+  try {
+    const { targetInfo } = await dbg.sendCommand("Target.getTargetInfo")
+    return targetInfo.targetId
+  } finally {
+    if (!wasAttached && dbg.isAttached()) dbg.detach()
+  }
+}
 ipcMain.handle("preview-console-read", (event, guestId) => {
   const guest = webContents.fromId(guestId)
   if (!guest || guest.hostWebContents !== event.sender) return []
@@ -945,6 +1002,11 @@ if (!app.requestSingleInstanceLock()) {
   app.on("second-instance", () => void showMain())
 
   app.whenReady().then(() => {
+    if (DEBUG_PORT !== "0") {
+      const upstream = findUpstream(app.getPath("userData"))
+      upstream.catch((error) => console.error(`[daedalus] ${error.message}; DevTools is off`))
+      startCdpProxy({ port: Number(DEBUG_PORT), upstream, createTarget: createAgentPage })
+    }
     installMenu()
     installTray(iconFile(), {
       openThread: openThreadInMain,

@@ -203,6 +203,7 @@ export type ShortcutId =
   | "splitRight"
   | "splitDown"
   | "fillPanel"
+  | "fullscreen"
   | "nextPane"
   | "prevPane"
   | "resizePane"
@@ -295,6 +296,10 @@ export const KEYS = {
   /** Make the panel in front fill the dock. Not `mod+shift+f` — that is Search
       across files — and not ⌘↩, which the composer owns. */
   fillPanel: "mod+shift+m",
+  /** The whole window, not the dock: the sidebar goes and the browser is asked
+      for full screen. Not F11 (the browser's own, which would race ours) and not
+      `mod+shift+f`, which is Search across files. */
+  fullscreen: "mod+alt+f",
   /** The columns of a split. Alt+←/→ is the sideways sibling of the tab walk's
       Alt+↓/↑ (a strip is a list, a split is a row), and Alt+Shift+arrows moves
       the divider the way the arrow points. Neither is ⌘/Ctrl+Shift+arrow: that
@@ -395,6 +400,14 @@ export const SHORTCUTS: ShortcutDef[] = [
     chords: [KEYS.fillPanel],
     rebindable: true,
     note: "Takes back the split: the column in front of you fills the dock, and switching to another column empties it again.",
+  },
+  {
+    id: "fullscreen",
+    scope: "Global",
+    label: "Full screen",
+    chords: [KEYS.fullscreen],
+    rebindable: true,
+    note: "The tab in front fills the window: its column fills the dock, the sidebar is put away and the browser goes full screen. The same chord, or Esc where the browser owns it, puts everything back.",
   },
   {
     id: "nextPane",

@@ -13,6 +13,10 @@ line: keep each bullet on a single line.
 
 ## [Unreleased]
 
+### 2026-10-22
+
+- **The browser MCP's `new_page` opens a Preview panel in the desktop app.** Electron refuses `Target.createTarget`, so the debugging port is now a small relay (`electron/cdp-proxy.cjs`) in front of Chromium's own that answers that one call by asking the app to open a Preview panel and handing back its webview's target; everything else passes through untouched.
+
 ### 2026-10-21
 
 - **Claude Code reports its own OpenTelemetry to the harness, and every model call shows its prompt by part.** A new receiver (`server/src/otlp.ts`, `POST /otlp/<key>/<threadId>/v1/{traces,logs}`, the derived key in the path as the credential) takes Claude Code's spans and `api_request_body` events (`AgentDef.telemetryVia`, seed 34, the `OTEL_*` keys in its env — editable, and only the user's values are kept): the interaction hangs under the harness's prompt span, a model call is `chat <model>` with the provider's exact input, output and cache counts, and the bridge stops deriving model and tool spans for it; the raw request body Claude Code writes to the thread's own directory is divided into system, tools, MCP and the conversation (`prompt-parts.ts`, counted without holding the event loop, a `<system-reminder>` counted as injected context rather than the person's words), written as `daedalus.prompt_parts` and deleted, and the Trajectory's span detail draws it as "Prompt by part". Our own agent gets the same from the AI SDK's `gen_ai.*` attributes on its `chat` spans. Verified end to end against a real subscription login with env only; identity attributes (email, account ids) are dropped on arrival, and a body path outside the thread's directory is neither read nor deleted. Codex and OpenCode do not export request content, so they keep the saved-file split.

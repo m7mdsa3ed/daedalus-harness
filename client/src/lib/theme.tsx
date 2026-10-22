@@ -332,6 +332,8 @@ declare global {
       }
       /** A ShortcutId the native menu / tray / hotkey wants run; returns an unsubscribe. */
       onShortcut?: (handler: (id: string) => void) => () => void
+      /** An agent's `new_page` asked for a Preview panel on this address. */
+      onOpenPreview?: (handler: (request: { url: string }) => void) => () => void
     }
   }
   interface DesktopActivity {

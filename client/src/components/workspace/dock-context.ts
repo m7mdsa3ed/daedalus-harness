@@ -97,6 +97,9 @@ export interface WorkspaceDock {
       way a panel's `into` is. Spent by the next chat open, within 2s. */
   targetNext: (group: string) => void
   toggleMaximize: (id?: string) => void
+  /** The panel (`id`, or the one in front) takes the whole window — dock, sidebar
+      and browser — and a second call puts it all back. */
+  toggleFullscreen: (id?: string) => void
   /** Reorder the tab in front within its strip. False when it cannot move. */
   moveTab: (delta: -1 | 1) => boolean
   /** Send the tab in front to the pane that way, or split one off. False when

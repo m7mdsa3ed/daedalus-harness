@@ -69,6 +69,10 @@ export interface StepBatch {
   /** Ms between the end of this call's batch and the start of the next batch,
       on the batch's last call only, and only past the threshold. */
   gapMs?: number
+  /** Ms from the batch's first call starting to its latest ending — what the
+      calls cost together, since they ran side by side. On the batch's last call
+      only, and only once every call has ended. */
+  spanMs?: number
 }
 
 export function layoutBatches(spans: readonly BatchSpan[], options: BatchOptions): StepBatch[] {
@@ -97,6 +101,7 @@ export function layoutBatches(spans: readonly BatchSpan[], options: BatchOptions
       const first = batch.members[0]
       const last = batch.members[size - 1]
       for (let i = first; i <= last; i++) out[i].edge = i === first ? "start" : i === last ? "end" : "middle"
+      if (Number.isFinite(batch.end)) out[last].spanMs = Math.max(0, batch.end - batch.start)
     }
     const next = batches[b + 1]
     if (options.gapMinMs === null || !next || !Number.isFinite(batch.end)) return

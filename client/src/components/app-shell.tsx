@@ -521,6 +521,19 @@ export function AppShell({
   // The desktop shell's tray, native menu and quick-entry hotkey (lib/desktop.ts).
   useDesktopBridge()
 
+  /* An agent's `new_page` (main.cjs `createAgentPage`) opens a Preview panel -
+     the thread in front's own dock when it has one, else the outer dock's. Its
+     own panel, never the project's: a second page is a second tab. */
+  React.useEffect(
+    () =>
+      window.desktop?.onOpenPreview?.(({ url }) => {
+        const inThread = threadDock(routeRef.current.sessionId)
+        if (inThread) inThread.openWeb(url)
+        else dock.openPanel({ kind: "web", trust: "external", viewId: uuid().slice(0, 8), url }, { direction: "right" })
+      }),
+    [dock]
+  )
+
   /* The route tree — every page that is not the transcript — lives in
      `components/routes.tsx`, which is also the only module that imports those
      pages: a static import of one here would put all of them back in the entry

@@ -404,7 +404,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   React.useEffect(() => {
     const file = params.diff?.path ?? params.file
     api.setTitle(
-      file ? file.slice(file.lastIndexOf("/") + 1) : url ? new URL(url).host : project ? `Preview — ${project.name}` : "Preview"
+      file ? file.slice(file.lastIndexOf("/") + 1) : url ? new URL(url).host || url : project ? `Preview — ${project.name}` : "Preview"
     )
   }, [api, url, project, params.file, params.diff])
 

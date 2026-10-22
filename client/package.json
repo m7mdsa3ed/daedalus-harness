@@ -123,6 +123,7 @@
     "tailwindcss": "^4.3.3",
     "tiptap-markdown": "^0.9.0",
     "unist-util-visit": "^5.1.0",
+    "ws": "8.21.3",
     "zod": "^4.6.5"
   },
   "devDependencies": {

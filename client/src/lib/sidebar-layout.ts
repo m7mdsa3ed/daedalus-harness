@@ -18,4 +18,5 @@ const store = createLocalStore<{ open: boolean }>(
 )
 
 export const useSidebarOpen = () => store.use().open
+export const getSidebarOpen = () => store.get().open
 export const setSidebarOpen = (open: boolean) => store.set({ open })

@@ -55,4 +55,13 @@ rows = layoutBatches([{ start: 0, end: 10 }, { start: 5000, end: 5100 }], { burs
 assert.equal(rows[0].gapMs, undefined)
 rows = layoutBatches([{ start: 0, end: 10 }, { start: 5000, end: 5100 }], { burstMs: 250, gapMinMs: 10000 })
 assert.equal(rows[0].gapMs, undefined)
+
+// The batch says what it cost together: first start to latest end, on its last
+// call, and nothing while a call is still out.
+rows = layoutBatches([{ start: 0, end: 900 }, { start: 5, end: 300 }, { start: 8, end: 2000 }], timing)
+assert.deepEqual(rows.map((r) => r.spanMs), [undefined, undefined, 2000])
+rows = layoutBatches([{ start: 0, end: 900 }, { start: 5 }], timing)
+assert.ok(rows.every((r) => r.spanMs === undefined))
+rows = layoutBatches([{ start: 0, end: 10 }, { start: 5000, end: 5100 }], timing)
+assert.ok(rows.every((r) => r.spanMs === undefined)) // a lone call has no batch
 console.log("tool-batches: ok")
