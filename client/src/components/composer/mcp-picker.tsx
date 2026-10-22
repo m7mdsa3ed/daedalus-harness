@@ -1,5 +1,5 @@
 import * as React from "react"
-import { SearchIcon, ServerIcon, SettingsIcon } from "lucide-react"
+import { PlugIcon, SearchIcon, SettingsIcon } from "lucide-react"
 import { useNavigate } from "react-router"
 
 import { McpIcon } from "@/components/entity-icon"
@@ -111,6 +111,37 @@ function McpRow({
   )
 }
 
+/** Logos shown on the chip before the rest collapse into a `+N`. */
+const FACE_MARKS = 3
+
+/** The chip's face: a plug when nothing is picked, otherwise the picked
+    servers' own marks as an overlapping stack (each in a ring the colour of the
+    ground, so they read as separate discs), `+N` past three, and the name where
+    exactly one is picked and the panel has room. */
+function McpFace({ selected }: { selected: McpServerDef[] }) {
+  if (selected.length === 0) return <PlugIcon aria-hidden className={READING_MARK} />
+  const shown = selected.slice(0, FACE_MARKS)
+  const extra = selected.length - shown.length
+  return (
+    <>
+      <span aria-hidden className="flex items-center -space-x-1.5">
+        {shown.map((server) => (
+          <span
+            key={server.id}
+            className="grid size-5 place-items-center rounded-full bg-muted ring-2 ring-background"
+          >
+            <McpIcon server={server} className="size-3.5" />
+          </span>
+        ))}
+      </span>
+      {extra > 0 && <ChipBadge>+{formatCount(extra)}</ChipBadge>}
+      {selected.length === 1 && (
+        <span className="hidden max-w-28 min-w-0 truncate @panel-sm:inline">{selected[0].name}</span>
+      )}
+    </>
+  )
+}
+
 /**
  * The MCP servers this thread will carry, and the one place they are picked:
  * a chip beside the model pill whose face is the servers' own logos (the name
@@ -179,11 +210,7 @@ export function McpPicker({
               .filter(Boolean)
               .join(" — ")}
           >
-            <ServerIcon className={READING_MARK} />
-            {/* The count is the whole reading: a badge, no frame around the chip. */}
-            {selected.length > 0 && (
-              <ChipBadge>{formatCount(selected.length)}</ChipBadge>
-            )}
+            <McpFace selected={selected} />
             {pending && <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />}
           </Button>
         }
