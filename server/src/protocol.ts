@@ -1,11 +1,26 @@
 import type * as acp from "./acp.js";
 
+/** A thread's output-speed readings, folded per turn by `tps.ts`. `min`/`max`
+    are generation rates once `decodeMs` is present, throughput rates before. */
 export interface TpsStats {
   min: number;
   max: number;
+  /** Throughput: output tokens over turn wall clock, summed. */
   outputTokens: number;
   durationMs: number;
   toolDurationMs?: number;
+  /** Generation: output tokens over decode time, summed over turns that had one. */
+  generatedTokens?: number;
+  decodeMs?: number;
+}
+
+/** What a turn's model calls wrote and how long they spent writing it — the
+    span of each call less its time to first token, summed. Calls that overlap
+    (parallel subagents) each count their own time, so the ratio is the
+    token-weighted speed of a call, not of the turn. */
+export interface TurnGeneration {
+  outputTokens: number;
+  decodeMs: number;
 }
 
 /**
@@ -967,6 +982,23 @@ export interface TraceSpanEvent {
   attributes?: Record<string, TraceAttributeValue>;
 }
 
+/** OpenTelemetry's `SpanKind`, spelled out. Absent on a span recorded before the
+    server kept it (read as internal). */
+export type TraceSpanOtelKind = "internal" | "server" | "client" | "producer" | "consumer";
+
+/** A causal reference to a span that is not the parent (OTLP `Span.Link`). */
+export interface TraceSpanLink {
+  traceId: string;
+  spanId: string;
+  attributes?: Record<string, TraceAttributeValue>;
+}
+
+/** The instrumentation scope that made a span (OTLP `InstrumentationScope`). */
+export interface TraceSpanScope {
+  name: string;
+  version?: string;
+}
+
 export interface TraceSpan {
   traceId: string;
   spanId: string;
@@ -984,6 +1016,16 @@ export interface TraceSpan {
   statusMessage?: string;
   attributes: Record<string, TraceAttributeValue>;
   events: TraceSpanEvent[];
+  /* The rest of the OpenTelemetry span model, as the span's producer said it.
+     All optional: a span stored before `otel-span-fields` has none of them. */
+  /** OTel `SpanKind` — a model call is `client`, the prompt request is `client`. */
+  spanKind?: TraceSpanOtelKind;
+  links?: TraceSpanLink[];
+  scope?: TraceSpanScope;
+  /** The producer's resource attributes (`service.name`, `telemetry.sdk.*`). */
+  resource?: Record<string, TraceAttributeValue>;
+  /** W3C `tracestate`, serialised. */
+  traceState?: string;
   /** Attribute keys whose value the list elided for size (`TRACE_LIST_VALUE_LIMIT`);
       `GET /api/sessions/:id/spans/:spanId` returns them whole. */
   elided?: string[];
@@ -1324,6 +1366,11 @@ export type ThreadEvent =
       durationMs?: number;
       /** Union wall time spent in the thread's own tool calls; overlapping calls count once. */
       toolDurationMs?: number;
+      /** Output speed's own denominator, read off the turn's model spans
+          (`BridgeTrace`). Absent when no call was timed — a runtime whose
+          spans had not arrived, or a journal from before it was measured —
+          and then the speed falls back to throughput over `durationMs`. */
+      generation?: TurnGeneration;
       /** The ACP `messageId` of the last content chunk this turn produced —
           absent when the runtime never sent one, or the turn produced no
           assistant chunks at all. Rewind reads this off the turn *before* the

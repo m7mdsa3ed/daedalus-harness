@@ -103,9 +103,12 @@ await test("an interaction hangs under the harness's prompt span, its model span
   const identity = [kv("user.email", "me@example.com"), kv("user.id", "u"), kv("organization.id", "o"), kv("session.id", "claude-session")];
   const traces = {
     resourceSpans: [{
+      resource: { attributes: [kv("service.name", "claude-code"), kv("user.email", "me@example.com")] },
       scopeSpans: [{
+        scope: { name: "com.anthropic.claude_code", version: "9.9.9" },
         spans: [
-          { traceId: "a".repeat(32), spanId: "1".repeat(16), parentSpanId: "2".repeat(16), name: "claude_code.llm_request", startTimeUnixNano: nanos(T0 + 10), endTimeUnixNano: nanos(T0 + 900),
+          { traceId: "a".repeat(32), spanId: "1".repeat(16), parentSpanId: "2".repeat(16), kind: 3, traceState: "vendor=1",
+            links: [{ traceId: "c".repeat(32), spanId: "3".repeat(16), attributes: [kv("why", "retry")] }], name: "claude_code.llm_request", startTimeUnixNano: nanos(T0 + 10), endTimeUnixNano: nanos(T0 + 900),
             attributes: [...identity, kv("model", "claude-opus-5-5"), kv("input_tokens", 2), kv("output_tokens", 40), kv("cache_read_tokens", 1000), kv("cache_creation_tokens", 500), kv("request_id", "req_1"), kv("ttft_ms", 300)], status: { code: 0 } },
           { traceId: "a".repeat(32), spanId: "2".repeat(16), name: "claude_code.interaction", startTimeUnixNano: nanos(T0), endTimeUnixNano: nanos(T0 + 1000),
             attributes: [...identity, kv("interaction.sequence", 1)], status: { code: 1 } },
@@ -139,6 +142,15 @@ await test("an interaction hangs under the harness's prompt span, its model span
   assert.equal(chat.attributes["daedalus.ttft_ms"], 300);
   for (const key of ["user.email", "user.id", "organization.id"]) assert.equal(chat.attributes[key], undefined, `${key} is dropped`);
   assert.equal(chat.attributes["session.id"], "claude-session", "what is not identity stays");
+  /* The OTel span model is kept whole, not flattened to the attributes. */
+  assert.equal(chat.spanKind, "client");
+  assert.deepEqual(chat.scope, { name: "com.anthropic.claude_code", version: "9.9.9" });
+  assert.deepEqual(chat.resource, { "service.name": "claude-code" }, "the resource keeps its attributes, minus identity");
+  assert.equal(chat.traceState, "vendor=1");
+  assert.deepEqual(chat.links, [{ traceId: "c".repeat(32), spanId: "3".repeat(16), attributes: { why: "retry" } }]);
+  assert.equal(request.spanKind, "client", "the harness's own prompt request is a client span");
+  assert.equal(request.scope?.name, "daedalus-harness");
+  assert.equal(request.resource?.["service.name"], "daedalus-harness");
 });
 
 await test("the parts add up to the provider's total, split system / tools / MCP / conversation, and the body is gone", async () => {

@@ -6,7 +6,7 @@
    What a span *is* comes from the server (`kind`); what it *cost* is read off
    its attributes, preferring the harness's own keys (`daedalus.*`, ms) over the
    GenAI conventions (`gen_ai.*`, where time to first chunk is in seconds). */
-import type { TraceAttributeValue, TraceSpan, TraceSpanKind } from "@daedalus/protocol"
+import type { TraceAttributeValue, TraceSpan, TraceSpanKind, TraceSpanOtelKind } from "@daedalus/protocol"
 
 export interface SpanNode {
   span: TraceSpan
@@ -52,6 +52,129 @@ export function flatten(roots: SpanNode[], collapsed: ReadonlySet<string> = new 
   roots.forEach(walk)
   return out
 }
+
+/* ── Traces ──
+   OpenTelemetry's unit is the trace: every span sharing a `traceId`. Here a
+   trace is a turn (the harness roots one per turn) or a spawn outside one. */
+
+export interface TraceGroup {
+  traceId: string
+  roots: SpanNode[]
+  spans: TraceSpan[]
+  /** Earliest start; and the latest end, null while any span is still open. */
+  start: number
+  end: number | null
+  errors: number
+}
+
+/** The forest, grouped by the trace its roots belong to, in start order. */
+export function groupTraces(roots: SpanNode[]): TraceGroup[] {
+  const by = new Map<string, TraceGroup>()
+  for (const root of roots) {
+    let group = by.get(root.span.traceId)
+    if (!group) by.set(root.span.traceId, (group = { traceId: root.span.traceId, roots: [], spans: [], start: Infinity, end: 0, errors: 0 }))
+    group.roots.push(root)
+    for (const node of flatten([root])) {
+      group.spans.push(node.span)
+      group.start = Math.min(group.start, node.span.start)
+      if (node.span.status === "error") group.errors++
+    }
+  }
+  for (const group of by.values()) {
+    group.end = group.spans.some((span) => span.end === null) ? null : Math.max(...group.spans.map((span) => span.end!))
+  }
+  return [...by.values()].sort((a, b) => a.start - b.start)
+}
+
+/** What a trace was about: the turn's prompt, else its root's name. */
+export function traceLabel(group: TraceGroup): string {
+  const root = group.roots[0].span
+  const prompt = root.attributes["daedalus.prompt"]
+  return typeof prompt === "string" && prompt.trim() ? prompt.trim().replace(/\s+/g, " ") : root.name
+}
+
+/** Time in a span that none of its children account for: its own work, or
+    waiting. Children's overlapping intervals are merged first, so parallel
+    children are not subtracted twice. */
+export function selfTime(node: SpanNode, now: number): number {
+  const end = spanEnd(node.span, now)
+  const spans = node.children
+    .map((child) => [Math.max(child.span.start, node.span.start), Math.min(spanEnd(child.span, now), end)] as const)
+    .filter(([a, b]) => b > a)
+    .sort((x, y) => x[0] - y[0])
+  let covered = 0
+  let at = -Infinity
+  for (const [a, b] of spans) {
+    const from = Math.max(a, at)
+    if (b > from) covered += b - from
+    at = Math.max(at, b)
+  }
+  return Math.max(0, end - node.span.start - covered)
+}
+
+/** Axis ticks over `[0, duration]` ms at 1/2/5 steps — about `target` of them. */
+export function niceTicks(duration: number, target = 5): number[] {
+  if (!(duration > 0)) return [0]
+  const raw = duration / target
+  const pow = 10 ** Math.floor(Math.log10(raw))
+  const step = ([1, 2, 5, 10].find((m) => m * pow >= raw) ?? 10) * pow
+  const ticks: number[] = []
+  for (let t = 0; t <= duration; t += step) ticks.push(t)
+  return ticks
+}
+
+/** A span's OTel `SpanKind`; a span stored before the server kept it is internal. */
+export const otelKindOf = (span: TraceSpan): TraceSpanOtelKind => span.spanKind ?? "internal"
+
+/* ── OTLP/JSON ──
+   A span said back in the wire format every collector reads — what Copy as
+   OTLP puts on the clipboard. Only what the span carries is written. */
+
+type AnyValue = Record<string, unknown>
+
+function anyValue(value: TraceAttributeValue): AnyValue {
+  if (Array.isArray(value)) return { arrayValue: { values: (value as (string | number | boolean)[]).map((v) => anyValue(v)) } }
+  if (typeof value === "string") return { stringValue: value }
+  if (typeof value === "boolean") return { boolValue: value }
+  return Number.isInteger(value) ? { intValue: String(value) } : { doubleValue: value }
+}
+
+const keyValues = (attributes: Record<string, TraceAttributeValue> | undefined) =>
+  Object.entries(attributes ?? {}).map(([key, value]) => ({ key, value: anyValue(value) }))
+
+const nanos = (ms: number) => String(BigInt(Math.round(ms * 1e6)))
+const OTLP_KIND = { internal: 1, server: 2, client: 3, producer: 4, consumer: 5 } as const
+const OTLP_STATUS = { unset: 0, ok: 1, error: 2 } as const
+
+export function toOtlp(span: TraceSpan): unknown {
+  const body = {
+    traceId: span.traceId,
+    spanId: span.spanId,
+    ...(span.parentSpanId ? { parentSpanId: span.parentSpanId } : {}),
+    ...(span.traceState ? { traceState: span.traceState } : {}),
+    name: span.name,
+    kind: OTLP_KIND[otelKindOf(span)],
+    startTimeUnixNano: nanos(span.start),
+    ...(span.end !== null ? { endTimeUnixNano: nanos(span.end) } : {}),
+    attributes: keyValues(span.attributes),
+    events: span.events.map((e) => ({ timeUnixNano: nanos(e.at), name: e.name, attributes: keyValues(e.attributes) })),
+    links: (span.links ?? []).map((l) => ({ traceId: l.traceId, spanId: l.spanId, attributes: keyValues(l.attributes) })),
+    status: { code: OTLP_STATUS[span.status], ...(span.statusMessage ? { message: span.statusMessage } : {}) },
+  }
+  return {
+    resourceSpans: [
+      {
+        resource: { attributes: keyValues(span.resource) },
+        scopeSpans: [{ ...(span.scope ? { scope: span.scope } : {}), spans: [body] }],
+      },
+    ],
+  }
+}
+
+/** Every span as one OTLP/JSON document — a file a collector or Jaeger reads. */
+export const toOtlpDocument = (spans: TraceSpan[]) => ({
+  resourceSpans: spans.flatMap((span) => (toOtlp(span) as { resourceSpans: unknown[] }).resourceSpans),
+})
 
 /** The end a still-open span is drawn to. */
 export const spanEnd = (span: TraceSpan, now: number) => span.end ?? Math.max(now, span.start)
@@ -104,9 +227,19 @@ export interface SpanTiming {
 export function spanTiming(span: TraceSpan): SpanTiming {
   const duration = span.end === null ? null : span.end - span.start
   const ttft = spanTtft(span)
-  const decode = duration !== null && ttft !== null ? Math.max(0, duration - ttft) : null
-  const output = spanUsage(span).output
-  const over = decode ?? duration
+  /* A turn span says its own decode time and what was written in it — the
+     sum over its model calls (`BridgeTrace.generation`). Duration less TTFT
+     would put every tool call of the turn in the denominator. */
+  const saidDecode = num(span.attributes["daedalus.decode_ms"])
+  const saidTokens = num(span.attributes["daedalus.generated_tokens"])
+  const decode =
+    span.kind === "turn" && saidDecode !== null
+      ? saidDecode
+      : duration !== null && ttft !== null
+        ? Math.max(0, duration - ttft)
+        : null
+  const output = span.kind === "turn" && saidTokens !== null ? saidTokens : spanUsage(span).output
+  const over = decode ?? (span.kind === "turn" ? null : duration)
   const tps = output && over && over > 0 ? (output * 1000) / over : null
   return { duration, ttft, decode, tps }
 }
@@ -141,7 +274,10 @@ export function totals(spans: TraceSpan[], now: number): TrajectoryTotals {
     avgTps: null,
   }
   const ttfts: number[] = []
-  const rates: number[] = []
+  /* Token-weighted: tokens over decode time, summed — a mean of per-call
+     rates let a 20-token call count as much as a 4,000-token one. */
+  let rateTokens = 0
+  let rateMs = 0
   // Usage is summed over the model spans; a turn's own usage (the harness's
   // reading of `turn_ended`) only when no model span carried any, so the two
   // never count one call twice.
@@ -165,13 +301,18 @@ export function totals(spans: TraceSpan[], now: number): TrajectoryTotals {
       if (add(span)) modelUsage = true
       const timing = spanTiming(span)
       if (timing.ttft !== null) ttfts.push(timing.ttft)
-      if (timing.tps !== null) rates.push(timing.tps)
+      const output = spanUsage(span).output
+      const over = timing.decode ?? timing.duration
+      if (timing.tps !== null && output && over) {
+        rateTokens += output
+        rateMs += over
+      }
     }
   }
   if (!modelUsage) for (const span of spans) if (span.kind === "turn") add(span)
   const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null)
   t.avgTtft = mean(ttfts)
-  t.avgTps = mean(rates)
+  t.avgTps = rateMs > 0 ? (rateTokens * 1000) / rateMs : null
   return t
 }
 

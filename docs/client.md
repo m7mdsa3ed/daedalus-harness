@@ -2093,7 +2093,20 @@ enabled ones), the landing chips and the palette name the same noun. Code is
     provider. A native workflow step's transcript is still fetched only when its row opens
     (`loadAgentTranscript`). A sheet closes itself on a jump.
   - **Details** — model, workspace, usage, workflow runs and history.
-  - **A model span's detail draws its prompt by part** (`trajectory/prompt-parts.tsx`, read from `daedalus.prompt_parts` by `spanPromptParts`): the same parts, labels and swatches as the Tokens tab, each static part opening onto its items, for any runtime whose request the server could divide (Claude Code over OTLP, our agent's GenAI attributes).
+  - **The Trajectory is a trace viewer, not a turn list** (`components/trajectory/`, readers in
+    `lib/trajectory.ts`, checked by `trajectory.check.mjs`). Spans are grouped by **trace** (the
+    harness roots one per turn), each trace a sticky header carrying its own time axis (`niceTicks`)
+    and its bars placed on *that trace's* window, with the span's events marked on the bar. The
+    selected span is drawn as OpenTelemetry says it (`span-detail.tsx`): Overview (timing, **self
+    time** — children's intervals merged so parallel ones are not subtracted twice — identity with
+    the parent as a jump, `SpanKind`, tracestate, instrumentation scope, resource), every
+    attribute unfiltered with a filter, events on the span's own timeline, links (a link to a span
+    in the thread jumps to it) and **OTLP**, the span as OTLP/JSON. **GenAI is a lens beside
+    those, shown only for a span that carries `gen_ai.*`** (`genai.tsx`: payloads, prompt by part,
+    prompt change) — never the shape the panel is built around. Export is one OTLP/JSON document
+    (`toOtlpDocument`), not the harness's own shape. A span stored before `otel-span-fields` has no
+    kind, scope, resource or links; every reader treats those as absent, not as an error.
+- **A model span's detail draws its prompt by part** (`trajectory/prompt-parts.tsx`, read from `daedalus.prompt_parts` by `spanPromptParts`): the same parts, labels and swatches as the Tokens tab, each static part opening onto its items, for any runtime whose request the server could divide (Claude Code over OTLP, our agent's GenAI attributes).
 - **Tokens** (`thread-view/tokens-panel.tsx`, arithmetic in `lib/token-breakdown.ts`,
     checked by `token-breakdown.check.mjs`) — two readings kept apart. **Billed** is the
     provider's own count (new input, cache read, cache write, output, reasoning — exact,

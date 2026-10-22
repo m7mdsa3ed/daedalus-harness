@@ -12,6 +12,7 @@
    be handed to a context. */
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
+import type { TurnGeneration } from "@daedalus/protocol"
 import { couldTouchFiles } from "@/lib/tools"
 import { extractEdits, type EditInputDiff } from "@/lib/tools/edits"
 import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
@@ -196,6 +197,24 @@ export function withTurnToolDuration(
     const turnId = head.kind === "user" ? head.turnId : undefined
     const durationMs = turnId ? turnToolDuration[turnId] : undefined
     if (durationMs !== undefined) after.set(tailId, durationMs)
+  }
+  return after
+}
+
+/** What each finished turn's model calls wrote over their decode time, keyed
+    by its ending row — the speed the footer draws. */
+export function withTurnGeneration(
+  items: ThreadItem[],
+  turnActive: boolean,
+  turnGeneration: Record<string, TurnGeneration>,
+  showConfigNotices = true
+): Map<string, TurnGeneration> {
+  const after = new Map<string, TurnGeneration>()
+  for (const { turn, tailId } of finishedTurns(items, turnActive, showConfigNotices)) {
+    const head = turn[0]
+    const turnId = head.kind === "user" ? head.turnId : undefined
+    const generation = turnId ? turnGeneration[turnId] : undefined
+    if (generation) after.set(tailId, generation)
   }
   return after
 }

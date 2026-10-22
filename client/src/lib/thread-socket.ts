@@ -19,6 +19,7 @@ import type {
   ThreadHold,
   ThreadRetry,
   TpsStats,
+  TurnGeneration,
   WireError,
   RequestFrom,
 } from "@daedalus/protocol"
@@ -216,7 +217,10 @@ export interface ThreadCallbacks {
     toolDurationMs?: number,
     /** The AIR failure the turn ended on, already drawn through `onUpdate`;
         here only so a severity `error` counts as a failed turn. */
-    failure?: SessionFailure
+    failure?: SessionFailure,
+    /** What the turn's model calls wrote over their decode time — the
+        speed's own denominator, absent when no call was timed. */
+    generation?: TurnGeneration
   ) => void
   /** The thread's queue, whole. Every change to it arrives this way — this
       device's own included, since the ids are the server's. */
@@ -830,7 +834,8 @@ export class ThreadSocket {
           event.turnId,
           event.durationMs,
           event.toolDurationMs,
-          event.failure
+          event.failure,
+          event.generation
         )
         return
     }

@@ -1,5 +1,4 @@
 import type * as acp from "@daedalus/acp"
-import type { TpsStats } from "@daedalus/protocol"
 import { mintItemId } from "./items"
 import type { TextItem, ThreadItem } from "./items"
 
@@ -42,36 +41,6 @@ const addOptional = (a: number | null | undefined, b: number | null | undefined)
  * journaled exactly once per turn, live and on replay alike, so neither total
  * can count a turn twice.
  */
-export function addTps(
-  stats: TpsStats | null,
-  usage: acp.Usage,
-  durationMs: number,
-  toolDurationMs?: number
-): TpsStats | null {
-  if (!(usage.outputTokens > 0) || !(durationMs > 0)) return stats
-  const rate = (usage.outputTokens * 1000) / durationMs
-  if (!Number.isFinite(rate) || !(rate > 0)) return stats
-  const summedToolMs =
-    stats?.toolDurationMs === undefined && toolDurationMs === undefined
-      ? undefined
-      : (stats?.toolDurationMs ?? 0) + (toolDurationMs ?? 0)
-  return stats
-    ? {
-        min: Math.min(stats.min, rate),
-        max: Math.max(stats.max, rate),
-        outputTokens: stats.outputTokens + usage.outputTokens,
-        durationMs: stats.durationMs + durationMs,
-        ...(summedToolMs !== undefined ? { toolDurationMs: summedToolMs } : {}),
-      }
-    : {
-        min: rate,
-        max: rate,
-        outputTokens: usage.outputTokens,
-        durationMs,
-        ...(toolDurationMs !== undefined ? { toolDurationMs } : {}),
-      }
-}
-
 export function addUsage(prev: acp.Usage | null, next: acp.Usage): acp.Usage {
   if (!prev) return next
   return {

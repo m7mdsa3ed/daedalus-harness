@@ -52,6 +52,15 @@ const HARNESS_SPAN = "00f067aa0ba902b7";
     assert.equal(turn.parentSpanId, HARNESS_SPAN, "the turn is parented under the traceparent");
     assert.equal(turn.attributes["daedalus.kind"], "turn");
 
+    /* The rest of the OTel span model rides along, so the harness stores the
+       span whole: kind, scope, resource, and links as a (possibly empty) list. */
+    for (const s of spans) {
+      assert.ok(["internal", "server", "client", "producer", "consumer"].includes(s.spanKind), `${s.name} says its SpanKind`);
+      assert.ok(Array.isArray(s.links), `${s.name} says its links`);
+      assert.equal(s.scope.name, "daedalus-agent", `${s.name} names its instrumentation scope`);
+      assert.ok(s.resource && typeof s.resource === "object", `${s.name} carries its resource`);
+    }
+
     const byId = new Map(spans.map((s) => [s.spanId, s]));
     const roots = spans.filter((s) => s.attributes["gen_ai.operation.name"] === "invoke_agent");
     const parentRun = roots.find((s) => s.attributes["gen_ai.agent.name"] === "daedalus.turn");

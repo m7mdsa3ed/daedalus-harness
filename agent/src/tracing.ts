@@ -54,6 +54,13 @@ export interface WireSpan {
   statusMessage?: string;
   attributes: Record<string, AttrValue>;
   events: { name: string; at: number; attributes?: Record<string, AttrValue> }[];
+  /** OTel `SpanKind`, links, scope, resource and tracestate — said as the SDK
+      held them, so the harness stores the span whole. */
+  spanKind: "internal" | "server" | "client" | "producer" | "consumer";
+  links: { traceId: string; spanId: string; attributes?: Record<string, AttrValue> }[];
+  scope: { name: string; version?: string };
+  resource: Record<string, AttrValue>;
+  traceState?: string;
 }
 export interface TraceNotification {
   sessionId: string;
@@ -94,9 +101,12 @@ function flatten(attrs: Attributes | undefined): Record<string, AttrValue> {
   return out;
 }
 
+const SPAN_KINDS = ["internal", "server", "client", "producer", "consumer"] as const;
+
 export function toWire(span: ReadableSpan): WireSpan {
   const sc = span.spanContext();
   const code = span.status.code;
+  const traceState = sc.traceState?.serialize();
   return {
     traceId: sc.traceId,
     spanId: sc.spanId,
@@ -112,6 +122,18 @@ export function toWire(span: ReadableSpan): WireSpan {
       at: hrTimeToMilliseconds(e.time),
       ...(e.attributes ? { attributes: flatten(e.attributes) } : {}),
     })),
+    spanKind: SPAN_KINDS[span.kind] ?? "internal",
+    links: span.links.map((l) => ({
+      traceId: l.context.traceId,
+      spanId: l.context.spanId,
+      ...(l.attributes && Object.keys(l.attributes).length ? { attributes: flatten(l.attributes) } : {}),
+    })),
+    scope: {
+      name: span.instrumentationScope.name,
+      ...(span.instrumentationScope.version ? { version: span.instrumentationScope.version } : {}),
+    },
+    resource: flatten(span.resource.attributes),
+    ...(traceState ? { traceState } : {}),
   };
 }
 

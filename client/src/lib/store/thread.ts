@@ -7,6 +7,7 @@ import type {
   TurnChanges,
   TurnTick,
   TpsStats,
+  TurnGeneration,
   WireError,
 } from "@daedalus/protocol"
 import { IDLE_PHASE, isOpening, type ConnPhase } from "../thread/phase"
@@ -109,6 +110,9 @@ export interface ThreadState {
   turnDuration: Record<string, number>
   /** Union wall time spent in the thread's own tool calls, keyed by turn. */
   turnToolDuration: Record<string, number>
+  /** What each turn's model calls wrote over their decode time, keyed by
+      turn — the speed's denominator, absent for a turn no call was timed in. */
+  turnGeneration: Record<string, TurnGeneration>
   /** Context window occupancy from usage_update. */
   context: acp.UsageUpdate | null
   /** Persistent min/max and weighted average inputs for measured output speed. */
@@ -221,6 +225,7 @@ export const emptyThread: ThreadState = {
   liveUsage: null,
   turnDuration: {},
   turnToolDuration: {},
+  turnGeneration: {},
   context: null,
   tps: null,
   stepUsage: {},

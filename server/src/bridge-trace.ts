@@ -24,12 +24,20 @@
  *
  * Permission and elicitation waits, retries and holds are the harness's to
  * see for every runtime, so they are drawn for every runtime.
+ *
+ * The same model spans are what a turn's output speed is measured on
+ * (`TurnGeneration`, tps.ts): a runtime's own carry output tokens and a first
+ * token time per call, so the turn's generation is their sum; otherwise the
+ * thread's own stream says when the writing started and stopped, so that
+ * decode time is summed and divided into the turn's usage. Either way the
+ * tool calls, prefill and waits between them are not in the denominator.
  */
 import type { Attributes, Span } from "@opentelemetry/api";
 
 import type * as acp from "./acp.js";
-import type { SessionUpdate } from "./protocol.js";
-import { endSpan, startSpan, traceparent } from "./tracing.js";
+import type { SessionUpdate, TurnGeneration } from "./protocol.js";
+import { spanGeneration } from "./tps.js";
+import { endSpan, onIngest, startSpan, traceparent } from "./tracing.js";
 
 /** Text kept on a derived span — enough to recognise the answer by. */
 const TEXT_LIMIT = 16_000;
@@ -83,10 +91,29 @@ export class BridgeTrace {
   private readonly tools = new Map<string, Span>();
   private readonly waits = new Map<string, Span>();
   private model = "";
+  /** The running turn's generation, from a runtime's own model spans. */
+  private reported: TurnGeneration = { outputTokens: 0, decodeMs: 0 };
+  /** The running turn's decode time, read off the thread's own stream: from a
+      generation's first chunk to the tool call that ends it, or the turn's
+      end. Kept for every runtime, because a self-traced one's spans can land
+      after the turn does (Claude Code exports OTLP on an interval). */
+  private streamDecodeMs = 0;
+  private streamFirstChunkAt: number | null = null;
+  private readonly unsubscribe: () => void;
 
   constructor(threadId: string, selfTraced: () => boolean) {
     this.threadId = threadId;
     this.selfTraced = selfTraced;
+    /* A runtime's spans carry the turn's trace id (it was handed the request's
+       `traceparent`; the OTLP intake reparents onto it), which is how one is
+       told apart from a late span of the turn before. */
+    this.unsubscribe = onIngest(threadId, (span) => {
+      if (span.kind !== "model" || !this.turn || span.traceId !== this.turn.spanContext().traceId) return;
+      const gen = spanGeneration(span);
+      if (!gen) return;
+      this.reported.outputTokens += gen.outputTokens;
+      this.reported.decodeMs += gen.decodeMs;
+    });
   }
 
   /* ── Outside a turn ── */
@@ -101,6 +128,9 @@ export class BridgeTrace {
   /** The first prompt of a turn opens it; a steer joining it is an event. */
   startTurn(turnId: string, text: string, attributes: Attributes): void {
     this.endTurn({ error: "superseded" });
+    this.reported = { outputTokens: 0, decodeMs: 0 };
+    this.streamDecodeMs = 0;
+    this.streamFirstChunkAt = null;
     this.model = String(attributes["gen_ai.request.model"] ?? "");
     this.turn = startSpan(this.threadId, "turn", "turn", {
       attributes: { ...attributes, "daedalus.turn_id": turnId, "daedalus.prompt": clip(text) },
@@ -125,6 +155,7 @@ export class BridgeTrace {
       turn's own request is the one that spans it). */
   endRequest(error?: unknown, stopReason?: string): void {
     if (!this.request) return;
+    this.closeStream();
     this.closeLanes(error);
     endSpan(this.request, error, stopReason ? { "daedalus.stop_reason": stopReason } : undefined);
     this.request = null;
@@ -136,9 +167,10 @@ export class BridgeTrace {
     stopReason?: string;
     durationMs?: number;
     toolDurationMs?: number;
-  }): void {
-    if (!this.turn) return;
+  }): TurnGeneration | undefined {
+    if (!this.turn) return undefined;
     this.endRequest(result.error, result.stopReason);
+    const generation = this.generation(result.usage);
     for (const span of this.tools.values()) endSpan(span, result.error ?? "turn ended with the call open");
     this.tools.clear();
     for (const span of this.waits.values()) endSpan(span, "turn ended while waiting");
@@ -148,6 +180,7 @@ export class BridgeTrace {
       ...(result.stopReason ? { "daedalus.stop_reason": result.stopReason } : {}),
       ...(result.durationMs !== undefined ? { "daedalus.duration_ms": result.durationMs } : {}),
       ...(result.toolDurationMs !== undefined ? { "daedalus.tool_ms": result.toolDurationMs } : {}),
+      ...(generation ? { "daedalus.decode_ms": Math.round(generation.decodeMs), "daedalus.generated_tokens": generation.outputTokens } : {}),
       ...(usage
         ? {
             "gen_ai.usage.input_tokens": usage.inputTokens + (usage.cachedReadTokens ?? 0) + (usage.cachedWriteTokens ?? 0),
@@ -162,6 +195,24 @@ export class BridgeTrace {
     };
     endSpan(this.turn, result.error, attributes);
     this.turn = null;
+    return generation;
+  }
+
+  /** What the turn's model calls wrote over the time they spent writing:
+      the runtime's own model spans when they have arrived (exact counts per
+      call), else the turn's output over the decode time seen on the stream —
+      the only count a runtime that does not trace itself gives. */
+  private generation(usage: acp.Usage | null | undefined): TurnGeneration | undefined {
+    const r = this.reported;
+    if (r.outputTokens > 0 && r.decodeMs > 0) return { outputTokens: r.outputTokens, decodeMs: Math.round(r.decodeMs) };
+    const output = usage?.outputTokens ?? 0;
+    return output > 0 && this.streamDecodeMs > 0 ? { outputTokens: output, decodeMs: Math.round(this.streamDecodeMs) } : undefined;
+  }
+
+  private closeStream(): void {
+    if (this.streamFirstChunkAt === null) return;
+    this.streamDecodeMs += Date.now() - this.streamFirstChunkAt;
+    this.streamFirstChunkAt = null;
   }
 
   ttft(ms: number): void {
@@ -206,6 +257,11 @@ export class BridgeTrace {
         this.lanes.delete(state.subagentSessionId ?? "");
       }
       return;
+    }
+    if (!child) {
+      if (update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk") {
+        this.streamFirstChunkAt ??= Date.now();
+      } else if (update.sessionUpdate === "tool_call") this.closeStream();
     }
     if (this.selfTraced()) return;
     const lane = this.laneFor(child);
@@ -281,6 +337,7 @@ export class BridgeTrace {
   /** The process is gone: everything open ends, as a failure. */
   close(reason: unknown): void {
     this.endTurn({ error: reason ?? "the agent process closed" });
+    this.unsubscribe();
   }
 
   /* ── Derived spans ── */
@@ -318,11 +375,12 @@ export class BridgeTrace {
     const gen = lane.generation;
     if (!gen) return;
     lane.generation = null;
+    const decodeMs = gen.firstChunkAt !== null ? Date.now() - gen.firstChunkAt : null;
     endSpan(gen.span, error, {
       ...(gen.text ? { "gen_ai.output.messages": JSON.stringify([{ role: "assistant", parts: [{ type: "text", content: clip(gen.text) }] }]) } : {}),
       ...(gen.thought ? { "daedalus.thought": clip(gen.thought) } : {}),
       "daedalus.output_chars": gen.text.length,
-      ...(gen.firstChunkAt !== null ? { "daedalus.decode_ms": Date.now() - gen.firstChunkAt } : {}),
+      ...(decodeMs !== null ? { "daedalus.decode_ms": decodeMs } : {}),
     });
   }
 

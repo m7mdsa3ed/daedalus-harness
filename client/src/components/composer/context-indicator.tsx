@@ -38,12 +38,12 @@ import { addUsage, type ThreadState } from "@/lib/store"
 import { spendTime, subagentSpend } from "@/lib/token-breakdown"
 import {
   formatDuration,
-  formatRate,
   formatTokens,
   formatTps,
   windowEstimated,
 } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
+import { tpsAverage } from "@daedalus/tps"
 
 /** Above this the agent is about to compact, so the popover says so. */
 const COMPACTION_WARN = 85
@@ -368,12 +368,11 @@ export function ContextIndicator({
   const cached = usage?.cachedReadTokens ?? 0
   const prompt = usage ? usage.inputTokens + cached + (usage.cachedWriteTokens ?? 0) : 0
   const cacheRate = prompt > 0 ? Math.round((cached / prompt) * 100) : null
-  /* Session-average output speed: summed only over turns the server timed, so
-     turns that ended before durations existed dilute neither side. */
-  const measured = Object.entries(thread.turnUsage).filter(([id]) => thread.turnDuration[id] !== undefined)
-  const measuredOutput = measured.reduce((n, [, u]) => n + u.outputTokens, 0)
-  const measuredMs = measured.reduce((n, [id]) => n + (thread.turnDuration[id] ?? 0), 0)
-  const avgRate = thread.tps ? formatRate(thread.tps.outputTokens, thread.tps.durationMs) : formatRate(measuredOutput, measuredMs)
+  /* Session-average output speed, token-weighted over the turns whose model
+     calls were timed (`tps.ts`); throughput over wall clock only for a thread
+     that has none, and labelled as that. */
+  const average = tpsAverage(thread.tps)
+  const avgRate = average ? formatTps(average.rate) : null
   const minRate = thread.tps ? formatTps(thread.tps.min) : null
   const maxRate = thread.tps ? formatTps(thread.tps.max) : null
   const toolDurationMs = thread.tps?.toolDurationMs ??
@@ -504,7 +503,7 @@ export function ContextIndicator({
               {ttftMs !== null && <Tile label="First token" value={`${ttftMs}ms`} />}
               {avgRate && (
                 <Tile
-                  label="Output"
+                  label={average?.kind === "throughput" ? "Throughput" : "Output"}
                   value={avgRate}
                   hint={minRate && maxRate ? `${minRate.replace(" tok/s", "")}–${maxRate}` : undefined}
                 />

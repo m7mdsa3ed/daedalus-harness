@@ -3,6 +3,7 @@
    each part keeps its own component and entrance timing. */
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
+import type { TurnGeneration } from "@daedalus/protocol"
 
 import { SuggestionGroup } from "@/components/suggestion-group"
 import { SourcesStrip } from "@/components/thread-cards"
@@ -17,6 +18,7 @@ export const TurnFooter = React.memo(function TurnFooter({
   usage,
   durationMs,
   toolDurationMs,
+  generation,
   suggestions,
   onPick,
 }: {
@@ -24,6 +26,7 @@ export const TurnFooter = React.memo(function TurnFooter({
   usage?: acp.Usage
   durationMs?: number
   toolDurationMs?: number
+  generation?: TurnGeneration
   /** One group per kind the answer carried, already filtered to rows that name
       something real (`SuggestKindDef.keep`). */
   suggestions?: SuggestGroup[]
@@ -46,6 +49,7 @@ export const TurnFooter = React.memo(function TurnFooter({
             label="This turn"
             durationMs={durationMs}
             toolDurationMs={toolDurationMs}
+            generation={generation}
           />
         </div>
       )}

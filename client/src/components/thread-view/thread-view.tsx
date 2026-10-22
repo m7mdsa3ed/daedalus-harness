@@ -7,7 +7,7 @@
    connection wait) and `welcome.tsx` (the empty state the landing console
    shares). `thread-view.tsx` above is the barrel that keeps `ThreadView` and
    `ThreadWelcome` at the path every caller already spells. */
-import type { RequestFrom } from "@daedalus/protocol"
+import type { RequestFrom, TurnGeneration } from "@daedalus/protocol"
 import { ScrollToEnd } from "@/components/thread-view/scroll-to-end"
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
@@ -60,6 +60,7 @@ import {
   useStepTurnUsage,
   withTurnDuration,
   withTurnToolDuration,
+  withTurnGeneration,
   withTurnSources,
   withTurnSuggestions,
   withTurnChanges,
@@ -373,6 +374,12 @@ export function ThreadView({
     [thread.items, thread.turnActive, thread.turnToolDuration, options.showConfigNotices]
   )
   const toolDurationFor = (row: Row): number | undefined => toolDurationAfter.get(rowTailId(row))
+  const generationAfter = React.useMemo(
+    () =>
+      withTurnGeneration(thread.items, thread.turnActive, thread.turnGeneration, options.showConfigNotices),
+    [thread.items, thread.turnActive, thread.turnGeneration, options.showConfigNotices]
+  )
+  const generationFor = (row: Row): TurnGeneration | undefined => generationAfter.get(rowTailId(row))
   /* What each finished turn wrote, gated on the transcript (`withTurnChanges`
      — git measures a window, not an author). The newest gated turn is the
      reading the composer's `ChangesIndicator` and the inspector's Changes tab
@@ -1009,6 +1016,7 @@ export function ThreadView({
                     usage={options.showTokens ? usageFor(row) : undefined}
                     durationMs={durationFor(row)}
                     toolDurationMs={toolDurationFor(row)}
+                    generation={generationFor(row)}
                     suggestions={suggestionsFor(row)}
                     onPick={pickSuggestion}
                   />

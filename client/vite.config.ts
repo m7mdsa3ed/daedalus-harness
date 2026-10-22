@@ -184,6 +184,10 @@ export default defineConfig({
       /* The wire contract's numbers, frozen into this bundle at build time so
          it can compare them with what each server reports (lib/compat.ts). */
       "@daedalus/compat": path.resolve(import.meta.dirname, "../server/src/compat.ts"),
+      /* Output speed, folded the same way the server folds the row it hands
+         over on `caught_up` — one function, so the live figure and the
+         persisted one cannot disagree. */
+      "@daedalus/tps": path.resolve(import.meta.dirname, "../server/src/tps.ts"),
     },
   },
 });

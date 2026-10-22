@@ -112,8 +112,17 @@ function attributesOf(raw: unknown): Record<string, TraceAttributeValue> {
 
 const nanosToMs = (value: unknown): number => Number(value) / 1e6;
 
+/** OTLP `SpanKind` enum (1 internal … 5 consumer); 0 is unspecified. */
+const OTLP_KINDS = [undefined, "internal", "server", "client", "producer", "consumer"] as const;
+
 /** What identifies the person rather than the work. */
 const IDENTITY = new Set(["user.id", "user.email", "user.account_uuid", "user.account_id", "organization.id", "terminal.type"]);
+
+function withoutIdentity(attributes: Record<string, TraceAttributeValue>): Record<string, TraceAttributeValue> {
+  const out: Record<string, TraceAttributeValue> = {};
+  for (const [k, v] of Object.entries(attributes)) if (!IDENTITY.has(k)) out[k] = v;
+  return out;
+}
 
 /* ── the claude-otlp dialect ── */
 
@@ -277,11 +286,21 @@ const reparent = new Map<string, { traceId: string; parentSpanId: string | null 
 async function traces(threadId: string, body: Json): Promise<void> {
   const spans: TraceNotificationParams["spans"] = [];
   const claimed = new Map<string, { requestId: string; total: number }>();
-  const all = list(body.resourceSpans)
-    .flatMap((r) => list(record(r)?.scopeSpans))
-    .flatMap((s) => list(record(s)?.spans))
-    .map(record)
-    .filter((s): s is Json => !!s && typeof s.spanId === "string" && typeof s.traceId === "string");
+  /* Each span keeps the resource and scope it arrived under — OTLP nests them
+     above the span, so they are read here, where the nesting is still known. */
+  const origin = new Map<Json, { resource: Record<string, TraceAttributeValue>; scope?: { name: string; version?: string } }>();
+  for (const r of list(body.resourceSpans)) {
+    const resource = withoutIdentity(attributesOf(record(record(r)?.resource)?.attributes));
+    for (const ss of list(record(r)?.scopeSpans)) {
+      const sc = record(record(ss)?.scope);
+      const scope = typeof sc?.name === "string" ? { name: sc.name, ...(typeof sc.version === "string" && sc.version ? { version: sc.version } : {}) } : undefined;
+      for (const s of list(record(ss)?.spans)) {
+        const span = record(s);
+        if (span) origin.set(span, { resource, ...(scope ? { scope } : {}) });
+      }
+    }
+  }
+  const all = [...origin.keys()].filter((s) => typeof s.spanId === "string" && typeof s.traceId === "string");
   const ids = new Set(all.map((s) => String(s.spanId)));
   const isRoot = (s: Json) => !(typeof s.parentSpanId === "string" && s.parentSpanId !== "" && ids.has(s.parentSpanId));
   /* A prompt's interaction is the root of the runtime's own trace; hang it under
@@ -311,6 +330,14 @@ async function traces(threadId: string, body: Json): Promise<void> {
       status: status?.code === 2 ? "error" : status?.code === 1 ? "ok" : "unset",
       ...(typeof status?.message === "string" && status.message ? { statusMessage: status.message } : {}),
       attributes: mapped.attributes,
+      ...(OTLP_KINDS[Number(s.kind)] ? { spanKind: OTLP_KINDS[Number(s.kind)] } : {}),
+      links: list(s.links)
+        .map(record)
+        .filter((l): l is Json => !!l && typeof l.traceId === "string" && typeof l.spanId === "string")
+        .map((l) => ({ traceId: String(l.traceId), spanId: String(l.spanId), attributes: attributesOf(l.attributes) })),
+      ...(origin.get(s)?.scope ? { scope: origin.get(s)!.scope } : {}),
+      ...(Object.keys(origin.get(s)?.resource ?? {}).length ? { resource: origin.get(s)!.resource } : {}),
+      ...(typeof s.traceState === "string" && s.traceState ? { traceState: s.traceState } : {}),
       events: list(s.events).map((e) => ({
         name: String(record(e)?.name ?? "event"),
         at: nanosToMs(record(e)?.timeUnixNano),

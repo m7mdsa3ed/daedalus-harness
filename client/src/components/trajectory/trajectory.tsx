@@ -1,27 +1,28 @@
 /* ── The Trajectory ──
-   One thread's OpenTelemetry spans (`GET /api/sessions/:id/spans`) as a
-   waterfall: every turn a root, the prompt request, model generations, tool
-   calls, permission waits and subagents nested under it, each drawn as a bar
-   across its turn's window. Totals across the top, an overview strip coloured
-   by kind under them, and the selected span whole beside the list (or in its
-   place, on a narrow panel).
+   One thread's OpenTelemetry spans (`GET /api/sessions/:id/spans`), drawn the
+   way a trace viewer draws them: grouped by **trace** (the harness roots one
+   per turn), each trace with its own time axis, and under it the span tree as
+   a waterfall — every bar placed on its trace's window, with the span's events
+   marked on it. Totals across the top; the selected span, whole, beside the
+   list (or in its place, on a narrow panel).
 
    One component for both doors — the thread dock's panel and the
    `/t/:id/trace` page — reflowing on its own box (`@panel-md:`), never the
-   window. The readers are `lib/trajectory.ts`; this file only draws. */
+   window. The readers are `lib/trajectory.ts`; this file only draws, and the
+   selected span's own view is `span-detail.tsx`. */
 import * as React from "react"
 import {
+  ArrowDownToLineIcon,
   ChevronRightIcon,
   DownloadIcon,
   RefreshCwIcon,
   RouteIcon,
   SearchIcon,
-  ArrowDownToLineIcon,
 } from "lucide-react"
 import type { TraceSpan, TraceSpanKind } from "@daedalus/protocol"
 
-import { ErrorNote } from "@/components/error-note"
 import { Empty } from "@/components/empty"
+import { ErrorNote } from "@/components/error-note"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
@@ -35,12 +36,16 @@ import { formatTokens, formatTps } from "@/lib/tokens"
 import {
   buildTree,
   flatten,
+  groupTraces,
+  niceTicks,
   spanDuration,
-  spanEnd,
   spanUsage,
+  toOtlpDocument,
   totals as sumTotals,
+  traceLabel,
   visibleRows,
   type SpanNode,
+  type TraceGroup,
 } from "@/lib/trajectory"
 import { cn } from "@/lib/utils"
 import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
@@ -48,6 +53,13 @@ import { KIND, fmtMs, spanBg, spanText } from "./kinds"
 import { SpanDetail } from "./span-detail"
 
 const EMPTY: TraceSpan[] = []
+
+/** One line of the list: a trace's header (with its axis), or a span in it. */
+type Item =
+  | { type: "trace"; group: TraceGroup; n: number }
+  | { type: "span"; node: SpanNode; group: TraceGroup }
+
+const itemKey = (item: Item) => (item.type === "trace" ? `trace:${item.group.traceId}` : item.node.span.spanId)
 
 export function Trajectory({ sessionId, variant }: { sessionId: string; variant: "panel" | "page" }) {
   const live = useStoreSelect((state) => state.threads[sessionId]?.turnActive ?? false)
@@ -64,71 +76,87 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
 
   const byId = React.useMemo(() => new Map(spans.map((s) => [s.spanId, s])), [spans])
   const roots = React.useMemo(() => buildTree(spans), [spans])
+  const nodes = React.useMemo(() => new Map(flatten(roots).map((n) => [n.span.spanId, n])), [roots])
+  const groups = React.useMemo(() => groupTraces(roots), [roots])
   const needle = search.trim()
-  const rows = React.useMemo(
-    () => visibleRows(flatten(roots, needle ? new Set() : collapsed), byId, needle, hidden),
-    [roots, collapsed, byId, needle, hidden]
-  )
-  const turns = React.useMemo(() => roots.filter((n) => n.span.kind === "turn"), [roots])
-  const turnNo = React.useMemo(() => new Map(turns.map((n, i) => [n.span.spanId, i + 1])), [turns])
+
+  /* A trace's id is in `collapsed` beside the spans', prefixed so the two
+     never collide. */
+  const items = React.useMemo(() => {
+    const out: Item[] = []
+    groups.forEach((group, i) => {
+      const list = visibleRows(flatten(group.roots, needle ? new Set() : collapsed), byId, needle, hidden)
+      if ((needle || hidden.size) && list.length === 0) return
+      out.push({ type: "trace", group, n: i + 1 })
+      if (collapsed.has(`trace:${group.traceId}`) && !needle) return
+      for (const node of list) out.push({ type: "span", node, group })
+    })
+    return out
+  }, [groups, collapsed, byId, needle, hidden])
+
   const kinds = React.useMemo(
     () => (Object.keys(KIND) as TraceSpanKind[]).filter((k) => k !== "turn" && spans.some((s) => s.kind === k)),
     [spans]
   )
   const totals = React.useMemo(() => sumTotals(spans, now), [spans, now])
-  const selected = selectedId ? byId.get(selectedId) ?? null : null
+  const selected = selectedId ? (nodes.get(selectedId) ?? null) : null
 
-  /* Past 200 rows only the window is drawn (and re-rendered per `now` tick);
-     the selected and focused rows are pinned, so reveal() and focus keep their
-     element. A root row past the first is h-7 plus its 4px top margin. */
-  const [focusIndex, onListFocus] = useFocusedRow(rows.length, (i) => rows[i].span.spanId)
+  /* Past 200 lines only the window is drawn (and re-rendered per `now` tick);
+     the selected and focused lines are pinned, so reveal() and focus keep
+     their element. */
+  const [focusIndex, onListFocus] = useFocusedRow(items.length, (i) => itemKey(items[i]))
   const selectedIndex = React.useMemo(
-    () => (selectedId ? rows.findIndex((n) => n.span.spanId === selectedId) : -1),
-    [rows, selectedId]
+    () => (selectedId ? items.findIndex((item) => item.type === "span" && item.node.span.spanId === selectedId) : -1),
+    [items, selectedId]
   )
   const w = useWindowedRows({
-    count: rows.length,
+    count: items.length,
     threshold: 200,
     list: listRef,
-    estimateSize: (i) => (rows[i].depth === 0 && i > 0 ? 32 : 28),
-    getItemKey: (i) => rows[i].span.spanId,
+    estimateSize: (i) => (items[i].type === "trace" ? TRACE_H : ROW_H),
+    getItemKey: (i) => itemKey(items[i]),
     pin: [selectedIndex, focusIndex],
   })
-  /** Each node's place among its tree siblings, for aria-posinset/setsize. */
-  const siblings = React.useMemo(() => {
-    const map = new Map<string, [number, number]>()
-    const walk = (nodes: SpanNode[]) =>
-      nodes.forEach((n, i) => {
-        map.set(n.span.spanId, [i + 1, nodes.length])
-        walk(n.children)
-      })
-    walk(roots)
-    return map
-  }, [roots])
 
-  /* Follow: the newest row stays in view while the turn runs. Scrolling up is
-     reading, and stops it. */
+  /* Follow: the newest line stays in view while the turn runs. Scrolling up
+     is reading, and stops it. */
   React.useEffect(() => {
     const list = listRef.current
     if (follow && live && list) list.scrollTop = list.scrollHeight
-  }, [follow, live, rows])
+  }, [follow, live, items])
 
   const reveal = (spanId: string) => {
+    const node = nodes.get(spanId)
+    if (node) {
+      /* A span inside a folded trace or subtree is opened to, never hidden. */
+      setCollapsed((prev) => {
+        const next = new Set(prev)
+        next.delete(`trace:${node.span.traceId}`)
+        for (let p = node.span.parentSpanId; p; p = byId.get(p)?.parentSpanId ?? null) next.delete(p)
+        return next.size === prev.size ? prev : next
+      })
+    }
     setSelectedId(spanId)
     setFollow(false)
     requestAnimationFrame(() =>
       listRef.current
-        ?.querySelector(`[data-span-id="${CSS.escape(spanId)}"]`)
+        ?.querySelector(`[data-key="${CSS.escape(spanId)}"]`)
         ?.scrollIntoView({ block: "nearest" })
     )
   }
+  const toggle = (key: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
 
   const fetchWhole = useFetchWholeSpans(sessionId)
   const [exporting, setExporting] = React.useState(false)
   const exportSpans = () => {
     setExporting(true)
     fetchWhole(spans)
-      .then((whole) => download(`trajectory-${sessionId}.json`, JSON.stringify({ sessionId, spans: whole }, null, 2)))
+      .then((whole) => download(`trajectory-${sessionId}.otlp.json`, JSON.stringify(toOtlpDocument(whole), null, 2)))
       .catch((err) => reportError(err, "Couldn't export the trajectory"))
       .finally(() => setExporting(false))
   }
@@ -142,7 +170,6 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
         variant === "panel" ? "pt-[var(--dock-content-overlap,0px)]" : "pt-[var(--app-header-h)]"
       )}
     >
-      {/* Toolbar: search, turn jump, follow, refresh, export. */}
       <PanelToolbar className="flex-wrap">
         {variant === "page" && (
           <h1 className="mr-2 flex items-center gap-2 text-sm font-medium">
@@ -161,18 +188,18 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
             aria-label="Search spans"
           />
         </InputGroup>
-        {turns.length > 1 && (
+        {groups.length > 1 && (
           <NativeSelect
             size="sm"
-            aria-label="Jump to a turn"
+            aria-label="Jump to a trace"
             className="max-w-40"
             value=""
-            onChange={(event) => event.target.value && reveal(event.target.value)}
+            onChange={(event) => event.target.value && jumpToTrace(groups, event.target.value, reveal)}
           >
-            <NativeSelectOption value="">Jump to turn…</NativeSelectOption>
-            {turns.map((n, i) => (
-              <NativeSelectOption key={n.span.spanId} value={n.span.spanId}>
-                {`${i + 1}. ${turnLabel(n.span)}`.slice(0, 60)}
+            <NativeSelectOption value="">Jump to trace…</NativeSelectOption>
+            {groups.map((group, i) => (
+              <NativeSelectOption key={group.traceId} value={group.traceId}>
+                {`${i + 1}. ${traceLabel(group)}`.slice(0, 60)}
               </NativeSelectOption>
             ))}
           </NativeSelect>
@@ -200,8 +227,8 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
         <Button
           variant="ghost"
           size="icon-sm"
-          title="Export the spans as JSON"
-          aria-label="Export the spans as JSON"
+          title="Export as OTLP/JSON"
+          aria-label="Export as OTLP/JSON"
           disabled={exporting || spans.length === 0}
           onClick={exportSpans}
         >
@@ -234,8 +261,7 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
       ) : (
         <>
           <div className={cn(selected && "hidden @panel-md:block")}>
-            <Kpis totals={totals} />
-            <Overview roots={roots} now={now} selectedId={selectedId} onPick={reveal} />
+            <Kpis totals={totals} traces={groups.length} />
             {kinds.length > 1 && (
               <div className="flex flex-wrap gap-1 border-b px-3 py-2">
                 {kinds.map((kind) => {
@@ -270,37 +296,41 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
             <div
               ref={listRef}
               role="tree"
-              aria-label="Spans"
+              aria-label="Traces and spans"
               onWheel={(event) => event.deltaY < 0 && setFollow(false)}
               onFocus={onListFocus}
-              className={cn("min-h-0 flex-1 overflow-y-auto py-1", selected && "hidden @panel-md:block")}
+              className={cn("min-h-0 flex-1 overflow-y-auto pb-1", selected && "hidden @panel-md:block")}
             >
-              {rows.length === 0 ? (
+              {items.length === 0 ? (
                 <div className="p-3">
                   <Empty>No span matches.</Empty>
                 </div>
               ) : (
                 w.rows.map(({ index, key, before }) => {
-                  const node = rows[index]
-                  return (
+                  const item = items[index]
+                  return item.type === "trace" ? (
+                    <TraceHeader
+                      key={key}
+                      index={index}
+                      before={before}
+                      group={item.group}
+                      n={item.n}
+                      now={now}
+                      collapsed={collapsed.has(`trace:${item.group.traceId}`)}
+                      onToggle={() => toggle(`trace:${item.group.traceId}`)}
+                    />
+                  ) : (
                     <Row
                       key={key}
                       index={index}
                       before={before}
-                      set={w.windowed ? siblings.get(node.span.spanId) : undefined}
-                      node={node}
+                      node={item.node}
+                      group={item.group}
                       now={now}
-                      turn={turnNo.get(node.span.spanId)}
-                      selected={node.span.spanId === selectedId}
-                      collapsed={collapsed.has(node.span.spanId)}
-                      onSelect={() => setSelectedId(node.span.spanId)}
-                      onToggle={() =>
-                        setCollapsed((prev) => {
-                          const next = new Set(prev)
-                          if (!next.delete(node.span.spanId)) next.add(node.span.spanId)
-                          return next
-                        })
-                      }
+                      selected={item.node.span.spanId === selectedId}
+                      collapsed={collapsed.has(item.node.span.spanId)}
+                      onSelect={() => setSelectedId(item.node.span.spanId)}
+                      onToggle={() => toggle(item.node.span.spanId)}
                     />
                   )
                 })
@@ -309,21 +339,25 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
             </div>
             <div
               className={cn(
-                "min-h-0 overflow-y-auto @panel-md:w-[45%] @panel-md:shrink-0 @panel-md:border-l",
-                selected ? "flex-1 @panel-md:flex-none" : "hidden @panel-md:block"
+                "flex min-h-0 flex-col @panel-md:w-[45%] @panel-md:shrink-0 @panel-md:border-l",
+                selected ? "flex-1 @panel-md:flex-none" : "hidden @panel-md:flex"
               )}
             >
               {selected ? (
                 <SpanDetail
-                  key={selected.spanId}
+                  key={selected.span.spanId}
                   sessionId={sessionId}
                   spans={spans}
-                  span={selected}
+                  node={selected}
+                  now={now}
                   live={live}
                   onClose={() => setSelectedId(null)}
+                  onSelect={reveal}
                 />
               ) : (
-                <p className="p-4 text-muted-foreground">Select a span to read its timing, payloads and attributes.</p>
+                <p className="p-4 text-muted-foreground">
+                  Select a span to read its identity, attributes, events, links and the raw OTLP.
+                </p>
               )}
             </div>
           </div>
@@ -331,6 +365,15 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
       )}
     </div>
   )
+}
+
+const TRACE_H = 40
+const ROW_H = 28
+const COLUMNS = "grid-cols-[minmax(0,1fr)_minmax(3rem,35%)_3.5rem]"
+
+function jumpToTrace(groups: TraceGroup[], traceId: string, reveal: (spanId: string) => void) {
+  const group = groups.find((g) => g.traceId === traceId)
+  if (group) reveal(group.roots[0].span.spanId)
 }
 
 /** Ticks while the turn runs, so open spans grow; frozen otherwise. */
@@ -345,14 +388,9 @@ function useNow(live: boolean): number {
   return now
 }
 
-const turnLabel = (span: TraceSpan) => {
-  const prompt = span.attributes["daedalus.prompt"]
-  return typeof prompt === "string" && prompt.trim() ? prompt.trim().replace(/\s+/g, " ") : span.name
-}
-
-function Kpis({ totals: t }: { totals: ReturnType<typeof sumTotals> }) {
+function Kpis({ totals: t, traces }: { totals: ReturnType<typeof sumTotals>; traces: number }) {
   const cells: [string, string, boolean?][] = [
-    ["Turns", String(t.turns)],
+    ["Traces", String(traces)],
     ["Model calls", String(t.modelCalls)],
     ["Tool calls", String(t.toolCalls)],
     ["Errors", String(t.errors), t.errors > 0],
@@ -376,109 +414,131 @@ function Kpis({ totals: t }: { totals: ReturnType<typeof sumTotals> }) {
   )
 }
 
-/* ── The overview strip ──
-   Every root laid end to end, each as wide as it lasted (the idle gaps
-   between turns are cut out — hours of nothing would flatten the work to a
-   hairline), and inside it the model, tool and permission spans in three
-   lanes. A click on a segment jumps to it. */
-const LANE: Partial<Record<TraceSpanKind, number>> = { model: 0, tool: 1, permission: 2, shell: 2 }
+/** A trace's window: where its bars are placed. */
+const windowOf = (group: TraceGroup, now: number) => {
+  const end = group.end ?? Math.max(now, group.start)
+  return { start: group.start, duration: Math.max(1, end - group.start) }
+}
 
-function Overview({
-  roots,
+/* ── A trace's header ──
+   Its label, span count and length, and the axis its bars are placed against:
+   ticks at round numbers from 0 to the trace's end. */
+function TraceHeader({
+  index,
+  before,
+  group,
+  n,
   now,
-  selectedId,
-  onPick,
+  collapsed,
+  onToggle,
 }: {
-  roots: SpanNode[]
+  index: number
+  before: number
+  group: TraceGroup
+  n: number
   now: number
-  selectedId: string | null
-  onPick: (spanId: string) => void
+  collapsed: boolean
+  onToggle: () => void
 }) {
+  const { duration } = windowOf(group, now)
   return (
-    <div className="flex h-8 gap-px border-b px-3 py-1.5" aria-hidden>
-      {roots.map((root) => {
-        const start = root.span.start
-        const dur = Math.max(1, spanDuration(root.span, now))
-        const marks: TraceSpan[] = []
-        const walk = (node: SpanNode) => {
-          if (LANE[node.span.kind] !== undefined) marks.push(node.span)
-          node.children.forEach(walk)
+    <div
+      role="treeitem"
+      aria-level={1}
+      aria-selected={false}
+      aria-expanded={!collapsed}
+      tabIndex={0}
+      data-index={index}
+      data-key={`trace:${group.traceId}`}
+      onClick={onToggle}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onToggle()
         }
-        walk(root)
-        return (
-          <button
-            key={root.span.spanId}
-            type="button"
-            tabIndex={-1}
-            title={turnLabel(root.span)}
-            onClick={() => onPick(root.span.spanId)}
-            style={{ flexGrow: dur }}
-            className={cn(
-              "relative min-w-1 basis-0 overflow-hidden rounded-md bg-muted hover:bg-muted",
-              root.span.spanId === selectedId && "ring-1 ring-ring"
-            )}
-          >
-            {marks.map((span) => (
-              <span
-                key={span.spanId}
-                className={cn("absolute h-1/3 min-w-px", spanBg(span))}
-                style={{
-                  left: `${((span.start - start) / dur) * 100}%`,
-                  width: `${(spanDuration(span, now) / dur) * 100}%`,
-                  top: `${(LANE[span.kind]! * 100) / 3}%`,
-                }}
-              />
-            ))}
-          </button>
-        )
-      })}
+      }}
+      className={cn(
+        "sticky top-0 z-10 grid cursor-pointer items-center gap-2 border-b bg-background pr-3 pl-3 outline-none hover:bg-muted focus-visible:bg-muted",
+        COLUMNS,
+        index > 0 && "border-t"
+      )}
+      style={{ height: TRACE_H, marginTop: before || undefined }}
+    >
+      <span className="flex min-w-0 items-center gap-1 font-medium">
+        <ChevronRightIcon className={cn("size-3 shrink-0 text-muted-foreground transition-transform", !collapsed && "rotate-90")} />
+        <span className="truncate" title={traceLabel(group)}>
+          {n}. {traceLabel(group)}
+        </span>
+        <span className="shrink-0 text-xs font-normal text-muted-foreground tabular-nums">
+          {group.spans.length} {group.spans.length === 1 ? "span" : "spans"}
+          {group.errors > 0 && <span className="text-destructive"> · {group.errors} failed</span>}
+        </span>
+      </span>
+      <Axis duration={duration} />
+      <span className="text-right text-xs text-muted-foreground tabular-nums">
+        {group.end === null ? "…" : fmtMs(duration)}
+      </span>
     </div>
+  )
+}
+
+function Axis({ duration }: { duration: number }) {
+  const ticks = niceTicks(duration, 4)
+  return (
+    <span className="relative h-full" aria-hidden>
+      {ticks.map((t) => (
+        <span
+          key={t}
+          className="absolute inset-y-0 text-[10px] text-muted-foreground tabular-nums"
+          style={{ left: `${(t / duration) * 100}%` }}
+        >
+          <span className="absolute inset-y-2 w-px bg-border" />
+          <span className={cn("absolute bottom-0 -translate-x-1/2", t === 0 && "translate-x-0", t / duration > 0.9 && "-translate-x-full")}>
+            {fmtMs(t)}
+          </span>
+        </span>
+      ))}
+    </span>
   )
 }
 
 function Row({
   index,
   before,
-  set,
   node,
+  group,
   now,
-  turn,
   selected,
   collapsed,
   onSelect,
   onToggle,
 }: {
   index: number
-  /** Height of the windowed-out rows above this one, 0 when adjacent. */
+  /** Height of the windowed-out lines above this one, 0 when adjacent. */
   before: number
-  /** [posinset, setsize] among its tree siblings, only while windowed. */
-  set: [number, number] | undefined
   node: SpanNode
+  group: TraceGroup
   now: number
-  turn: number | undefined
   selected: boolean
   collapsed: boolean
   onSelect: () => void
   onToggle: () => void
 }) {
-  const { span, root, depth } = node
+  const { span, depth } = node
   const Icon = KIND[span.kind].icon
-  const rootStart = root.start
-  const rootDur = Math.max(1, spanEnd(root, now) - rootStart)
+  const win = windowOf(group, now)
   const dur = spanDuration(span, now)
-  const usage = span.kind === "model" || span.kind === "turn" ? spanUsage(span) : null
-  const isRoot = depth === 0
+  const usage = span.kind === "model" ? spanUsage(span) : null
+  const at = (ms: number) => `${Math.min(100, Math.max(0, ((ms - win.start) / win.duration) * 100))}%`
   return (
     <div
       role="treeitem"
       aria-selected={selected}
       aria-expanded={node.children.length ? !collapsed : undefined}
-      aria-level={depth + 1}
-      aria-posinset={set?.[0]}
-      aria-setsize={set?.[1]}
+      aria-level={depth + 2}
       tabIndex={0}
       data-index={index}
-      data-span-id={span.spanId}
+      data-key={span.spanId}
       onClick={onSelect}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -487,12 +547,11 @@ function Row({
         }
       }}
       className={cn(
-        "grid h-7 cursor-pointer grid-cols-[minmax(0,1fr)_minmax(3rem,35%)_3.5rem] items-center gap-2 pr-3 outline-none [contain-intrinsic-size:auto_1.75rem] [content-visibility:auto] focus-visible:bg-muted",
-        selected ? "bg-accent text-accent-foreground" : "hover:bg-muted",
-        isRoot && "font-medium",
-        isRoot && index > 0 && "border-t"
+        "grid cursor-pointer items-center gap-2 pr-3 outline-none [contain-intrinsic-size:auto_1.75rem] [content-visibility:auto] focus-visible:bg-muted",
+        COLUMNS,
+        selected ? "bg-accent text-accent-foreground" : "hover:bg-muted"
       )}
-      style={{ paddingLeft: 12 + depth * 20, marginTop: before + (isRoot && index > 0 ? 4 : 0) || undefined }}
+      style={{ height: ROW_H, paddingLeft: 12 + depth * 16, marginTop: before || undefined }}
     >
       <span className="flex min-w-0 items-center gap-1">
         {node.children.length ? (
@@ -513,22 +572,30 @@ function Row({
         )}
         <Icon className={cn("size-3.5 shrink-0", spanText(span))} />
         <span className="truncate" title={span.name}>
-          {turn !== undefined ? `Turn ${turn} · ${turnLabel(span)}` : span.name}
+          {span.name}
         </span>
         {usage?.output != null && (
-          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-            {formatTokens(usage.output)} out
-          </span>
+          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{formatTokens(usage.output)} out</span>
         )}
+        {span.links?.length ? (
+          <span className="shrink-0 text-xs text-muted-foreground" title={`${span.links.length} link(s)`}>
+            ⛓{span.links.length}
+          </span>
+        ) : null}
       </span>
       <span className="relative h-2.5 rounded-full bg-muted">
         <span
           className={cn("absolute inset-y-0 min-w-0.5 rounded-full", spanBg(span), span.end === null && "animate-pulse")}
-          style={{
-            left: `${((span.start - rootStart) / rootDur) * 100}%`,
-            width: `${(dur / rootDur) * 100}%`,
-          }}
+          style={{ left: at(span.start), width: `${(dur / win.duration) * 100}%` }}
         />
+        {span.events.map((event, i) => (
+          <span
+            key={i}
+            title={event.name}
+            className="absolute top-1/2 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground ring-1 ring-background"
+            style={{ left: at(event.at) }}
+          />
+        ))}
       </span>
       <span className="text-right text-xs text-muted-foreground tabular-nums">
         {span.end === null ? "…" : fmtMs(dur)}

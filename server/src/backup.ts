@@ -455,7 +455,7 @@ const SessionRow = z.object({
      before the column existed. */
   lastTurnError: optStr,
   /* Measured output-speed extrema. Older bundles have no recorded rates. */
-  tps: z.object({ min: z.number(), max: z.number(), outputTokens: z.number(), durationMs: z.number(), toolDurationMs: z.number().optional() }).nullish(),
+  tps: z.object({ min: z.number(), max: z.number(), outputTokens: z.number(), durationMs: z.number(), toolDurationMs: z.number().optional(), generatedTokens: z.number().optional(), decodeMs: z.number().optional() }).nullish(),
   deletedAt: int.nullish(),
   /* Absent in a bundle written before pins moved to the server, which reads as
      unpinned — which is what every thread in it was. */

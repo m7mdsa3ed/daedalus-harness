@@ -91,3 +91,51 @@ console.log("trajectory: ok")
   assert.strictEqual(previousModelCall(calls, calls[0], "call"), null)
 }
 console.log("prompt diff: ok")
+
+// ── traces, self time, axis, OTLP ──
+{
+  const { groupTraces, traceLabel, selfTime, niceTicks, toOtlp, otelKindOf, buildTree } = await import("./trajectory.ts")
+  const mk = (spanId, parentSpanId, traceId, start, end, extra = {}) => ({
+    traceId, spanId, parentSpanId, sessionId: "s", name: spanId, kind: "other", source: "harness",
+    start, end, status: "ok", attributes: {}, events: [], ...extra,
+  })
+  const spans = [
+    mk("a", null, "T1", 0, 100, { attributes: { "daedalus.prompt": "  hello \n world " } }),
+    mk("b", "a", "T1", 10, 50),
+    mk("c", "a", "T1", 30, 60), // overlaps b: children cover 10..60
+    mk("d", null, "T2", 500, null),
+    mk("e", "d", "T2", 510, 520, { status: "error" }),
+  ]
+  const groups = groupTraces(buildTree(spans))
+  assert.deepStrictEqual(groups.map((g) => [g.traceId, g.spans.length, g.start, g.end, g.errors]), [["T1", 3, 0, 100, 0], ["T2", 2, 500, null, 1]])
+  assert.strictEqual(traceLabel(groups[0]), "hello world")
+  assert.strictEqual(traceLabel(groups[1]), "d")
+  const [root] = buildTree(spans).filter((n) => n.span.spanId === "a")
+  assert.strictEqual(selfTime(root, 0), 50, "overlapping children are merged, not subtracted twice")
+  assert.deepStrictEqual(niceTicks(1000, 5), [0, 200, 400, 600, 800, 1000])
+  assert.deepStrictEqual(niceTicks(0), [0])
+  assert.strictEqual(otelKindOf(spans[0]), "internal")
+
+  const otlp = toOtlp(mk("x", "p", "T", 1000.5, 2000, {
+    spanKind: "client", status: "error", statusMessage: "boom", traceState: "v=1",
+    attributes: { n: 3, f: 1.5, s: "x", b: true, arr: ["a", "b"] },
+    events: [{ name: "retry", at: 1500, attributes: { attempt: 2 } }],
+    links: [{ traceId: "L", spanId: "l", attributes: { why: "retry" } }],
+    resource: { "service.name": "svc" }, scope: { name: "lib", version: "1" },
+  }))
+  const rs = otlp.resourceSpans[0]
+  assert.deepStrictEqual(rs.resource.attributes, [{ key: "service.name", value: { stringValue: "svc" } }])
+  assert.deepStrictEqual(rs.scopeSpans[0].scope, { name: "lib", version: "1" })
+  const sp = rs.scopeSpans[0].spans[0]
+  assert.strictEqual(sp.kind, 3)
+  assert.strictEqual(sp.startTimeUnixNano, "1000500000")
+  assert.strictEqual(sp.endTimeUnixNano, "2000000000")
+  assert.deepStrictEqual(sp.status, { code: 2, message: "boom" })
+  assert.deepStrictEqual(sp.attributes.find((a) => a.key === "n").value, { intValue: "3" })
+  assert.deepStrictEqual(sp.attributes.find((a) => a.key === "f").value, { doubleValue: 1.5 })
+  assert.deepStrictEqual(sp.attributes.find((a) => a.key === "arr").value, { arrayValue: { values: [{ stringValue: "a" }, { stringValue: "b" }] } })
+  assert.strictEqual(sp.events[0].timeUnixNano, "1500000000")
+  assert.strictEqual(sp.links[0].spanId, "l")
+  assert.strictEqual(toOtlp(mk("o", null, "T", 0, null)).resourceSpans[0].scopeSpans[0].spans[0].endTimeUnixNano, undefined, "an open span has no end")
+  console.log("trajectory (otel): ok")
+}

@@ -36,6 +36,7 @@
       "@daedalus/protocol": ["../server/src/protocol.ts"],
       "@daedalus/delivery": ["../server/src/delivery.ts"],
       "@daedalus/compat": ["../server/src/compat.ts"],
+      "@daedalus/tps": ["../server/src/tps.ts"],
       /* The ACP vocabulary the protocol is written in, through the server's
          one barrel over the SDK (server/src/acp.ts) — so the vendor package is
          named in one place per half. Type-only for the same reason as above. */

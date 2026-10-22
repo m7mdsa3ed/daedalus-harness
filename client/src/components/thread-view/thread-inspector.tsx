@@ -52,7 +52,8 @@ import { SubagentStep } from "@/components/thread-items/rows"
 import { useLayoutOptions, LayoutOptionsContext } from "@/lib/layout-options"
 import type { SessionMeta } from "@/lib/settings"
 import type { ThreadItem, ThreadState } from "@/lib/store"
-import { formatDuration, formatRate, formatTokens, promptTokens, sumUsage } from "@/lib/tokens"
+import { formatDuration, formatTokens, formatTps, promptTokens, sumUsage } from "@/lib/tokens"
+import { tpsAverage } from "@daedalus/tps"
 import { INSPECTOR_TILE, InspectorCard, TokensPanel } from "./tokens-panel"
 import { Count } from "@/components/settings/primitives"
 import { PanelToolbar } from "@/components/workspace/primitives"
@@ -343,9 +344,7 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
   const context = thread.context
   const contextPercent = context && context.size > 0 ? Math.min(100, Math.round((context.used / context.size) * 100)) : null
   const contextCapacity = context ? formatTokens(context.size) : null
-  const measured = Object.entries(thread.turnUsage).filter(([id]) => thread.turnDuration[id] !== undefined)
-  const measuredOutput = measured.reduce((sum, [, usage]) => sum + usage.outputTokens, 0)
-  const measuredDuration = measured.reduce((sum, [id]) => sum + (thread.turnDuration[id] ?? 0), 0)
+  const average = tpsAverage(thread.tps)
   const ownItems = thread.items.filter((item) => !item.parentId)
   const loaded = React.useMemo(() => loadedTools(thread.items), [thread.items])
   const tools = ownItems.filter((item) => item.kind === "tool")
@@ -450,7 +449,10 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
             <Metric label="Tools done / failed" value={`${completedTools} / ${failedTools}`} />
             <Metric label="Output / cached input" value={thread.usage ? `${formatTokens(thread.usage.outputTokens)} / ${formatTokens(cachedIn)}` : "—"} />
             <Metric label="Turn / tool time" value={`${elapsed ? formatDuration(elapsed) : "—"} / ${toolTime ? formatDuration(toolTime) : "—"}`} />
-            <Metric label="Avg. speed / first response" value={`${formatRate(measuredOutput, measuredDuration) ?? "—"} / ${thread.ttftMs === null ? "—" : `${thread.ttftMs}ms`}`} />
+            <Metric
+              label={average?.kind === "throughput" ? "Avg. throughput / first response" : "Avg. speed / first response"}
+              value={`${(average && formatTps(average.rate)) ?? "—"} / ${thread.ttftMs === null ? "—" : `${thread.ttftMs}ms`}`}
+            />
             <Metric label="Cache hit rate" value={cacheRate === null ? "—" : `${cacheRate}%`} />
             <Metric label="Subagent tokens" value={subagentUsage ? formatTokens(subagentUsage) : "—"} />
             {queued > 0 && <Metric label="Queued messages" value={String(queued)} />}

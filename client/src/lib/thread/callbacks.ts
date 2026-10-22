@@ -309,14 +309,14 @@ export function makeThreadCallbacks(
     onTurnChanges: (turn) => send({ type: "turn-changes", id, turn }),
     /* The catalog is TanStack Query's; the row is refetched, not patched
        in from a socket frame (docs/client.md, "one owner per slice"). */
-    onTurnEnded: (usage, error, promptText, catchingUp, continued, turnId, durationMs, toolDurationMs, failure) => {
+    onTurnEnded: (usage, error, promptText, catchingUp, continued, turnId, durationMs, toolDurationMs, failure, generation) => {
       /* A completed turn cannot still be retrying. Clear this from the reliable
          turn boundary as well as the live-only retry notification, so a missed
          best-effort clear cannot leave the backoff card stuck after success. */
       send({ type: "retry", id, retry: null })
       send({ type: "turn-active", id, active: false })
-      send({ type: "turn-timing", id, turnId, durationMs, toolDurationMs })
-      if (usage) send({ type: "usage", id, usage, turnId, durationMs })
+      send({ type: "turn-timing", id, turnId, durationMs, toolDurationMs, generation })
+      if (usage) send({ type: "usage", id, usage, turnId, durationMs, toolDurationMs, generation })
       if (error) {
         // Recorded in the transcript either way — a failure that survived a
         // reload is still the answer to the message above it, and carries the

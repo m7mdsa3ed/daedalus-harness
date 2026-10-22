@@ -1054,7 +1054,7 @@ export const sessions = pgTable(
         memory until then. */
     context: jsonb("context").$type<acp.UsageUpdate>(),
     /** Min/max measured turn rate, weighted-average inputs, and summed tool-call time. */
-    tps: jsonb("tps").$type<{ min: number; max: number; outputTokens: number; durationMs: number; toolDurationMs?: number }>(),
+    tps: jsonb("tps").$type<{ min: number; max: number; outputTokens: number; durationMs: number; toolDurationMs?: number; generatedTokens?: number; decodeMs?: number }>(),
     /** Epoch ms this thread was deleted; null = live. Deleted threads keep
         their row (and their acpSessionId) so a delete stays undoable. */
     deletedAt: bigint("deleted_at", { mode: "number" }),
@@ -2393,6 +2393,14 @@ export const traceSpans = pgTable(
     statusMessage: text("status_message"),
     attributes: jsonb("attributes").$type<Record<string, unknown>>().notNull(),
     events: jsonb("events").$type<unknown[]>().notNull(),
+    /* The rest of the OpenTelemetry span model. Nullable: a row written before
+       these existed is read as a span that said none of them. */
+    /** `TraceSpanOtelKind`. */
+    spanKind: text("span_kind"),
+    links: jsonb("links").$type<unknown[]>(),
+    scope: jsonb("scope").$type<Record<string, unknown>>(),
+    resource: jsonb("resource").$type<Record<string, unknown>>(),
+    traceState: text("trace_state"),
   },
   (t) => [index("trace_spans_session").on(t.sessionId, t.start)],
 );

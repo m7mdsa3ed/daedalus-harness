@@ -1000,6 +1000,19 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 A thread's trajectory is its OpenTelemetry spans, stored in `trace_spans` and drawn by the
 Trajectory panel (thread dock, and `/t/:id/trace`). It replaced a trace page that re-read the
+- **A span is stored as OpenTelemetry says it, not as the panel draws it.** Beside the
+  attributes and events it keeps `spanKind` (`client` for a model call and the prompt request,
+  `internal` otherwise — read off the SDK span, or the OTLP `kind`), `links`, the
+  instrumentation `scope`, the producer's `resource` and `traceState`, on every path in: the
+  tracer, `ingest`, the OTLP intake (which reads the resource and scope from above each span,
+  where OTLP nests them, and still drops identity attributes from the resource) and the
+  agent's `_daedalus/trace` (`toWire`). All optional and nullable columns: a row from before
+  `otel-span-fields` reads as a span that said none of them. The feature name is listed in
+  `FEATURES` for a client that wants to know; the Trajectory does not gate on it, because every
+  reader already treats an absent field as absent. **`daedalus.kind` is the harness's own bucket for
+  icons and filters; it is never the span's identity** — the Trajectory's Overview tab names
+  `SpanKind` and the instrumentation scope, and its OTLP tab and Export are the span in the
+  wire format a collector reads.
 journal: the journal says what was *said*; a span says what *happened*, when, for how long and
 under what.
 
@@ -1044,6 +1057,20 @@ under what.
 The Tokens panel divides each request's prompt by part. **Where the division comes
 from is per request, in this order, and a request is only ever read by the first that
 answers** (`sessions.ts` `emit`, on the `usage_update`):
+**Output speed is measured on the model spans, never on the turn's wall clock** (`tps.ts`,
+one pure module both halves run, the client through `@daedalus/tps`). A turn's
+`TurnGeneration` — output tokens over decode time — rides `turn_ended.generation` and is
+written on the turn span as `daedalus.decode_ms` / `daedalus.generated_tokens`. `BridgeTrace`
+reads it from the runtime's own `model` spans of that turn's trace (`gen_ai.usage.output_tokens`,
+duration less TTFT — `daedalus.ttft_ms` or the AI SDK's seconds attribute), and when none have
+arrived by the settle (Claude Code exports OTLP on an interval), from the thread's own stream:
+first chunk to the tool call that ends the generation, divided into the turn's usage. Tool calls,
+prefill, permission waits and holds are never in the denominator — dividing by `durationMs`
+drew a tool-heavy turn at a fraction of its real speed. Wall-clock throughput survives only as
+the labelled fallback for a turn with no generation, and `TpsStats` switches a thread's
+extrema over to generation on its first measured turn rather than mixing the two quantities.
+Every average is token-weighted.
+
 
 1. **The agent's own measurement** (`_meta.daedalus.breakdown`, `source: "agent"`) —
    our runtime tokenizes what it sends, so it needs nothing from anyone else.

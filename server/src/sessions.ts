@@ -36,6 +36,7 @@ import { agentModelId, bareModelId, getAgent, modelAllowlistFor, type AgentDef }
 import type { WorkspaceLayout } from "./db/schema.js";
 import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
 import { setOtlpThreadCheck, otlpUrlFor } from "./otlp.js";
+import { addTps } from "./tps.js";
 import { promptPrefixOf, refreshPromptPrefix, type PromptFilesFormat } from "./prompt-files.js";
 import { pauseHookUrlFor } from "./pause-hooks.js";
 import { HttpError } from "./http-error.js";
@@ -1406,27 +1407,13 @@ export class SessionManager {
         ? event.error?.message ?? (event.failure?.severity === "error" ? event.failure.title : undefined)
         : undefined;
       session.lastTurnError = failedAs ? failedAs.slice(0, LAST_ERROR_MAX) : null;
-      if (event.ev === "turn_ended" && event.usage && event.durationMs && event.durationMs > 0) {
-        const rate = (event.usage.outputTokens * 1000) / event.durationMs;
-        if (Number.isFinite(rate) && rate > 0) {
-          session.tps = session.tps
-            ? {
-                min: Math.min(session.tps.min, rate),
-                max: Math.max(session.tps.max, rate),
-                outputTokens: session.tps.outputTokens + event.usage.outputTokens,
-                durationMs: session.tps.durationMs + event.durationMs,
-                ...(event.toolDurationMs !== undefined || session.tps.toolDurationMs !== undefined
-                  ? { toolDurationMs: (session.tps.toolDurationMs ?? 0) + (event.toolDurationMs ?? 0) }
-                  : {}),
-              }
-            : {
-                min: rate,
-                max: rate,
-                outputTokens: event.usage.outputTokens,
-                durationMs: event.durationMs,
-                ...(event.toolDurationMs !== undefined ? { toolDurationMs: event.toolDurationMs } : {}),
-              };
-        }
+      if (event.ev === "turn_ended" && event.usage) {
+        session.tps = addTps(session.tps, {
+          outputTokens: event.usage.outputTokens,
+          durationMs: event.durationMs,
+          toolDurationMs: event.toolDurationMs,
+          generation: event.generation,
+        });
       }
       this.persist(session);
       /* A staged change used to be flushed here, at `turn_ended`. It is not any

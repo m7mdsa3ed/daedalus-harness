@@ -1933,7 +1933,7 @@ export class AcpBridge implements ConnectionRoute {
     const failed = error ?? (turnFailure?.severity === "error"
       ? { code: -32603, message: turnFailure.details ? `${turnFailure.title}\n${turnFailure.details}` : turnFailure.title }
       : undefined);
-    this.trace.endTurn({ error: failed?.message, usage, stopReason, durationMs, toolDurationMs });
+    const generation = this.trace.endTurn({ error: failed?.message, usage, stopReason, durationMs, toolDurationMs });
     this.turnStartedAt = null;
     this.turnToolDurationMs = 0;
     this.toolTimeLost = false;
@@ -1964,6 +1964,7 @@ export class AcpBridge implements ConnectionRoute {
       ...(turnFailure ? { failure: turnFailure } : {}),
       ...(this.lastSeenMessageId ? { lastMessageId: this.lastSeenMessageId } : {}),
       ...(durationMs !== undefined ? { durationMs } : {}),
+      ...(generation ? { generation } : {}),
       ...(toolDurationMs !== undefined ? { toolDurationMs } : {}),
     });
     this.releaseIdle();

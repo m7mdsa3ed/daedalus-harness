@@ -15,7 +15,7 @@ import {
   WrenchIcon,
   type LucideIcon,
 } from "lucide-react"
-import type { TraceSpan, TraceSpanKind } from "@daedalus/protocol"
+import type { TraceSpan, TraceSpanKind, TraceSpanOtelKind } from "@daedalus/protocol"
 
 export const KIND: Record<TraceSpanKind, { label: string; icon: LucideIcon; bg: string; text: string }> = {
   turn: { label: "Turn", icon: MessageSquareIcon, bg: "bg-muted-foreground/50", text: "text-muted-foreground" },
@@ -29,6 +29,15 @@ export const KIND: Record<TraceSpanKind, { label: string; icon: LucideIcon; bg: 
   session: { label: "Session", icon: BoxIcon, bg: "bg-chart-5", text: "text-chart-5" },
   shell: { label: "Shell", icon: SquareTerminalIcon, bg: "bg-chart-3", text: "text-chart-3" },
   other: { label: "Other", icon: CircleDotIcon, bg: "bg-muted-foreground/40", text: "text-muted-foreground" },
+}
+
+/** OTel's own `SpanKind`, as the spec words it. */
+export const OTEL_KIND_LABEL: Record<TraceSpanOtelKind, string> = {
+  internal: "Internal",
+  server: "Server",
+  client: "Client",
+  producer: "Producer",
+  consumer: "Consumer",
 }
 
 export const spanBg = (span: TraceSpan) => (span.status === "error" ? "bg-destructive" : KIND[span.kind].bg)

@@ -42,6 +42,9 @@ import {
   type TraceSpan,
   type TraceSpanEvent,
   type TraceSpanKind,
+  type TraceSpanLink,
+  type TraceSpanOtelKind,
+  type TraceSpanScope,
 } from "./protocol.js";
 
 const SESSION_ATTR = "daedalus.session_id";
@@ -145,8 +148,19 @@ function eventsOf(span: ReadableSpan): TraceSpanEvent[] {
   }));
 }
 
+const OTEL_KINDS: TraceSpanOtelKind[] = ["internal", "server", "client", "producer", "consumer"];
+
+function linksOf(span: ReadableSpan): TraceSpanLink[] {
+  return span.links.map((link) => ({
+    traceId: link.context.traceId,
+    spanId: link.context.spanId,
+    ...(link.attributes && Object.keys(link.attributes).length ? { attributes: capAttributes(link.attributes) } : {}),
+  }));
+}
+
 function wireOf(span: ReadableSpan, ended: boolean): TraceSpan {
   const attributes = capAttributes(span.attributes);
+  const traceState = span.spanContext().traceState?.serialize();
   return {
     traceId: span.spanContext().traceId,
     spanId: span.spanContext().spanId,
@@ -161,6 +175,11 @@ function wireOf(span: ReadableSpan, ended: boolean): TraceSpan {
     ...(span.status.message ? { statusMessage: span.status.message } : {}),
     attributes,
     events: eventsOf(span),
+    spanKind: OTEL_KINDS[span.kind] ?? "internal",
+    links: linksOf(span),
+    scope: { name: span.instrumentationScope.name, ...(span.instrumentationScope.version ? { version: span.instrumentationScope.version } : {}) },
+    resource: capAttributes(span.resource.attributes),
+    ...(traceState ? { traceState } : {}),
   };
 }
 
@@ -179,6 +198,11 @@ function rowOf(span: TraceSpan & { end: number }): Row {
     statusMessage: span.statusMessage ?? null,
     attributes: span.attributes,
     events: span.events,
+    spanKind: span.spanKind ?? null,
+    links: span.links ?? null,
+    scope: span.scope ? { ...span.scope } : null,
+    resource: span.resource ?? null,
+    traceState: span.traceState ?? null,
   };
 }
 
@@ -236,7 +260,7 @@ export function startSpan(sessionId: string, name: string, kind: TraceSpanKind, 
   return tracer.startSpan(
     name,
     {
-      kind: options.spanKind ?? SpanKind.INTERNAL,
+      kind: options.spanKind ?? (kind === "request" || kind === "model" ? SpanKind.CLIENT : SpanKind.INTERNAL),
       startTime: options.startTime,
       attributes: { ...options.attributes, [SESSION_ATTR]: sessionId, [KIND_ATTR]: kind },
     },
@@ -266,6 +290,21 @@ export function traceparent(span: Span): string {
 
 /* ── A runtime's own spans ── */
 
+export type IngestedSpan = Pick<TraceSpan, "traceId" | "kind" | "start" | "end" | "attributes">;
+const ingestListeners = new Map<string, Set<(span: IngestedSpan) => void>>();
+
+/** Hear every span a runtime reports for a thread, whichever door it came
+    through (`_daedalus/trace` or the OTLP intake). Returns the unsubscribe. */
+export function onIngest(sessionId: string, fn: (span: IngestedSpan) => void): () => void {
+  let set = ingestListeners.get(sessionId);
+  if (!set) ingestListeners.set(sessionId, (set = new Set()));
+  set.add(fn);
+  return () => {
+    set.delete(fn);
+    if (set.size === 0 && ingestListeners.get(sessionId) === set) ingestListeners.delete(sessionId);
+  };
+}
+
 /**
  * Write the spans a runtime sent up over `_daedalus/trace`, filed under the
  * thread the bridge that received them belongs to — never under an id the
@@ -284,6 +323,9 @@ export function ingest(sessionId: string, params: TraceNotificationParams): void
     const start = Number(span.start);
     const end = span.end === null || span.end === undefined ? start : Number(span.end);
     if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    /* A runtime's own "turn" is the run inside ours — the turn is the
+       harness's span, the one root a trace has. */
+    const kind = ((k) => (k === "turn" ? "agent" : k))(kindOf(String(span.name ?? ""), attributes));
     queue.push(
       rowOf({
         traceId: span.traceId,
@@ -291,9 +333,7 @@ export function ingest(sessionId: string, params: TraceNotificationParams): void
         parentSpanId: typeof span.parentSpanId === "string" ? span.parentSpanId : null,
         sessionId,
         name: String(span.name ?? "span"),
-        /* A runtime's own "turn" is the run inside ours — the turn is the
-           harness's span, the one root a trace has. */
-        kind: ((k) => (k === "turn" ? "agent" : k))(kindOf(String(span.name ?? ""), attributes)),
+        kind,
         source: "agent",
         start,
         end,
@@ -301,8 +341,21 @@ export function ingest(sessionId: string, params: TraceNotificationParams): void
         ...(typeof span.statusMessage === "string" ? { statusMessage: span.statusMessage } : {}),
         attributes,
         events: Array.isArray(span.events) ? span.events.map((e) => ({ ...e, attributes: capAttributes(e.attributes) })) : [],
+        ...(typeof span.spanKind === "string" && (OTEL_KINDS as string[]).includes(span.spanKind) ? { spanKind: span.spanKind } : {}),
+        ...(Array.isArray(span.links)
+          ? {
+              links: span.links
+                .filter((l) => l && typeof l.traceId === "string" && typeof l.spanId === "string")
+                .map((l) => ({ traceId: l.traceId, spanId: l.spanId, ...(l.attributes ? { attributes: capAttributes(l.attributes) } : {}) })),
+            }
+          : {}),
+        ...(span.scope && typeof span.scope.name === "string" ? { scope: span.scope } : {}),
+        ...(span.resource ? { resource: capAttributes(span.resource) } : {}),
+        ...(typeof span.traceState === "string" && span.traceState ? { traceState: span.traceState } : {}),
       }),
     );
+    const listeners = ingestListeners.get(sessionId);
+    if (listeners) for (const fn of listeners) fn({ traceId: span.traceId, kind, start, end, attributes });
   }
   schedule();
 }
@@ -390,6 +443,11 @@ function fromRow(row: typeof traceSpans.$inferSelect): TraceSpan {
     ...(row.statusMessage ? { statusMessage: row.statusMessage } : {}),
     attributes: row.attributes as Record<string, TraceAttributeValue>,
     events: row.events as TraceSpanEvent[],
+    ...(row.spanKind ? { spanKind: row.spanKind as TraceSpanOtelKind } : {}),
+    ...(row.links ? { links: row.links as TraceSpanLink[] } : {}),
+    ...(row.scope ? { scope: row.scope as unknown as TraceSpanScope } : {}),
+    ...(row.resource ? { resource: row.resource as Record<string, TraceAttributeValue> } : {}),
+    ...(row.traceState ? { traceState: row.traceState } : {}),
   };
 }
 

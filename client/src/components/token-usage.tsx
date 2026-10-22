@@ -22,10 +22,12 @@
 import * as React from "react"
 import { CoinsIcon, TimerIcon } from "lucide-react"
 import type * as acp from "@daedalus/acp"
+import type { TurnGeneration } from "@daedalus/protocol"
+import { generationRate } from "@daedalus/tps"
 
 import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import { ReadingPopoverContent } from "@/components/composer/indicator"
-import { formatDuration, formatRate, formatTokens, promptTokens, windowEstimated } from "@/lib/tokens"
+import { formatDuration, formatRate, formatTokens, formatTps, promptTokens, windowEstimated } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
 /* The trigger box both popover figures wear. One padding, one line box, one
@@ -266,6 +268,7 @@ export function TokenSummary({
   label = "Tokens",
   durationMs,
   toolDurationMs,
+  generation,
   className,
 }: {
   usage: acp.Usage
@@ -277,12 +280,20 @@ export function TokenSummary({
   durationMs?: number
   /** Union wall time spent in the thread's own tool calls, ms. */
   toolDurationMs?: number
+  /** What the turn's model calls wrote over their decode time — the speed.
+      Without it the figure beside the tokens is throughput over the turn's
+      wall clock, and is labelled as that. */
+  generation?: TurnGeneration
   className?: string
 }) {
   const prompt = promptTokens(usage)
   const cached = usage.cachedReadTokens ?? 0
   const cacheRate = prompt > 0 ? Math.round((cached / prompt) * 100) : null
-  const rate = durationMs !== undefined ? formatRate(usage.outputTokens, durationMs) : null
+  const speed = generation ? formatTps(generationRate(generation) ?? 0) : null
+  const throughput = durationMs !== undefined ? formatRate(usage.outputTokens, durationMs) : null
+  /* The figure on the chip: the speed when it was measured, else throughput —
+     never both, and the popover says which one it is. */
+  const rate = speed ?? throughput
   return (
     <Popover>
       <PopoverTrigger
@@ -327,7 +338,8 @@ export function TokenSummary({
               )}
             </>
           )}
-          {rate && <Stat label="Whole-turn speed" value={rate} />}
+          {speed && <Stat label="Output speed" value={speed} />}
+          {throughput && <Stat label="Whole-turn throughput" value={throughput} />}
           {context && (
             <Stat label="Context" value={`${formatTokens(context.used)} / ${formatTokens(context.size)}`} />
           )}

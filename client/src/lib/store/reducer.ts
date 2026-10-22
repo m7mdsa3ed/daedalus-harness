@@ -9,6 +9,7 @@ import type {
   TurnChanges,
   TurnTick,
   TpsStats,
+  TurnGeneration,
   WireError,
 } from "@daedalus/protocol"
 import { sameRow } from "../settings"
@@ -20,7 +21,8 @@ import type { ErrorItem, PendingElicitation, PendingPermission, TextItem, Thread
 import { emptyThread } from "./thread"
 import type { State, ThreadState } from "./thread"
 import { applyMetaUpdate, settleTools } from "./session-update"
-import { addTps, addUsage, pushUserMessage } from "./messages"
+import { addTps } from "@daedalus/tps"
+import { addUsage, pushUserMessage } from "./messages"
 
 // ---- reducer ----
 
@@ -211,8 +213,23 @@ export type Action =
     }
   | { type: "mode"; id: string; modeId: string }
   | { type: "config-options"; id: string; configOptions: acp.SessionConfigOption[] }
-  | { type: "usage"; id: string; usage: acp.Usage; turnId?: string; durationMs?: number; toolDurationMs?: number }
-  | { type: "turn-timing"; id: string; turnId: string; durationMs?: number; toolDurationMs?: number }
+  | {
+      type: "usage"
+      id: string
+      usage: acp.Usage
+      turnId?: string
+      durationMs?: number
+      toolDurationMs?: number
+      generation?: TurnGeneration
+    }
+  | {
+      type: "turn-timing"
+      id: string
+      turnId: string
+      durationMs?: number
+      toolDurationMs?: number
+      generation?: TurnGeneration
+    }
   | { type: "ttft"; id: string; ms: number }
   | { type: "turn-changes"; id: string; turn: TurnChanges }
   | { type: "turn-changes-all"; id: string; turns: TurnChanges[] }
@@ -697,8 +714,15 @@ export function reducer(state: State, action: Action): State {
         /* One journaled `turn_ended` supplies one usage reading, so replay
            cannot double-count either the thread total or the turn footer. */
         ...(action.turnId ? { turnUsage: { ...current.turnUsage, [action.turnId]: action.usage } } : null),
-        ...(action.turnId && action.durationMs !== undefined
-          ? { tps: addTps(current.tps, action.usage, action.durationMs, action.toolDurationMs) }
+        ...(action.turnId
+          ? {
+              tps: addTps(current.tps, {
+                outputTokens: action.usage.outputTokens,
+                durationMs: action.durationMs,
+                toolDurationMs: action.toolDurationMs,
+                generation: action.generation,
+              }),
+            }
           : null),
       })
     }
@@ -727,6 +751,9 @@ export function reducer(state: State, action: Action): State {
       const turnChanges = { ...thread(state, action.id).turnChanges }
       for (const turn of action.turns) if (!turnChanges[turn.turnId]?.ended) turnChanges[turn.turnId] = turn
       return withThread(state, action.id, { turnChanges })
+        ...(action.generation
+          ? { turnGeneration: { ...current.turnGeneration, [action.turnId]: action.generation } }
+          : null),
     }
     /* Absolute, like the queue: the server sends the whole reading, never a
        delta, so there is nothing to merge. */
