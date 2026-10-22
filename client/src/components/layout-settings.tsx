@@ -68,6 +68,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Empty } from "@/components/empty"
 import { STREAM_SPEEDS } from "@/lib/stream-pace"
+import { BATCH_BURSTS, GAP_MINS } from "@/lib/tool-batches"
 import { Switch } from "@/components/ui/switch"
 import { ChoiceTiles, Group, Row, Segmented, Toolbar } from "@/components/settings/primitives"
 import { cn } from "@/lib/utils"
@@ -125,7 +126,7 @@ type Category = {
   hint: string
   options: Option[]
   /** Non-switch controls that belong to this group's question. */
-  pickers?: ("streamSpeed" | "subagentPeek" | "toolLayout")[]
+  pickers?: ("streamSpeed" | "subagentPeek" | "toolLayout" | "parallelCalls")[]
 }
 
 const SUBAGENT_PEEK_COPY: Record<SubagentPeek, { label: string; description: string }> = {
@@ -226,7 +227,7 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
     id: "agent-activity",
     label: "Agent activity",
     hint: "Choose how much of the work behind an answer is shown.",
-    pickers: ["subagentPeek", "toolLayout"],
+    pickers: ["subagentPeek", "toolLayout", "parallelCalls"],
     options: [
       {
         key: "showThinking",
@@ -660,6 +661,9 @@ export function LayoutSettings({ scope = "transcript" }: { scope?: "transcript" 
     if (picker === "streamSpeed") {
       return matches("streaming speed", ...STREAM_SPEEDS.flatMap((speed) => [speed.label, speed.description]))
     }
+    if (picker === "parallelCalls") {
+      return matches("parallel calls", "wait between steps", "batch", "burst window", "gap")
+    }
     if (picker === "subagentPeek") {
       return matches("subagent activity", ...SUBAGENT_PEEKS.flatMap((peek) => [SUBAGENT_PEEK_COPY[peek].label, SUBAGENT_PEEK_COPY[peek].description]))
     }
@@ -696,6 +700,8 @@ export function LayoutSettings({ scope = "transcript" }: { scope?: "transcript" 
           "subagentPeek",
           "toolLayout",
           "toolVariant",
+          "batchBurst",
+          "gapMin",
           "streamSpeed",
           "sidebarSort",
           "sidebarFilter",
@@ -796,6 +802,42 @@ export function LayoutSettings({ scope = "transcript" }: { scope?: "transcript" 
             onChange={(variant) => setLayoutOption("toolVariant", variant)}
           />
         </PickerRow>
+      )}
+      {entry.visiblePickers.includes("parallelCalls") && (
+        <>
+          <PickerRow
+            head={{
+              icon: Clock,
+              title: "Show waits between steps",
+              description:
+                "Say how long the agent sat between one step settling and the next starting — mostly the model answering. Waits shorter than this are not drawn.",
+              changed: changedKeys.has("gapMin"),
+            }}
+          >
+            <Segmented
+              label="Show waits between steps"
+              options={GAP_MINS.map((entry) => ({ value: entry.id, label: entry.label }))}
+              value={options.gapMin}
+              onChange={(id) => setLayoutOption("gapMin", id)}
+            />
+          </PickerRow>
+          <PickerRow
+            head={{
+              icon: Rows3,
+              title: "Parallel call window",
+              description:
+                "Calls from an agent that does not name the request they came from count as parallel when they start this close together. Our own agent names it, so this never applies to it.",
+              changed: changedKeys.has("batchBurst"),
+            }}
+          >
+            <Segmented
+              label="Parallel call window"
+              options={BATCH_BURSTS.map((entry) => ({ value: entry.id, label: entry.label }))}
+              value={options.batchBurst}
+              onChange={(id) => setLayoutOption("batchBurst", id)}
+            />
+          </PickerRow>
+        </>
       )}
       {entry.visiblePickers.includes("streamSpeed") && (
         <PickerRow

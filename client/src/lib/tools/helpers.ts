@@ -39,6 +39,13 @@ export const vendorMeta = (
 ): Record<string, unknown> | null =>
   VENDOR_META[vendor].reduce<Record<string, unknown> | null>((at, key) => asRecord(at?.[key]), asRecord(meta))
 
+/** The id of the model request that made a call, when the runtime says
+    (`_meta.daedalus.stepId`, ours). Calls with the same id were one response's
+    parallel batch; a runtime that sends none is read from timing instead
+    (`lib/tool-batches.ts`). */
+export const stepIdOf = (meta: unknown): string | undefined =>
+  str(vendorMeta(meta, "daedalus")?.stepId) ?? undefined
+
 /** `<name>…</name>` out of an XML-ish body — task notifications and OpenCode's
     task wrapper are both read with it. */
 export const tagText = (body: string, name: string): string | null => {

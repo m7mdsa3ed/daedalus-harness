@@ -506,6 +506,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   step name when there is one, else what the worker was asked to do — so a step
   does not change its name depending on whether it is read inside the run or on
   its own.
+  **Parallel calls are bracketed, and the wait between steps is said under the step it follows**
+  (`lib/tool-batches.ts`, `BatchBracket`/`StepGap` in `thread-items/rows.tsx`). A batch is the
+  calls of one model request. **The runtime's word beats a guess**: our agent stamps every call
+  with `_meta.daedalus.stepId` (one per `start-step`, read through `stepIdOf`), and two
+  neighbours are one batch exactly when the ids are equal. Only a call with no id — another
+  runtime, an older journal — falls back to timing: starting within `batchBurst` of the batch's
+  first call, or before its latest call has ended. A step with neither (a notice, a `session/load`
+  replay, whose stamps are the reload's) never joins, so no evidence marks nothing. The bracket
+  lives in the 4px the run's clip keeps past the rows, so no row moves and every tool layout
+  gets it; a notice between two calls of one batch is inside it. The wait (`gapMin`, Off draws
+  none) is measured from the batch's *latest* end to the next batch's start, hangs off the batch's
+  last call, and never reads as a row of its own, because a row would take a mark and a rail
+  elbow. A reader's approval time is already out of a call's length (`waitedMs`), so the figure
+  is the agent's own. Both options are Segmented presets, not free numbers (`BATCH_BURSTS`,
+  `GAP_MINS`): `pick` drops a stored value outside the list.
   **A thinking row is a live view while it streams, and its shape is a view option.**
   `RowView`'s `streaming` flag (set by `thread-view.tsx` on the transcript's tail row while
   `turnActive`, and by the subagent rail on its tail while the child is active) opens the

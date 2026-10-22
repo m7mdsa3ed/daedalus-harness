@@ -723,3 +723,49 @@ console.log("turn.test.ts passed");
   });
   console.log("turn: steered image ok");
 }
+
+// --- step ids: calls from one model request share an id, a later request has its own ---
+{
+  const twoCalls: ReturnType<typeof toolCallScript> = [
+    { type: "stream-start", warnings: [] },
+    ...["a", "b"].flatMap((id) => [
+      { type: "tool-input-start" as const, id, toolName: "bash" },
+      { type: "tool-input-end" as const, id },
+      { type: "tool-call" as const, toolCallId: id, toolName: "bash", input: JSON.stringify({ command: "true" }) },
+    ]),
+    {
+      type: "finish",
+      finishReason: { unified: "tool-calls", raw: "tool_calls" } as never,
+      usage: usage(20, 8),
+    },
+  ];
+  const agent = buildAgentApp({
+    env: testEnv(),
+    makeModel: scriptedModel([twoCalls, toolCallScript("bash", { command: "true" }, { id: "c" }), textScript("done ")]),
+  });
+  const { app: client, harness } = makeClient();
+  await client.connectWith(agent, async (ctx) => {
+    await initialize(ctx);
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
+    await ctx.request("session/prompt", { sessionId, prompt: promptOf("run them") });
+    const stepOf = (id: string): string | undefined => {
+      for (const u of harness.updatesOf("tool_call")) {
+        const call = u.update as { toolCallId?: string; _meta?: { daedalus?: { stepId?: string } } };
+        if (call.toolCallId === id) return call._meta?.daedalus?.stepId;
+      }
+      return undefined;
+    };
+    assert.ok(stepOf("a"), "a call carries its request's step id");
+    assert.equal(stepOf("a"), stepOf("b"), "parallel calls from one request share it");
+    assert.notEqual(stepOf("a"), stepOf("c"), "the next request has its own");
+    // The id rides the update that carries the arguments too, so a client that
+    // only sees `tool_call_update` for a call still learns it.
+    const updated = harness
+      .updatesOf("tool_call_update")
+      .some((u) => (u.update as { toolCallId?: string; _meta?: { daedalus?: { stepId?: string } } }).toolCallId === "b" &&
+        (u.update as { _meta?: { daedalus?: { stepId?: string } } })._meta?.daedalus?.stepId === stepOf("b"));
+    assert.ok(updated, "the in-progress update repeats the step id");
+  });
+  console.log("turn: step ids ok");
+}

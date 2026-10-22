@@ -343,6 +343,9 @@ export function applySessionUpdate(
       /* The FIRST ending, not the latest: a restatement arrives later simply
          because it was sent later, and the call did not end twice. */
       item.endedAt = existing?.endedAt ?? item.endedAt
+      /* Held with the clock it adjusts: a restatement does not forget a wait. */
+      item.waitingSince = existing?.waitingSince
+      item.waitedMs = existing?.waitedMs
       if (existing) {
         return items.map((i) => (i.kind === "tool" && i.id === item.id ? item : i))
       }

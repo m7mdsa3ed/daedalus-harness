@@ -761,6 +761,12 @@ async function pumpStream(
   };
   let messageId = randomUUID();
   let block = { kind: "" as "text" | "reasoning" | "", buffer: "" };
+  /* One id per model request (`start-step`), stamped on every call it makes, so
+     the client knows which calls were one response's parallel batch instead of
+     guessing from their timing. Opaque: equal means "same request", nothing
+     else, and it is never compared across turns. */
+  let stepId = randomUUID();
+  const stepMeta = () => ({ daedalus: { stepId } });
   /* The prefix item list last sent on this attempt's stream — see `finish-step`. */
   let sentItems = "";
   /* Calls whose row was withheld, by id, so the result can be dropped and a
@@ -816,6 +822,9 @@ async function pumpStream(
         case "reasoning-end":
           flushBlock();
           break;
+        case "start-step":
+          stepId = randomUUID();
+          break;
         case "tool-input-start": {
           flushBlock();
           const m = metaFor(meta, part.toolName);
@@ -830,6 +839,7 @@ async function pumpStream(
             name: part.toolName,
             kind: m.kind,
             status: "pending",
+            _meta: stepMeta(),
           });
           break;
         }
@@ -846,6 +856,7 @@ async function pumpStream(
             status: "in_progress",
             rawInput: (part.input ?? {}) as Record<string, unknown>,
             locations: m.locations?.(part.input) ?? [],
+            _meta: stepMeta(),
           });
           break;
         }
@@ -895,6 +906,7 @@ async function pumpStream(
                   kind: quiet.kind,
                   status: "failed",
                   content,
+                  _meta: stepMeta(),
                 }
               : {
                   sessionUpdate: "tool_call_update",

@@ -112,12 +112,12 @@ export function useElapsed(startedAt: number, active: boolean): number | null {
 }
 
 export function formatElapsed(ms: number): string {
-  /* A step that took no measurable time still took some; "0s" read as no
-     reading at all. */
-  if (ms < 1000) return "<1s"
-  return ms < 60_000
-    ? `${Math.round(ms / 1000)}s`
-    : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
+  /* A step that took under a second says how many milliseconds; "0s" read as
+     no reading at all. */
+  const whole = Math.max(0, Math.round(ms))
+  if (whole < 1000) return `${whole}ms`
+  if (whole < 60_000) return `${Math.floor(whole / 1000)}s ${whole % 1000}ms`
+  return `${Math.floor(whole / 60_000)}m ${Math.floor((whole % 60_000) / 1000)}s`
 }
 
 /* Memoized: one per transcript row, and a streaming turn re-renders the whole
@@ -146,6 +146,8 @@ export const StepRow = React.memo(function StepRow({
   belowFlush = false,
   startedAt,
   endedAt,
+  waitedMs,
+  waitingSince,
   mono = true,
   defaultOpen = false,
   openSetting,
@@ -227,6 +229,11 @@ export const StepRow = React.memo(function StepRow({
   /** When the step stopped. Absent on a step still running, and on one whose
       runtime never said. */
   endedAt?: number
+  /** Time the step spent waiting on the reader's approval, taken out of its
+      length: `waitedMs` for answered asks, `waitingSince` for one still open
+      (the clock stands still until it is answered). */
+  waitedMs?: number
+  waitingSince?: number
   mono?: boolean
   /** Start expanded — edits show their diff without a click (see ToolStep). */
   defaultOpen?: boolean
@@ -317,7 +324,10 @@ export const StepRow = React.memo(function StepRow({
   const belowContent = typeof below === "function" ? below(open, setOpen) : below
   const active = status === "in_progress" || status === "pending"
   const failed = status === "failed"
-  const elapsedMs = useElapsed(startedAt ?? 0, active && startedAt !== undefined)
+  const runStart = (startedAt ?? 0) + (waitedMs ?? 0)
+  const waiting = waitingSince !== undefined
+  const ticking = useElapsed(runStart, active && startedAt !== undefined && !waiting)
+  const elapsedMs = waiting && active && startedAt !== undefined ? Math.max(0, waitingSince - runStart) : ticking
   /* A step that has stopped, whose two ends both came with its updates: the
      figure is the step's own wall time and not this device's guess at it. A
      live counter cannot cover this — it stops ticking with the stream that fed
@@ -325,7 +335,7 @@ export const StepRow = React.memo(function StepRow({
      reading either way, so it takes the same gate and formatter below. */
   const settledMs =
     !active && startedAt !== undefined && endedAt !== undefined && endedAt >= startedAt
-      ? endedAt - startedAt
+      ? Math.max(0, endedAt - startedAt - (waitedMs ?? 0))
       : null
   const runDir = React.useContext(StepDirContext)
   const d = runDir ?? dir ?? textDir(typeof target === "string" ? target : caption)

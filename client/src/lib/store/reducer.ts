@@ -267,6 +267,22 @@ function upsertAsk<T extends { requestId: string }>(
   return replaced
 }
 
+function markWaiting(items: ThreadItem[], toolCallId: string | undefined, now: number): ThreadItem[] {
+  if (!toolCallId) return items
+  return items.map((i) =>
+    i.kind === "tool" && i.id === toolCallId && i.waitingSince === undefined ? { ...i, waitingSince: now } : i
+  )
+}
+
+function markAnswered(items: ThreadItem[], toolCallId: string | undefined, now: number): ThreadItem[] {
+  if (!toolCallId) return items
+  return items.map((i) =>
+    i.kind === "tool" && i.id === toolCallId && i.waitingSince !== undefined
+      ? { ...i, waitingSince: undefined, waitedMs: (i.waitedMs ?? 0) + Math.max(0, now - i.waitingSince) }
+      : i
+  )
+}
+
 /** One row per id, in first-seen order, with the *latest* reading winning. The
     store's session list is a union of pages and one-off loads, and the same
     thread can arrive in more than one of them (a pinned row that is also the
@@ -735,6 +751,9 @@ export function reducer(state: State, action: Action): State {
         ...(action.toolDurationMs !== undefined
           ? { turnToolDuration: { ...current.turnToolDuration, [action.turnId]: action.toolDurationMs } }
           : null),
+        ...(action.generation
+          ? { turnGeneration: { ...current.turnGeneration, [action.turnId]: action.generation } }
+          : null),
       })
     }
     case "ttft":
@@ -751,9 +770,6 @@ export function reducer(state: State, action: Action): State {
       const turnChanges = { ...thread(state, action.id).turnChanges }
       for (const turn of action.turns) if (!turnChanges[turn.turnId]?.ended) turnChanges[turn.turnId] = turn
       return withThread(state, action.id, { turnChanges })
-        ...(action.generation
-          ? { turnGeneration: { ...current.turnGeneration, [action.turnId]: action.generation } }
-          : null),
     }
     /* Absolute, like the queue: the server sends the whole reading, never a
        delta, so there is nothing to merge. */

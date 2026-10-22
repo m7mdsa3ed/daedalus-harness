@@ -27,7 +27,7 @@ import {
   SquareIcon,
   WrenchIcon,
 } from "lucide-react"
-import { ChevronRightIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon } from "lucide-react"
+import { ChevronRightIcon, ClockIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon } from "lucide-react"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu } from "@/components/item-context-menu"
@@ -121,6 +121,7 @@ import {
   fileRangeOf,
   harnessSummary,
   parseTaskNotification,
+  stepIdOf,
   toolHeading,
   toolKindOf,
   toolViewOf,
@@ -139,6 +140,7 @@ import { threadPath } from "@/lib/router"
 import { Link } from "react-router"
 import { BranchGutter, gutterWidth } from "@/components/thread-items/branch-gutter"
 import { layoutRun } from "@/lib/tool-graph"
+import { burstMs, gapMinMs, layoutBatches, type StepBatch } from "@/lib/tool-batches"
 import { useRowState } from "@/lib/row-open"
 
 
@@ -272,6 +274,26 @@ export const ToolRun = React.memo(function ToolRun({
     [branch, showing]
   )
   const gutter = graph ? gutterWidth(Math.max(0, ...graph.map((row) => row.lane)), branchVariant) : 0
+  /* Which calls were one response's parallel batch, and the waits between
+     batches — the runtime's step id where it sends one, the steps' own timing
+     where it does not, so it holds in every layout and every runtime
+     (`lib/tool-batches.ts`). The two options are the reader's. */
+  const batches = React.useMemo(
+    () =>
+      layoutBatches(
+        showing.map((item) =>
+          item.kind === "tool"
+            ? {
+                start: item.startedAt,
+                end: item.endedAt ?? (item.status === "in_progress" || item.status === "pending" ? undefined : item.startedAt),
+                step: stepIdOf(item.meta),
+              }
+            : {}
+        ),
+        { burstMs: burstMs(view.batchBurst), gapMinMs: gapMinMs(view.gapMin) }
+      ),
+    [showing, view.batchBurst, view.gapMin]
+  )
 
   return (
     <StepDirContext.Provider value={dir}>
@@ -376,7 +398,8 @@ export const ToolRun = React.memo(function ToolRun({
                 )}
                 {/* The entrance rides an inner box: the rail is this wrapper's
                     pseudos, and a row sliding in must not take the line with it. */}
-                <div className={cn(!branch && !already.has(item.id) && "harness-item-in")}>
+                <div className={cn("relative", !branch && !already.has(item.id) && "harness-item-in")}>
+                  <BatchBracket batch={batches[index]} />
                   {/* Nested rows retain their own same-view fold; direct items use
                       the ordinary step renderer and preserve a live thought tail. */}
                   {item.kind === "run" ? (
@@ -391,6 +414,7 @@ export const ToolRun = React.memo(function ToolRun({
                     />
                   )}
                 </div>
+                {batches[index].gapMs !== undefined && <StepGap ms={batches[index].gapMs} />}
               </div>
             ))}
             </div>
@@ -1398,6 +1422,48 @@ function ThoughtDetail({ text, streaming, label }: { text: string; streaming: bo
 
 // ─── Per-kind layouts ────────────────────────────────────────────────────────
 
+/** One bracket down the end edge of every row of a parallel batch: a tick in at
+    the first call, a line past the ones between, a tick in at the last — so the
+    calls that went out in one response read as one group, whatever the layout
+    draws on the other side. It lives in the 4px the run's clip already keeps
+    past the rows, so no row moves, and it is `primary` — the one tint a row
+    leaves for something about the run rather than the call. Rows are 24px
+    lines, so a tick lands on the first line's centre. */
+function BatchBracket({ batch }: { batch: StepBatch }) {
+  if (!batch.edge) return null
+  return (
+    <span
+      aria-hidden={batch.edge !== "start"}
+      className={cn(
+        "pointer-events-none absolute -end-1 w-1 border-e border-primary/50",
+        batch.edge === "start" && "top-3.5 -bottom-0.5 border-t rounded-te-sm",
+        batch.edge === "middle" && "-top-0.5 -bottom-0.5",
+        batch.edge === "end" && "-top-0.5 bottom-3.5 border-b rounded-be-sm"
+      )}
+    >
+      {batch.edge === "start" && <span className="sr-only">Start of {batch.size} parallel calls</span>}
+    </span>
+  )
+}
+
+/** The wait between one batch of calls settling and the next starting: the
+    agent's own time (the model answering, mostly), since a reader's approval is
+    already taken out of a call's length. A hairline and a figure under the
+    step it follows, aligned to the title column — never a row of its own, so it
+    cannot take a mark or a rail elbow. */
+function StepGap({ ms }: { ms: number }) {
+  return (
+    <div
+      title="Time between this step finishing and the next one starting"
+      className="flex items-center gap-2 ps-7 pe-1 pt-0.5 pb-1 text-[0.625rem] tabular-nums text-muted-foreground"
+    >
+      <ClockIcon aria-hidden className="size-2.5 shrink-0" />
+      <span className="shrink-0">{formatElapsed(ms)}</span>
+      <span aria-hidden className="h-px min-w-0 flex-1 bg-border" />
+    </div>
+  )
+}
+
 const ToolStep = React.memo(function ToolStep({
   item,
   showTimestamp,
@@ -1507,6 +1573,8 @@ const ToolStep = React.memo(function ToolStep({
       ]}
       startedAt={item.startedAt}
       endedAt={item.endedAt}
+      waitedMs={item.waitedMs}
+      waitingSince={item.waitingSince}
       detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
       firstRow={view.showToolSourcesOnFirstRow ? <ToolSources item={item} /> : undefined}
       below={

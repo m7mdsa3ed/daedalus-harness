@@ -45,6 +45,7 @@ import { createContext, useContext, useSyncExternalStore } from "react"
 
 import { createLocalStore } from "./local-store"
 import { isStreamSpeed, type StreamSpeed } from "./stream-pace"
+import { isBatchBurst, isGapMin, type BatchBurst, type GapMin } from "./tool-batches"
 import type { StreamEffect } from "./stream-words"
 
 /** When a folded subagent shows its latest steps under its row. A mode, not a
@@ -155,6 +156,13 @@ export interface LayoutOptions {
   toolLayout: ToolLayout
   /** The layout's variant (`TOOL_VARIANTS`); read through `toolVariantOf`. */
   toolVariant: ToolVariant
+  /** How close together calls with no step id must start to count as one
+   *  parallel batch (`lib/tool-batches.ts`). A runtime that sends the id is
+   *  never read by this. */
+  batchBurst: BatchBurst
+  /** The shortest wait between two batches of calls worth drawing; Off draws
+   *  none. */
+  gapMin: GapMin
   /** Render file diffs side by side instead of unified. */
   splitDiffs: boolean
   /** The second row of every dock tab (project and model, a page's section,
@@ -257,6 +265,8 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   showRawToolData: false,
   toolLayout: "timeline",
   toolVariant: "default",
+  batchBurst: "250ms",
+  gapMin: "1s",
   splitDiffs: false,
   stepDividers: false,
   showTabDetails: true,
@@ -356,6 +366,10 @@ function pick(raw: unknown): Partial<LayoutOptions> {
       if (isToolVariant(value)) out[key] = value
     } else if (key === "streamSpeed") {
       if (isStreamSpeed(value)) out[key] = value
+    } else if (key === "batchBurst") {
+      if (isBatchBurst(value)) out[key] = value
+    } else if (key === "gapMin") {
+      if (isGapMin(value)) out[key] = value
     } else if (CHOICES[key]?.includes(value as string)) {
       out[key] = value
     }

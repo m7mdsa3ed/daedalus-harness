@@ -107,6 +107,13 @@ export interface ToolItem {
       still open, and on one rebuilt from a `session/load` replay, whose stamps
       are the reload's and not the call's. */
   endedAt?: number
+  /** Epoch ms a permission request for this call went unanswered, while it
+      still is. The wait is the reader's, not the call's, so the row leaves it
+      out of the call's length. Live only: a permission is never journaled, so
+      a replayed call has no wait to take out. */
+  waitingSince?: number
+  /** Total ms this call spent waiting on answered permission requests. */
+  waitedMs?: number
   /** The item this call belongs to when a subagent made it: the Task that
       launched the subagent (Claude Code), or the `subagent:<sessionId>` item
       of the child session it ran in. Derived from vendor `_meta` through
