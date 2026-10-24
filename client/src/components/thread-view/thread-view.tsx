@@ -976,10 +976,14 @@ export function ThreadView({
                     `contain-intrinsic-size: auto` remembers each row's last
                     real height, and only the on-screen tail grows, so the
                     autoscroll target does not drift. */
-                /* `-mx-1 px-1`: `content-visibility: auto` is paint
+                /* `-mx-2 px-2`: `content-visibility: auto` is paint
                     containment, which clips to the item's box — and step rows
-                    hang their hover ground 4px past it on both sides. */
-                <MessageScrollerItem key={row.id} messageId={row.id} className="-mx-1 px-1">
+                    hang their hover ground 4px past it on both sides, while a
+                    parallel group's wash hangs 8px past. The room is the widest
+                    bleed, not the usual one: at 4px the wash's own ring survived
+                    on the top and bottom edges only, so a batch read as a box
+                    sliced off at the sides. */
+                <MessageScrollerItem key={row.id} messageId={row.id} className="-mx-2 px-2">
                   {/* Everything the row draws sits in one box that can go
                       dormant once the row is settled history — see dormant.tsx.
                       The item itself stays, in flow, at its height. */}

@@ -47,11 +47,15 @@ export function FilePreview({
   projectId,
   path,
   onBack,
+  leading,
 }: {
   projectId: string
   path: string
   /** Back to the page the panel was showing; absent when there is none. */
   onBack?: () => void
+  /** Drawn first in the toolbar, ahead of the file's own mark — the Preview
+      panel's explorer toggle. */
+  leading?: React.ReactNode
 }) {
   const kind = previewKind(path)
   const [loaded, setLoaded] = React.useState<Loaded>({ state: "loading" })
@@ -90,8 +94,9 @@ export function FilePreview({
 
   const name = path.slice(path.lastIndexOf("/") + 1)
   return (
-    <div className="flex h-full min-h-0 flex-col pt-[var(--dock-content-overlap,var(--app-header-h))]">
+    <div className="flex h-full min-h-0 flex-col">
       <PanelToolbar>
+        {leading}
         {onBack && (
           <Button size="icon-xs" variant="ghost" aria-label="Back to the page" title="Back to the page" onClick={onBack}>
             <ArrowLeftIcon />

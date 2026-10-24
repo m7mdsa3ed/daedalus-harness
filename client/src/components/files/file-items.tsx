@@ -10,6 +10,7 @@ import { ArrowDownIcon, ArrowUpIcon } from "lucide-react"
 import type { DropProps } from "@/components/files/file-tree"
 import { mimeIcon } from "@/components/files/mime-icon"
 import { Input } from "@/components/ui/input"
+import { useElementWidth } from "@/hooks/use-element-width"
 import { formatBytes } from "@/lib/attachments"
 import {
   COLUMN_WIDTH,
@@ -170,7 +171,7 @@ export function GridView({
 }) {
   const roomy = size >= 104
   /* One root div in both modes, so the width observer survives a switch. */
-  const [wrap, width] = useWidth<HTMLDivElement>()
+  const [wrap, width] = useElementWidth<HTMLDivElement>()
   /* Not gated on the width: an unmeasured big folder draws no tiles for the
      one commit before its width lands, rather than all of them. */
   const windowed = items.length > WINDOW_AT
@@ -256,19 +257,6 @@ const COLUMN_SORT: Record<ColumnId, SortKey | null> = { location: null, updatedA
 /** Below this listing width a column is dropped, whatever the toggles say — Name keeps its room. */
 const COLUMN_MIN_PANE: Record<ColumnId, number> = { location: 420, updatedAt: 480, kind: 600, size: 0 }
 
-export function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = React.useRef<T>(null)
-  const [width, setWidth] = React.useState(0)
-  React.useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const observer = new ResizeObserver(([entry]) => entry.contentRect.width > 0 && setWidth(entry.contentRect.width))
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
-  return [ref, width]
-}
-
 export function ListView({
   items,
   h,
@@ -293,7 +281,7 @@ export function ListView({
   /** Image thumbnails in place of the kind glyph. */
   thumbs: boolean
 }) {
-  const [ref, paneWidth] = useWidth<HTMLDivElement>()
+  const [ref, paneWidth] = useElementWidth<HTMLDivElement>()
   /* A drag is drawn from local state and kept only when it ends — the
      preference store is not written per pixel. */
   const [live, setLive] = React.useState<Record<ColumnId, number> | null>(null)

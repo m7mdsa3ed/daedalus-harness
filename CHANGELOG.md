@@ -13,8 +13,15 @@ line: keep each bullet on a single line.
 
 ## [Unreleased]
 
+### 2026-10-25
+
+- **A parallel group's box is drawn whole, on every layout.** The wash bleeds 8px past its rows but the transcript item and every rail clip gave back only 4px of paint room, so the ring was clipped off the left and right edges and a batch read as a card sliced down both sides; the room now matches the widest bleed, so the box closes on all four edges whether it is a top-level row, a nested one, or inside a folded `!` run.
+- **A parallel group's box is drawn at the transcript's own weight.** The wash takes the `!` run's (`bg-primary/[0.06]`, the same geometry — one shape for "this stretch is marked"), the ring takes the app's edge tone (`ring-foreground/10`) instead of a frame four times darker than any border on screen, and "N in parallel" wears the app's own `CHIP` shape rather than a pill of its own; a batch that is still out says so by taking the accent's colour on that same weight, not by drawing a heavier box.
+
 ### 2026-10-24
 
+- **The composer's project picker is a narrow menu of names.** Each row drew the project's `cwd` beneath its name, and a `w-max` popup sized to the longest path on the machine took the menu to its 448px clamp; the rows are the names alone now (truncated, with the full name on hover) at `w-56`, and the current project's directory is read on the trigger's own tooltip instead.
+- **The Preview panel carries the project's file explorer, so the cwd can be navigated.** A tree beside the file or diff lists the project as it is on disk — a directory is read when it is opened and re-read only when the watch stream says something moved — and clicking a name repoints the panel at that file; the previewed file's ancestors open and its row scrolls into view. A find box searches the whole project through the `@` menu's own route, hiding or showing dotfiles and git-ignored directories is a toggle, and a Preview with nothing open is the explorer alone: it is openable from the + menu (Preview) and restorable.
 - **The Daedalus agent can speak Anthropic messages as well as OpenAI chat completions.** A profile's Daedalus link gains a protocol picker (Settings › Profiles), stored as `agents.<id>.protocol` on the profile and handed to the agent as `DAEDALUS_AGENT_PROTOCOL` (registry seed 37); `anthropic` builds the model with `@ai-sdk/anthropic` against the link's base URL (default `https://api.anthropic.com/v1`), and `prompt_cache_key` is sent on the OpenAI protocol only.
 - **The Daedalus agent shows Claude's thinking on Default effort.** On the Anthropic protocol, with no effort set, it now asks an adaptive-thinking model (Opus 4.7 and newer) for `display: "summarized"`; before, those models returned their thinking blocks with the text left out.
 - **An empty thinking or text delta no longer draws an empty block.** The Daedalus agent drops deltas with no text instead of forwarding them as `agent_thought_chunk`/`agent_message_chunk`.

@@ -5,6 +5,7 @@ context, its steps and its done-when.
 
 ## Where things stand
 
+- **The in-flight work is committed** (`9e3deb4a`); the plans below measure that commit.
 - **The build is healthy, the edges are not.** `tsc` passes in all three packages, the client
   production build passes, agent suites 15/15, server suites 58/59. What fails is the door
   (auth), the data (schema push with no backup, no scheduled backup) and the hygiene around them

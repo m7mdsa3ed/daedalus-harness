@@ -507,22 +507,38 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   does not change its name depending on whether it is read inside the run or on
   its own.
   **Parallel calls are bracketed, and the wait between steps is said under the step it follows**
-  (`lib/tool-batches.ts`, `BatchBand`/`BatchFoot`/`StepGap` in `thread-items/rows.tsx`). A batch is the
+  (`lib/tool-batches.ts`, the parallel group's wash and `StepGap` in `thread-items/rows.tsx`). A batch is the
   calls of one model request. **The runtime's word beats a guess**: our agent stamps every call
   with `_meta.daedalus.stepId` (one per `start-step`, read through `stepIdOf`), and two
   neighbours are one batch exactly when the ids are equal. Only a call with no id — another
   runtime, an older journal — falls back to timing: starting within `batchBurst` of the batch's
   first call, or before its latest call has ended. A step with neither (a notice, a `session/load`
   replay, whose stamps are the reload's) never joins, so no evidence marks nothing. The batch is
-  drawn as a band: a faint `primary` wash behind its rows (no edge line), closed
-  by a foot strip under the last call — its own `h-6` row on a second, equally faint `primary` wash (muted text), inside
-  the band (`BatchFoot`). It says `3 in parallel` and, at its end, how
-  the batch stands: `1 of 3 running` (`StepBatch.running`, shimmering) while any call is out,
-  then the span from first start to latest end once every call has ended — the calls ran side by
-  side, so it is never a sum. The
-  band paints behind the rows (`-z-10` in the row's `isolate`) and bleeds into the 4px the run's
-  clip keeps past them, so no row moves and every tool layout gets it; a notice between two calls
-  of one batch is inside it. The wait (`gapMin`, Off draws
+  drawn as a group of its own (`ToolRun`'s `parallel`): on a `primary` wash that bleeds 8px past
+  the run's rows — the group and its header in one rounded box, so no row moves and every tool
+  layout gets it — *and* a ring, because a tint on a ground that is also a ground reads as nothing
+  on its own. **Its weight is the transcript's, never a badge's**: the wash is the `!` run's
+  (`bg-primary/[0.06]`, the same `-mx-2` geometry — one shape for "this stretch is marked") and
+  the ring is the app's own edge tone (`ring-foreground/10`, what a card's border is). A first
+  version reached for `bg-primary/10` and `ring-primary/25`, which put one row's frame 56 levels
+  below every other edge on screen — a box shouting over its own contents, and the one thing in
+  the transcript drawn that way. **A live batch takes the accent's colour on that same weight
+  (`ring-primary/30`)**, so "these went out together and are still coming back" is said by hue
+  rather than by a heavier frame. **The wash's bleed sets the paint
+  room everywhere it can land**: an ordinary row hangs its hover ground 4px out, a batch 8px, so
+  the transcript item and every rail clip open `-mx-2 px-2` — at 4px the wash was clipped to its
+  own box and kept the ring on the top and bottom edges only, which read as a card sliced off down
+  both sides. The header says `3 in parallel` in the batch's hue, on the app's own chip shape
+  (`CHIP` — one radius, one line box and one size as every other chip in the row, told apart by
+  colour alone rather than by a pill of its own), and, beside it, how the batch stands: `1 of 3 running`
+  (`StepBatch.running`) while any call is out, then the span from first start to latest end once
+  every call has ended — the calls ran side by side, so it is never a sum. **Each call says where
+  it sat**: a `2/3` chip between its mark and its title (`StepMarker`, read through
+  `StepMarkerContext` because a batch of mixed kinds folds into nested runs, so the calls to number
+  are below a row that knows nothing of the batch). The numbering is taken over the batch's *whole*
+  member list, never over the part a peek shows, and off the group's own layout rather than the
+  visible one, so a five-call batch never numbers its last three `1/3..3/3`. A notice between two
+  calls of one batch is inside the wash. The wait (`gapMin`, Off draws
   none) is measured from the batch's *latest* end to the next batch's start, hangs off the batch's
   last call, and never reads as a row of its own, because a row would take a mark and a rail
   elbow. A reader's approval time is already out of a call's length (`waitedMs`), so the figure
@@ -1561,8 +1577,24 @@ double-click on a divider evens out the views it separates — in the main dock 
   `FilePreview`, a diff by `DiffTab`, and there is no address bar, no embedded page, no
   `<webview>`, no console and no element picker. It was a browser once; **driving it from an
   agent never worked with the desktop shell**, so the shell no longer opens a debugging port
-  and nothing in Electron touches CDP. `parsePanel` drops a stored `web` panel that names no
-  project and no file or diff (a layout from the browser days).
+  and nothing in Electron touches CDP. `parsePanel` drops a stored `web` panel that carries a
+  browser-era `url`/`trust`; a `web` panel with no file is *not* one of those — it is the
+  explorer alone, and it comes back.
+- **The project's working tree stands beside the preview** (`project-tree.tsx`), which is what
+  makes the panel somewhere to navigate rather than a window onto one path: a click there
+  repoints the same panel at another file, so a file and a diff are places *inside* it. The
+  descriptor stays the state (`api.updateParameters`), so a panel showing nothing but the tree
+  restores exactly as it was. A directory is read when it is opened and not again unless
+  **the watch stream** says something moved (the tree family is invalidated; only the branches
+  on screen are mounted, so that is all that is re-read) — no polling, no focus refetch. The
+  file being previewed is revealed: every ancestor opens and its row is scrolled to. The find
+  box is the route the composer's `@` menu already reads, because a cwd with a `node_modules`
+  in it is not browsable by hand; a folder it finds is opened in the tree rather than in the
+  viewer, which cannot show one. Dotfiles and git-ignored directories are the reader's call
+  (`preview-prefs.ts`, device-local like every other reader's property — with the pane's
+  width), stated in the request rather than filtered silently on the client, and the pane is
+  not drawn at all where the panel is too narrow to hold one: the panel's width is measured,
+  never the window's.
 - **A hidden chat tab is `display: none` while its thread dock stays mounted.** Dockview's
   `always` renderer hides an inactive panel with `visibility`, which the inner dock's own
   overlays escape; `display: none` cannot be escaped, and keeping the dock mounted is what

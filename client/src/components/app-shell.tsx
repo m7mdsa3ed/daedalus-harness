@@ -479,6 +479,15 @@ export function AppShell({
           .find((entry) => entry.panel.kind === "terminal" && entry.panel.projectId === projectId)
         if (existing && reuse) dock.openPanel(existing.panel)
         else void openTerminal(dock, projectId, into)
+        return
+      }
+      /* The Preview panel with nothing open is the project's explorer: a file
+         opened from it becomes the panel's `file`, so one Preview per project is
+         one window onto the whole cwd and not one panel per path. */
+      if (kind === "web") {
+        const existing = dock.listPanels().find((entry) => entry.panel.kind === "web" && entry.panel.projectId === projectId)
+        if (existing && reuse) dock.openPanel(existing.panel, { direction: "right", into })
+        else dock.openPanel({ kind: "web", viewId: "default", projectId, ...second(existing) }, { direction: "right", into })
       }
     },
     [dock, projects]

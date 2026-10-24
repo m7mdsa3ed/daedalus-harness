@@ -186,12 +186,14 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
       }
     }
     case "web": {
-      /* A layout saved when the panel was a browser (an address, no project)
-         has nothing left to show, and is dropped rather than drawn empty. */
+      /* A layout saved when the panel was a browser is dropped rather than
+         drawn empty: it carried an address and a trust, and there is nothing
+         left of either to show. A Preview with no file is *not* one of those —
+         it is the explorer alone, which is a place worth restoring. */
       const viewId = str(p.viewId)
       const file = str(p.file)
       const diff = parseWebDiff(p.diff)
-      if (!viewId || !projectId || (!file && !diff)) return null
+      if (!viewId || !projectId || "url" in p || "trust" in p) return null
       return {
         kind: "web",
         viewId,

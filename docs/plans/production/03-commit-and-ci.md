@@ -37,10 +37,15 @@
    - `pnpm audit --prod` as a report, not a gate.
 5. **`engines`** (Node 22, pnpm 10) in all four manifests; `build:agent` uses
    `pnpm install --frozen-lockfile`.
-6. **Wire the client checks**: a `test:checks` script that runs the 20 `src/**/*.check.mjs` and
-   fails on a non-zero exit; add it to CI.
+6. **Wire the client checks**: a `test:checks` script that runs the `src/**/*.check.mjs` files
+   (now 21, with `lib/trace.check.mjs`) and fails on a non-zero exit; add it to CI.
+7. **Move the protocol picker's gate onto the agent row**: a column in `registry.ts` (e.g.
+   `protocols: ["openai", "anthropic"]` on the Daedalus seed), served with the agent, and
+   `profiles.tsx` draws the picker for any agent that lists one. `profiles.ts`'s zod enum and
+   `profileProtocol` read the same list.
 
 ## Done when
 
-- `git status` is clean after the commit, and a fresh clone builds.
-- CI is green on that commit.
+- A fresh clone of `9e3deb4a` or later builds.
+- `openui:check` and `test:native-workflow-rows` pass, and CI is green.
+- No client file compares an agent id to `"daedalus"`.

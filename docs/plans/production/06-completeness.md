@@ -28,6 +28,9 @@
      the token, backups and restore (link phase 2's runbook), upgrades, `pm2:kill-agents` under
      the hosted sandbox.
    - Add `server/.env.example` listing every env var the server reads.
+   - Update `agent/README.md`: it still says OpenAI-compatible chat completions only, lists the
+     removed `_PERSONA_FILE`, and omits `_PROTOCOL` (added in `9e3deb4a`), `_MODEL_WINDOWS`,
+     `_MODEL_ROLES`, `_MODEL_PROMPTS_FILE`, `_PROMPT_CACHE_KEY`, `_HOLD_ON_ERROR`, `_TITLES`.
    - Fix stale comments: `ecosystem.config.cjs:10`, `config.ts:10`, `build.sh:9`,
      `db/index.ts:293`.
 2. **Rules file**: `git rm AGENT.md && ln -s CLAUDE.md AGENT.md` (optionally `AGENTS.md` for

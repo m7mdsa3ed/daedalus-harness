@@ -41,6 +41,7 @@ import { reportError } from "@/lib/errors"
 import { useServer } from "@/lib/server-context"
 import { useThreadId } from "@/lib/thread-id-context"
 import {
+  CHIP,
   DetailSection,
   KIND_CHIPS,
   KIND_COLORS,
@@ -71,6 +72,7 @@ import {
   finishedOpening,
   formatElapsed,
   StepDirContext,
+  StepMarkerContext,
   StepMeta,
   StepRow,
   textDir,
@@ -139,7 +141,7 @@ import { threadPath } from "@/lib/router"
 import { Link } from "react-router"
 import { BranchGutter, gutterWidth } from "@/components/thread-items/branch-gutter"
 import { layoutRun } from "@/lib/tool-graph"
-import { batchSpanOf, burstMs, gapMinMs, layoutBatches, type BatchSpan } from "@/lib/tool-batches"
+import { batchSpanOf, burstMs, gapMinMs, layoutBatches, type BatchSpan, type StepBatch } from "@/lib/tool-batches"
 import { useRowState } from "@/lib/row-open"
 
 
@@ -296,13 +298,66 @@ export const ToolRun = React.memo(function ToolRun({
     () => layoutBatches(showing.map(batchSpanOfRow), { burstMs: burstMs(view.batchBurst), gapMinMs: gapMinMs(view.gapMin) }),
     [showing, view.batchBurst, view.gapMin]
   )
+  /* A parallel group's places are numbered over ALL of it, never over the part
+     on screen: a peeked group shows its last three, and "1/3, 2/3, 3/3" over
+     three rows of a five-call batch would number the wrong calls. So the group
+     reads its batch off its own members, and `layoutBatches` puts the span and
+     the running count on the batch's last CALL — not on its last row, which may
+     be a thought riding between two of them — so the reading is taken from
+     whichever row carries it. */
+  const batchOf = React.useMemo(
+    () =>
+      parallel
+        ? layoutBatches(displayItems.map(batchSpanOfRow), { burstMs: burstMs(view.batchBurst), gapMinMs: null })
+        : null,
+    [parallel, displayItems, view.batchBurst]
+  )
+  const batchEnd = batchOf?.find((row) => row.spanMs !== undefined || row.running !== undefined)
+  const batchSpan = batchEnd?.spanMs !== undefined ? formatElapsed(batchEnd.spanMs) : null
+  const batchRunning = batchEnd?.running
+  /* The places themselves, as the context every step under this group reads:
+     a batch of mixed kinds folds into nested runs, so the calls to number are
+     below a row that was handed no props — the map is what reaches them. */
+  const placeInBatch = React.useMemo(() => {
+    if (!batchOf) return null
+    const places = new Map<string, string>()
+    displayItems.forEach((item, at) => {
+      const label = batchMarker(batchOf[at])
+      if (label) places.set(item.id, label)
+    })
+    return (id: string) => places.get(id)
+  }, [batchOf, displayItems])
   return (
     <StepDirContext.Provider value={dir}>
+    <StepMarkerContext.Provider value={placeInBatch}>
     {/* The batch wash sits 4px outside every hover ground it holds: the header
         and the rows each bleed 4px past their content edge, so the wash takes
         8px at the sides (the content stays on the column's edge) and 4px above
-        and below — the same inset on all four sides. */}
-    <div dir={dir} className={cn(parallel && "-mx-2 rounded-xl bg-primary/[0.06] px-2 py-1")}>
+        and below — the same inset on all four sides. A ring as well as the tint:
+        the wash is a colour on a ground that is also a colour, and a faint tint
+        read as nothing at all — a batch was told apart from the run above it
+        only by the word in its header. The ring is the tap on the shoulder the
+        tint alone never was, and it is what draws the edge of the set.
+
+        Its *weight* is the transcript's, not a badge's. The wash is the
+        strength of the `!` run's (`SHELL_WASH`, `/[0.06]`, on this same `-mx-2`
+        geometry — one shape for "this stretch is marked") and the ring is the
+        app's own edge tone (`ring-foreground/10`, what a card's border is),
+        never a darker frame. A batch drawn heavier than the prose it holds is a
+        box shouting over its own contents — the first version of this reached
+        for `bg-primary/10` and `ring-primary/25`, which put one row's frame 56
+        levels below every other edge on screen. */}
+    <div
+      dir={dir}
+      className={cn(
+        parallel &&
+          "ring-1 ring-foreground/10 ring-inset -mx-2 rounded-xl bg-primary/[0.06] px-2 py-1",
+        /* A live batch is the one thing on screen still happening, so its frame
+           keeps the edge's weight but takes the accent's colour — the same
+           bargain the running badge makes, not a heavier box. */
+        parallel && active && "ring-primary/30"
+      )}
+    >
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -328,16 +383,30 @@ export const ToolRun = React.memo(function ToolRun({
             count that sits a pixel off the rows it heads reads as a different
             kind of thing than it is. */}
         <StepMeta
+          className={parallel ? "text-primary" : undefined}
           parts={[
             parallel ? (
               <span
                 title="Calls the agent made in one response, run side by side"
-                className="flex items-center gap-1 font-medium"
+                /* The app's own chip shape (`CHIP`) with the batch's tint in
+                   place of `muted`, which is the bargain `McpServerChip` and a
+                   `!` run's chip already make — one size, one radius and one line
+                   box as everything beside it, told apart by colour alone. Not a
+                   pill of its own: a rounded-full badge in this column read as a
+                   second kind of thing parked on the row. */
+                className={cn(CHIP, "shrink-0 bg-primary/10 font-medium text-primary tabular-nums")}
               >
                 <LayersIcon aria-hidden className="size-3 shrink-0" />
                 {tools.length} in parallel
               </span>
             ) : null,
+            /* What the fan-out cost: `layoutBatches` reads the batch's span (its
+               first call starting to its latest ending) — since the calls ran
+               side by side, that is the length of all of them, not a sum. While
+               any are still out, how many, so a batch of three that is one short
+               does not read as finished. */
+            parallel && batchSpan !== null ? <span title="From the first call of this batch starting to its last one ending">{batchSpan}</span> : null,
+            parallel && batchRunning !== undefined ? <span>{batchRunning} of {batchEnd?.size ?? tools.length} running</span> : null,
             failed > 0 ? <span className="text-destructive">{failed} failed</span> : null,
           ]}
         />
@@ -372,11 +441,13 @@ export const ToolRun = React.memo(function ToolRun({
             onAnimationComplete={(definition) => {
               if (finishedOpening(definition) && railRef.current) railRef.current.style.overflow = "visible"
             }}
-            /* `-mx-1 px-1`: a nested row's hover ground bleeds 4px past its
-               box on both sides, and this clip stays `hidden` whenever the
-               opening animation did not run (a run already open on mount) —
-               so the clip carries the bleed's room itself. */
-            className="-mx-1 overflow-hidden px-1"
+            /* `-mx-2 px-2`: a nested row's hover ground bleeds 4px past its
+               box on both sides and a parallel group's wash bleeds 8px, and
+               this clip stays `hidden` whenever the opening animation did not
+               run (a run already open on mount) — so the clip carries the
+               widest bleed's room itself. At 4px a batch nested here lost the
+               ring down its left and right edges. */
+            className="-mx-2 overflow-hidden px-2"
           >
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
             <div className={branch ? "space-y-0.5 pt-0.5" : RUN_RAIL_CLASS}>
@@ -437,6 +508,7 @@ export const ToolRun = React.memo(function ToolRun({
         )}
       </AnimatePresence>
     </div>
+    </StepMarkerContext.Provider>
     </StepDirContext.Provider>
   )
 })
@@ -618,11 +690,13 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
             onAnimationComplete={(definition) => {
               if (finishedOpening(definition) && railRef.current) railRef.current.style.overflow = "visible"
             }}
-            /* `-mx-1 px-1`: a nested row's hover ground bleeds 4px past its
-               box on both sides, and this clip stays `hidden` whenever the
-               opening animation did not run (a run already open on mount) —
-               so the clip carries the bleed's room itself. */
-            className="-mx-1 overflow-hidden px-1"
+            /* `-mx-2 px-2`: a nested row's hover ground bleeds 4px past its
+               box on both sides and a parallel group's wash bleeds 8px, and
+               this clip stays `hidden` whenever the opening animation did not
+               run (a run already open on mount) — so the clip carries the
+               widest bleed's room itself. At 4px a batch nested here lost the
+               ring down its left and right edges. */
+            className="-mx-2 overflow-hidden px-2"
           >
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
             <div className={RUN_RAIL_CLASS}>
@@ -1469,6 +1543,14 @@ function batchSpanOfRow(item: ToolGroup["children"][number]): BatchSpan {
   const end = spans.some((span) => span.end === undefined) ? undefined : Math.max(...spans.map((span) => span.end ?? 0))
   /* The group's request is its earliest call's, which is the one that says it. */
   return { start, end, lead: spans.find((span) => span.start === start)?.lead }
+}
+
+/** A call's place in the batch it went out with, for `StepRow`'s marker.
+    Absent for a call that went out alone: `layoutBatches` only fills `index`
+    and `size` inside a batch of two or more, and a single call is not a
+    fan-out to be numbered. */
+function batchMarker(batch: StepBatch | undefined): string | undefined {
+  return batch?.index !== undefined && batch.size !== undefined ? `${batch.index}/${batch.size}` : undefined
 }
 
 /** The wait between one batch of calls settling and the next starting: the

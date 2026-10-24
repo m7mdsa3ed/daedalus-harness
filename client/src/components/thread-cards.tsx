@@ -874,9 +874,10 @@ export const ShellRun = React.memo(function ShellRun({
       </button>
       {open && (
         /* The folded tool run's indent and clip: the commands are a group,
-           nested one step under the header. `-mx-1 px-1` is the room the
-           steps' 4px hover bleed needs inside the clip. */
-        <div className="-mx-1 overflow-hidden px-1">
+           nested one step under the header. `-mx-2 px-2` is the room the
+           steps' 4px hover bleed needs — and a parallel group's 8px wash,
+           which is the wider of the two and the one that set the number. */
+        <div className="-mx-2 overflow-hidden px-2">
           <div className={RUN_RAIL_CLASS}>
             {items.map((item) => (
               <ShellStep key={item.id} item={item} showTimestamp={showTimestamps} />

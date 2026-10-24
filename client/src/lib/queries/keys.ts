@@ -93,6 +93,23 @@ export const automationTriggersKey = (s: ServerSettings, routineId: string) =>
 /* Ad-hoc read surfaces (Phase 2). */
 export const projectStatsKey = (s: ServerSettings, projectId: string) =>
   scope(s).concat(["project-stats", projectId])
+/** One directory of a project's working tree (`GET …/tree?path=`), read by the
+    Preview panel's explorer. The flags are part of a leaf key because they
+    change the answer; the family prefix is what a watch event invalidates, so
+    only the directories actually on screen are re-read. */
+export const projectTreeFamilyKey = (s: ServerSettings, projectId: string) =>
+  scope(s).concat(["project-tree", projectId])
+export const projectTreeKey = (
+  s: ServerSettings,
+  projectId: string,
+  path: string,
+  flags: { hidden: boolean; ignored: boolean }
+) =>
+  projectTreeFamilyKey(s, projectId).concat([
+    path,
+    flags.hidden ? "hidden" : "-",
+    flags.ignored ? "ignored" : "-",
+  ])
 export const projectReposKey = (s: ServerSettings, projectId: string) =>
   scope(s).concat(["project-repos", projectId])
 export const projectGitStatusKey = (s: ServerSettings, projectId: string, repo: string) =>

@@ -213,11 +213,13 @@ export function DraftScopeRow({
             icon={<ProjectIcon project={project} className={READING_MARK} />}
             label={project?.name ?? "No project"}
             title="Project"
+            /* The directory still matters — it is where the work lands — so it
+               is said on the trigger rather than under every row. */
+            triggerTitle={project?.cwd ?? "Project"}
             value={project?.id ?? ""}
             options={pickable.map((p) => ({
               value: p.id,
               name: p.name,
-              hint: p.cwd,
               icon: <ProjectIcon project={p} className="size-4" />,
             }))}
             onSelect={(id) => configure({ projectId: id })}
@@ -348,13 +350,19 @@ function WorktreeChip({
   );
 }
 
-/** One inline picker on the strip: icon, current value, menu. Exported for
-    the build page's starter picker, which sits in this row's project slot and
-    has to read as the same control. */
+/** One inline picker on the strip: icon, current value, menu.
+ *
+ * A name and nothing under it. The project menu used to draw each row's `cwd`
+ * beneath its name, which made the popup as wide as the longest path on the
+ * machine — `w-max` sizes to the content, and no amount of truncation helps a
+ * width that is being asked to fit it. A menu of names is a column the strip
+ * can afford, and a caller that still owes the reader the longer form says it
+ * on the trigger (`triggerTitle`). */
 export function PickerMenu({
   icon,
   label,
   title,
+  triggerTitle,
   value,
   options,
   onSelect,
@@ -364,11 +372,13 @@ export function PickerMenu({
   icon: React.ReactNode;
   label: string;
   title: string;
+  /** The trigger's hover text, for a value whose full form the menu's rows
+      cannot carry — a project's `cwd`, said without widening the popup. */
+  triggerTitle?: string;
   value: string;
   options: {
     value: string;
     name: string;
-    hint?: string;
     icon?: React.ReactNode;
   }[];
   onSelect: (value: string) => void;
@@ -403,7 +413,7 @@ export function PickerMenu({
           <Button
             variant="ghost"
             size="icon-xs"
-            title={title}
+            title={triggerTitle ?? title}
             className={cn(
               READING_TRIGGER,
               READING_TRIGGER_ALWAYS,
@@ -421,7 +431,7 @@ export function PickerMenu({
       />
       <DropdownMenuContent
         align="start"
-        className="w-max min-w-56 max-w-[min(28rem,var(--available-width))]"
+        className="w-56 max-w-[var(--available-width)]"
         finalFocus={finalFocus}
       >
         {/* DropdownMenuLabel is Base UI's Menu.GroupLabel: it reads its group
@@ -441,13 +451,8 @@ export function PickerMenu({
             {shown.map((option) => (
               <DropdownMenuRadioItem key={option.value} value={option.value}>
                 {option.icon}
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate" title={option.name}>{option.name}</span>
-                  {option.hint && (
-                    <span className="break-all font-mono text-xs text-muted-foreground">
-                      {option.hint}
-                    </span>
-                  )}
+                <span className="min-w-0 truncate" title={option.name}>
+                  {option.name}
                 </span>
               </DropdownMenuRadioItem>
             ))}

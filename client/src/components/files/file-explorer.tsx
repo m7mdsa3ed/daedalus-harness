@@ -55,7 +55,7 @@ import {
 import { useConfirm } from "@/components/confirm-dialog"
 import { Empty } from "@/components/empty"
 import { ErrorNote } from "@/components/error-note"
-import { GridView, ListView, useWidth, type ItemHandlers, type ListedItem } from "@/components/files/file-items"
+import { GridView, ListView, type ItemHandlers, type ListedItem } from "@/components/files/file-items"
 import { FileDetails, PreviewPanel } from "@/components/files/file-preview"
 import { FolderTree, type DropProps } from "@/components/files/file-tree"
 import { Button } from "@/components/ui/button"
@@ -94,6 +94,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { useCoarsePointer } from "@/hooks/use-device"
+import { useElementWidth } from "@/hooks/use-element-width"
 import { formatBytes } from "@/lib/attachments"
 import { inlineFromQuery, reportError } from "@/lib/errors"
 import {
@@ -242,7 +243,7 @@ export function FileExplorer({
 
   /* What fits beside the listing is measured on the explorer itself — a
      picker dialog and a settings page are different widths of the same thing. */
-  const [root, rootWidth] = useWidth<HTMLDivElement>()
+  const [root, rootWidth] = useElementWidth<HTMLDivElement>()
   const showTree = prefs.tree && rootWidth >= TREE_MIN_WIDTH
   const showInfo = prefs.info && rootWidth >= INFO_MIN_WIDTH
   /** Pane widths as dragged; kept when a divider is let go. */

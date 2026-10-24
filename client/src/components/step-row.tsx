@@ -8,7 +8,7 @@ import { AnimatePresence, m, useReducedMotion } from "motion/react"
 import { ChevronRightIcon } from "lucide-react"
 import { toast } from "@/lib/toast"
 import { reportError } from "@/lib/errors"
-import { FileBadge } from "@/components/tool-parts"
+import { FileBadge, CHIP } from "@/components/tool-parts"
 import type { FileRange } from "@/lib/tools"
 import { toolVariantOf, useLayoutOptionsContext, type ToolLayout, type ToolVariant } from "@/lib/layout-options"
 import { cn } from "@/lib/utils"
@@ -55,6 +55,40 @@ export function textDir(text: string | undefined | null): "rtl" | "ltr" {
 }
 
 export const StepDirContext = React.createContext<"rtl" | "ltr" | null>(null)
+
+/* ── One call of a fan-out, marked ──
+   The rows a parallel batch sends are drawn on one wash, and the wash alone
+   does not say *which* rows ran at the same time or in what order.
+   `layoutBatches` has always known each call's place in its batch
+   (`index`/`size`) and nothing drew it, so a reader looking at four rows side
+   by side had no telling which one the agent's request listed first — and that
+   order is the order the results are read in.
+
+   The app's own chip (`CHIP`), wearing the batch's tint instead of `muted`:
+   one more thing on a line that already holds a mark, a file badge and a
+   command has to look like the things beside it, or it reads as a decoration
+   that arrived from somewhere else. `tabular-nums` so 1/10 and 2/3 are the
+   same width and a column of them lines up. */
+export function StepMarker({ label }: { label: string }) {
+  return (
+    <span
+      title={`Call ${label} — one of the calls this request made together`}
+      className={cn(CHIP, "shrink-0 bg-primary/12 font-medium tabular-nums text-primary")}
+    >
+      {label}
+    </span>
+  )
+}
+
+/* Which of the calls on screen are one request's batch, and where each sat in
+   it. A map from item id to "2/3", provided by the batch itself (`ToolRun`'s
+   `parallel`) and read by every step below it. A context rather than a prop
+   handed down: a batch of mixed kinds folds into nested runs, so the calls that
+   need numbering are two rows down from the group that knows the numbering —
+   the same reason `StepDirContext` above is one. Identity is exact because the
+   fold keys a batch by the items the store handed it, and a step never renders
+   under a batch it is not part of. */
+export const StepMarkerContext = React.createContext<((id: string) => string | undefined) | null>(null)
 
 /* Closing gets its own symmetric curve: the opening ease-out run backwards
    dropped ~70% of the height in the first frame and then crawled. */
@@ -366,6 +400,11 @@ export const StepRow = React.memo(function StepRow({
       : null
   const runDir = React.useContext(StepDirContext)
   const d = runDir ?? dir ?? textDir(typeof target === "string" ? target : caption)
+  /* This step's place in the batch it went out with, when it went out with one
+     (`StepMarkerContext`): a step outside a batch has no key to look up and a
+     batch has none for a row it did not send, so both answer nothing. */
+  const places = React.useContext(StepMarkerContext)
+  const place = persistKey === undefined ? undefined : places?.(persistKey)
   const variant = toolLayout && toolVariant ? toolVariantOf(toolLayout, toolVariant) : undefined
   const compact = toolLayout === "timeline" && variant === "compact"
   const minimal = toolLayout === "timeline" && variant === "minimal"
@@ -496,6 +535,7 @@ export const StepRow = React.memo(function StepRow({
           ) : (
             <span className="flex min-w-0 flex-1 flex-col">
               <div className="harness-part-in [--part-i:1] flex min-w-0 items-baseline gap-2">
+                {place && <StepMarker label={place} />}
                 <span
                   className={cn(
                     "min-w-0 truncate text-sm leading-6",
