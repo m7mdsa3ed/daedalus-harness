@@ -178,6 +178,10 @@ export interface DataTableExpand<TData> {
    *  `render`, so every page's lazy-fetched detail looks the same. Pair with a
    *  query enabled on the open row — see `expandedRowId` via `onRowIdChange`. */
   loading?: (row: TData) => boolean;
+  /** The narrow card list folds the panel open under a tapped card too. Off by
+   *  default: a page whose card already draws its detail (or holds controls a
+   *  tap must not toggle through) keeps the card as it was. */
+  cards?: boolean;
 }
 
 /** Presentational grouping of already-flat rows into contiguous segments. */
@@ -652,7 +656,9 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
               row on every render. */}
           {exp && hasExpandableRows && (
             <TableRow className="border-b-0 bg-muted/50 hover:bg-muted/50">
-              <TableCell colSpan={expandColSpan}>
+              {/* A detail panel is prose and grids, not a cell value: it wraps
+                  to the table's width instead of inheriting the cells' nowrap. */}
+              <TableCell colSpan={expandColSpan} className="max-w-0 whitespace-normal">
                 {expandLoading?.(row.original) ? (
                   <ExpandedRowSkeleton />
                 ) : (
@@ -698,6 +704,13 @@ interface MobileCardProps<TData extends RowData> {
   isAnySelected: () => boolean;
   onRowClick?: (row: TData) => void;
   onToggleSelected: (rowId: string) => void;
+  /** The row's detail panel, drawn under the card when it is open — the
+      narrow half of `expand`, which the card list used to drop. */
+  onToggleExpanded?: (rowId: string) => void;
+  /** The table has an `expand`; `renderExpandedRow` is passed to the open row only. */
+  expandable?: boolean;
+  renderExpandedRow?: (row: TData) => React.ReactNode;
+  expandLoading?: (row: TData) => boolean;
   rowClassName?: (row: TData, index: number) => string | undefined;
   neighborMotion: SwipeNeighborMotion;
   neighborIndex: number;
@@ -722,6 +735,10 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
   isAnySelected,
   onRowClick,
   onToggleSelected,
+  onToggleExpanded,
+  expandable,
+  renderExpandedRow,
+  expandLoading,
   rowClassName,
   neighborMotion,
   neighborIndex,
@@ -731,7 +748,10 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
   const content = renderMobileRow(row.original, helpers);
   const swipe = swipeActionsFor(row.original);
   const menuActions = flat ? menuActionsFor(row.original) : [];
-  const tappable = Boolean(onRowClick);
+  /* A row with somewhere to go keeps going there on a phone; one that only
+     folds open folds open — never both on one tap. */
+  const expands = !onRowClick && Boolean(expandable && onToggleExpanded);
+  const tappable = Boolean(onRowClick) || expands;
 
   // Long-press enters selection mode. The press that fires must not also be a
   // tap, so `fired` swallows the click the lift produces.
@@ -744,7 +764,7 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
 
   return (
     <Subscribe selector={rowFlagsSelector(row.id)}>
-      {({ sel }) => {
+      {({ sel, exp }) => {
         const selectAction = hasSelection
           ? {
               label: sel ? "Deselect" : "Select",
@@ -840,12 +860,16 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
                 if (onRowClick) {
                   e.stopPropagation();
                   onRowClick(row.original);
+                } else if (expands) {
+                  e.stopPropagation();
+                  onToggleExpanded!(row.id);
                 }
               }}
               onContextMenu={(e) => e.preventDefault()}
               // A tappable row is a button to everything but the pointer. Only
               // the row itself answers the key: a control inside it keeps its own.
               role={tappable ? "button" : undefined}
+              aria-expanded={expands ? exp : undefined}
               tabIndex={tappable ? 0 : undefined}
               onKeyDown={
                 tappable
@@ -854,7 +878,8 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
                         if (hasSelection && isAnySelected()) onToggleSelected(row.id);
-                        else onRowClick!(row.original);
+                        else if (onRowClick) onRowClick(row.original);
+                        else onToggleExpanded!(row.id);
                       }
                     }
                   : undefined
@@ -895,7 +920,7 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
         // Swipe-to-reveal row actions on mobile.
         // Right-rail actions reveal on swipe-left; left-rail on swipe-right.
         const left = selectAction ? [...swipe.left, selectAction] : swipe.left;
-        return (
+        const swipeable = (
           <SwipeableRow
             key={row.id}
             onSwipeLeft={swipe.right.length ? swipe.right : undefined}
@@ -909,6 +934,15 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
           >
             {card}
           </SwipeableRow>
+        );
+        if (!expands || !exp || !renderExpandedRow) return swipeable;
+        return (
+          <div key={row.id}>
+            {swipeable}
+            <div className={cn("min-w-0 bg-muted/50 px-4 py-3", !flat && "mt-1 rounded-2xl")}>
+              {expandLoading?.(row.original) ? <ExpandedRowSkeleton /> : renderExpandedRow!(row.original)}
+            </div>
+          </div>
         );
       }}
     </Subscribe>
@@ -1431,6 +1465,10 @@ export function DataTable<TData extends RowData, TValue>({
         isAnySelected={isAnySelected}
         onRowClick={onRowClick}
         onToggleSelected={toggleSelectedRow}
+        onToggleExpanded={toggleExpandedRow}
+        expandable={hasExpandableRows && Boolean(expand?.cards)}
+        renderExpandedRow={expandedRowId === row.id ? renderExpandedRow : undefined}
+        expandLoading={expandedRowId === row.id ? expand?.loading : undefined}
         rowClassName={rowClassName}
         neighborMotion={neighborMotion}
         neighborIndex={rowIndex}

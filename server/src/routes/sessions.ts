@@ -12,6 +12,7 @@ import { mcpServers } from "../library.js";
 import { getProject } from "../projects.js";
 import { getTask } from "../tasks-board.js";
 import { listAgentSessions } from "../session-list.js";
+import { listCalls } from "../model-calls/index.js";
 import { threadCwd, type SessionManager } from "../sessions.js";
 import * as git from "../git.js";
 import { listHelpers } from "../project-helpers.js";
@@ -91,9 +92,15 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     /* Paged over top-level threads only: a child (an ask, a workflow step) is
        drawn under its parent, so it rides along with whichever page or pin
        carries the parent (`children`) rather than taking a slot of its own. */
-    const live = all
+    const top = all
       .filter((s) => s.deletedAt === null && !s.parentSessionId)
       .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+    /* Hidden threads take no slot in the paged window: they ride along as a
+       set of their own (`hidden`), the way the trash does, so the "Hidden"
+       filter has every one of them however old and a long hidden tail never
+       starves the default list. */
+    const hidden = top.filter((s) => s.hiddenAt);
+    const live = top.filter((s) => !s.hiddenAt);
     const trashed = all
       .filter((s) => s.deletedAt !== null)
       .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
@@ -103,12 +110,13 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     const limit = clampInt(c.req.query("limit"), PAGE_SIZE_DEFAULT, 1, PAGE_SIZE_MAX);
     const offset = clampInt(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
     const page = live.slice(offset, offset + limit);
-    const parents = new Set([...page, ...pinned].map((s) => s.id));
+    const parents = new Set([...page, ...pinned, ...hidden].map((s) => s.id));
     return c.json({
       sessions: page,
       total: live.length,
       trashed,
       pinned,
+      hidden,
       children: all.filter((s) => s.deletedAt === null && s.parentSessionId && parents.has(s.parentSessionId)),
     });
   });
@@ -670,13 +678,27 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   app.get("/api/sessions/:id/earlier", async (c) => {
     const before = Number(c.req.query("before") ?? 0);
     if (!Number.isFinite(before)) return c.json({ error: "before must be a number" }, 400);
-    const page = await sessions.earlierPage(c.req.param("id"), before);
+    /* How many turns the page holds — the reader's pick, clamped by the journal
+       (`earlierPageSteps`). Absent keeps the old fixed page size, which is what
+       a client that predates the setting sends. */
+    const steps = Number(c.req.query("steps"));
+    const page = await sessions.earlierPage(c.req.param("id"), before, Number.isFinite(steps) ? steps : undefined);
     return page ? c.json(page) : c.json({ error: "not found" }, 404);
   });
 
   // What the agent process has been printing. The client shows this when a thread
   // fails in a way ACP won't explain — the agent's own stack trace is the answer
   // and it never travels over the protocol.
+  /* The thread's model calls out of the ledger, newest first, paged by `at`
+     (`?before=<at>&limit=`) — the Trace panel's cold read; the live ones ride
+     the journal as `_daedalus/model_call`. Answers for a retired thread too:
+     the ledger is the install's, not the process's. */
+  app.get("/api/sessions/:id/calls", async (c) => {
+    const before = Number(c.req.query("before"));
+    const limit = Number(c.req.query("limit"));
+    return c.json({ calls: await listCalls(c.req.param("id"), { before: before || undefined, limit: limit || undefined }) });
+  });
+
   app.get("/api/sessions/:id/stderr", (c) => {
     const session = sessions.get(c.req.param("id"));
     if (!session) return c.json({ error: "not found" }, 404);
@@ -779,7 +801,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   });
 
   app.patch("/api/sessions/:id", async (c) => {
-    const { title, pinned, askProfiles } = await c.req.json();
+    const { title, pinned, hidden, askProfiles } = await c.req.json();
     if (!sessions.get(c.req.param("id"))) return c.json({ error: "not found" }, 404);
     // Which profile (and model) `ask_agent` uses per agent on this thread.
     // Travels alone, like a pin.
@@ -792,6 +814,10 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     // toggling a pin has no title to send.
     if (typeof pinned === "boolean" && title === undefined) {
       return c.json({ pinnedAt: sessions.setPinned(c.req.param("id"), pinned) ?? null });
+    }
+    // Hiding travels alone for the same reason.
+    if (typeof hidden === "boolean" && title === undefined) {
+      return c.json({ hiddenAt: sessions.setHidden(c.req.param("id"), hidden) ?? null });
     }
     if (typeof title !== "string") return c.json({ error: "title must be a string" }, 400);
     const named = sessions.rename(c.req.param("id"), title);

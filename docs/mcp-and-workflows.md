@@ -171,6 +171,44 @@ beside Import in Settings › MCP.
 - Pure mapping, so it has a self-check off real captures: `pnpm test:mcp-registry`.
 - **Sources** (`SOURCES` in `mcp-registry.ts`, `&source=`): `official` (the MCP Registry, or `mcpRegistryUrl`), `smithery` (hosted remotes, `useCount` as popularity) and `npm` (`keywords:mcp-server`, weekly downloads). Each has its own cursor (token, page, offset); all are keyless. Glama needs a key and is not listed. Adding a source is one function plus a `SOURCES` row; the page reads the list from the response.
 
+## Workflow engine v2 (current)
+
+The sections below describe the card, the mirroring and the native bridge, which are unchanged. The
+engine under them was rewritten (`server/src/workflows/`, design and rationale in
+`docs/workflow-engine-v2.md`); where a paragraph below describes the v1 `pump`/`readySteps`
+scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", this section wins.
+
+- **One program model.** `run_workflow` JSON is validated (`graph.ts`) and *compiled* to a script
+  (`compileDefinition`); `run_script` is the same dialect written by hand. `sandbox.ts` is the only
+  interpreter. Beyond Claude Code's API it has `map vote refine route race approve sleep until waitFor
+  sh artifact state`, and `agent()` takes `retry`, `tools`, `timeoutSec`, `onRestart`, `system`,
+  `profile`/`agent`, `resumeSession`, `concurrencyKey`, `priority`.
+- **The journal is the state.** `wf_runs` is the header; `wf_events` is append-only, `(run, seq)`
+  gap-free (`journal.ts`), and `fold.ts` turns it into the `RunView` the routes and card read. A step's
+  key is `hash(call)#occurrence` (`types.ts` `stepKey`); replaying the script answers every keyed call
+  from the journal (`drive.ts`). `canon()` sorts object keys on both sides of the journal because
+  Postgres `jsonb` reorders them and a re-ordered value changes the next prompt's hash.
+- **A restart resumes.** `recoverAtBoot` appends `run_recovered` (downtime is not run time), rebuilds
+  each running run and `resumeRecovered` drives it after agents are adopted. Completed steps are served
+  from the journal; an unresolved approval, timer or signal wait resumes; a step in flight follows
+  `onRestart` (`resume` the child thread, `rerun`, or `fail`). `shutdown()` detaches rather than
+  finishes, so the next boot continues. A run whose parent thread is gone is failed with a message.
+- **Gates** (`gates.ts`) are durable and replayable: `approve` parks a `humanOnly` permission on the
+  parent (never auto-answered by an autonomy policy) and is answered **only** over the bearer-gated
+  `/api` route, never by the agent over the loopback; `sleep`/`until` use pausable timers sliced under
+  Node's 2^31-1 ms limit; `waitFor` + `signal_workflow` deliver external events and buffer early ones;
+  `sh` journals `shell_started` first and refuses to silently re-run a command that may have run
+  (`{idempotent:true}` opts in) with a scrubbed environment; `artifact` writes under the run directory.
+- **Flow control and budgets** (`limits.ts`): one `FlowScheduler` (global cap, per-run width, per-key
+  pools, priority without head-of-line blocking) and a `BudgetTracker` (tokens, cost, agents, wall
+  time minus paused time). A budget ends the run `budget_exceeded` with the partial result.
+- **Entry points.** The saved library is `wf_saved` mirrored to `.claude/workflows/` (`saved.ts`);
+  routines may carry `{kind:"workflow", ref:{name}, args}`; the project page lists saved workflows with
+  a Run form generated from `meta.inputs`. A run still needs a parent thread (`engine.start(parent, …)`);
+  `POST /api/projects/:id/workflows/run` therefore needs a `sessionId` until a parentless door exists.
+- **Tests.** `pnpm test:workflow-{fold,graph,sandbox,saved,limits,gates,step,engine,journal,routes}`.
+  The engine and step suites run on injected fakes; `journal` needs the scratch Postgres.
+
 ## Workflows
 
 - **Workflows are the harness's where the agent has none.** Codex and OpenCode have
@@ -190,7 +228,7 @@ beside Import in Settings › MCP.
 
   **There are two engines here now, and the second runs a program the agent wrote.**
   That reverses the rule the first was built on — stated at the top of
-  `workflow-schema.ts` and repeated below — and it was reversed on purpose, because the
+  `workflows/graph.ts` and repeated below — and it was reversed on purpose, because the
   rule cost more than it bought. What a script buys is not convenience but *capability*:
   fanning out over a list the run itself discovered, looping until a search goes dry,
   having agents judge each other's findings. A static graph cannot express any of those,
@@ -200,7 +238,7 @@ beside Import in Settings › MCP.
 
   What makes it affordable is that the agent writing the script **already runs shell
   commands on this machine**. A script can do nothing a `Bash` call could not, so the
-  `node:vm` context in `workflow-script.ts` is not a security boundary and is not asked to
+  `node:vm` context in `workflows/sandbox.ts` is not a security boundary and is not asked to
   be one: it keeps an honest script from reaching what it has no business touching, and
   makes the failure legible when it does. The isolation that matters is unchanged — every
   agent a script spawns is a real child session carrying the parent's permission mode.
@@ -208,7 +246,7 @@ beside Import in Settings › MCP.
   **One runner serves both.** A script run's `def` is the very `WorkflowDefinition` the
   declarative engine reads, except that it *grows*: each `agent()` appends the step it
   spawned, so `runStep` — with its repair turn, its clocks, its pause and its cancel — is
-  the one path an agent of either engine takes, `workflow_runs` keeps one kind of record,
+  the one path an agent of either engine takes, `wf_runs` keeps one kind of record,
   and the client card learns nothing new. `meta.phases` is the outline, which is why it
   must be a pure literal: a card draws a run's shape from its first step, and a shape known
   only by running would leave nothing to draw. A phase the script enters that `meta` never
@@ -232,7 +270,7 @@ beside Import in Settings › MCP.
   tools, and their descriptions say which is which.
 
   A definition is **declarative JSON**
-  (`server/src/workflow-schema.ts`: named steps, `dependsOn` edges, `{{inputs.x}}` /
+  (`server/src/workflows/graph.ts`: named steps, `dependsOn` edges, `{{inputs.x}}` /
   `{{steps.y.output…}}` templates, an optional JSON-schema `output` that buys the step one
   repair turn before it fails) and never a script: the server does not interpret an agent's
   payloads, and it must not start interpreting a *program* an agent wrote — steps, edges and
@@ -256,7 +294,7 @@ beside Import in Settings › MCP.
   **on the parent's own profile, agent, model and effort** — a step is the same actor working
   in another thread, never a second identity — with the parent's links, the title
   `<wf> · <step>` and the parent's `captureRestoreState()`, so a step does not ask what the
-  parent would not. The parent sees it through **the RFD's own events**: the runner (`workflows.ts`)
+  parent would not. The parent sees it through **the RFD's own events**: the runner (`workflows/engine.ts`)
   emits `subagent_spawned` on the parent, every `update` the child journals re-addressed
   with the child's `sessionId`, and `subagent_state_update` when it closes — all as ordinary
   journaled `update`s through `SessionManager.emitOn`, so the client learned nothing new
@@ -469,19 +507,19 @@ beside Import in Settings › MCP.
   the end of the work, and the run says so itself when it ends, in the turn the runtime's
   own `<task-notification>` opens.
 
-  first on purge. `workflow_runs` is the opposite: one row per run with a `steps` JSON
+  first on purge. `wf_runs` is the opposite: one row per run with a `steps` JSON
   column (the only queries are "runs of this thread" and "what was running when the server
   stopped"), and it *does* cascade off the parent, which only a purge deletes. A child is
   **retired the moment its turn settles** — it is a single-purpose process, and its id is
   proven by that turn (`onSessionDurable`), so the thread stays readable from its log and
   revivable through `session/load` like any retired thread. The trigger is the awkward
-  half: the `workflow` MCP server (`workflow-mcp.ts`) is a process the *agent* spawns and
+  half: the `workflow` MCP server (`workflows/mcp.ts`) is a process the *agent* spawns and
   cannot reach the SessionManager, so it drives the engine over HTTP at
-  `/wf/<key>/<sessionId>/…` (`routes/workflows.ts`) — outside `/api`, the `/gw`/`/ide`
+  `/wf/<key>/<sessionId>/…` (`workflows/routes.ts`) — outside `/api`, the `/gw`/`/ide`
   key-in-path rule: the key is derived from `data/loopback-secret` — stable across restarts, never written elsewhere, and the session id names
   the caller so a server can act for exactly the thread that asked and no other. **One level,
   never a tree**: `serversFor` hands no workflow server to a session with a
-  `parentSessionId`, whatever its profile links, and `WorkflowRunner.start` refuses a caller
+  `parentSessionId`, whatever its profile links, and `WorkflowEngine.start` refuses a caller
   that is a step — a step that could start a workflow makes the caps, cancel propagation and
   restart recovery a tree, and a definition that spawns itself the obvious failure. **A run
   starts in the background, and its end is a message, never a poll** — Claude Code's
@@ -520,7 +558,7 @@ beside Import in Settings › MCP.
   `disconnected` on each parent instead of replaying prompts whose side effects may already
   have happened. Boot awaits this recovery before starting schedulers, so a due fire cannot
   race an unfinished recovery.
-  `pnpm test:workflow-schema` covers the definition schema.
+  `pnpm test:workflow-graph` covers the definition schema and the compiler.
 
 ## Asking another agent
 
@@ -534,7 +572,7 @@ beside Import in Settings › MCP.
   null for an ask and the run's own timer is `NO_LIMIT_MS`: the 15-minute step default killed an
   agent mid-edit, which a workflow's bounded step can afford and an errand cannot. `timeoutSec` on
   `ask_agent` is an opt-in cap. **A failed, timed-out or stopped ask keeps its thread**
-  (`retire` ends the process, never the log), so `continue_agent` (`WorkflowRunner.continueAsk`,
+  (`retire` ends the process, never the log), so `continue_agent` (`WorkflowEngine.continueAsk`,
   `POST …/asks/:id/continue`) is a new one-step run whose step carries `resumeSessionId`: the
   same child, spawned again on the parent (the client reads a settled child spawned again as a
   wake), its process revived by the prompt. A failed step keeps what the child had said
@@ -544,7 +582,7 @@ beside Import in Settings › MCP.
   workflow), `<failures>` as `[step] failed: why`, a prose `<result>` (an ask's own words, not
   JSON around them) and a `<note>` naming the thread and `continue_agent`. Old journals keep
   `<failed-agents>` and the JSON result — `parseTaskNotification` reads both.
-- **An ask is a one-step workflow run** (`WorkflowRunner.ask` → `launch`), its step carrying
+- **An ask is a one-step workflow run** (`WorkflowEngine.ask` → `launch`), its step carrying
   `profileId`/`agentId`/`agentName`/`profileName`/`label`, plus the caller's `description`
   when it gave one (`rowNameOf`: the errand titles the child thread and its row, where `label`
   names the pair). `runStep` reads the pair off the step and falls back to the
@@ -560,7 +598,7 @@ beside Import in Settings › MCP.
   and the report are the ones any subagent draws. The answer the model reads stays one JSON
   object (`askId`, `status`, `threadId`, `output`), while the *row's* report is the
   `output` in it — the envelope is bookkeeping, and the asked agent's words are the answer.
-- **An ask's child asks nobody for permission** (`ASK_AUTONOMY` in `workflows.ts`, an
+- **An ask's child asks nobody for permission** (`ASK_AUTONOMY` in `workflows/engine.ts`, an
   `autonomy.ts` policy: every permission `allow`, questions parked, no timer): the ask is the
   person's go-ahead for its brief, and the child has no reader. **What still parks — a question,
   or a request offering nothing allow-shaped — is repeated on the parent** (`SessionManager.emit`
@@ -588,7 +626,7 @@ beside Import in Settings › MCP.
   picked in the draft's config menu and editable on a started thread (both: Ask agents, a
   row per installed agent with the menu's own Profile and Model rows —
   `components/ask-agents.tsx`), and **read at ask time on the server**
-  (`WorkflowRunner.ask`), so unlike `suggest_kinds` it is no spawn input: no trailer, no
+  (`WorkflowEngine.ask`), so unlike `suggest_kinds` it is no spawn input: no trailer, no
   respawn, no staging. A set choice **outranks whatever the model passed**, and an ask that
   names no agent goes to the one agent the thread has a choice for. With none, the `agents`
   server raises an MCP form elicitation whose `askAgentPair` field the client recognises and
@@ -648,7 +686,7 @@ beside Import in Settings › MCP.
   names the failure exactly: a root held on a question while its collaborators keep
   spending, and the only tool being an interrupt that throws their progress away. ACP has
   nothing better — `session/cancel` is its one interruption — so the engine keeps the hold
-  itself. `WorkflowRunner.pause(runId)` moves the run to `status: "paused"`, which is a
+  itself. `WorkflowEngine.pause(runId)` moves the run to `status: "paused"`, which is a
   live state like `running` (`terminal()` is false for both, `recoverAtBoot` closes both):
   `pump` starts nothing while paused but still lets a run whose last step just finished
   complete; a step between its prompts (the JSON repair turn) waits on `whenRunning`; every

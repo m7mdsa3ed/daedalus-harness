@@ -32,6 +32,12 @@ export const MIN_CLIENT_API = 0;
 /** What this server can do beyond the API baseline. Everything that existed
     when versioning began is the baseline and is not listed. */
 export const FEATURES = [
+  /** `_daedalus/model_call` updates, `session_config.callsVia`,
+      `GET /api/sessions/:id/calls` and `GET /api/usage/calls`. */
+  "modelCalls",
+  /** `@kind:ref` mentions: `POST /api/mentions/context` expands a message's
+      typed references into a `<context>` block (`mentions/expand.ts`). */
+  "mentionKinds",
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];

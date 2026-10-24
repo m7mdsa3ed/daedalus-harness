@@ -28,7 +28,7 @@ import {
   sessionEvents,
   sessions as sessionsTable,
   webSearchUsage,
-  workflowRuns,
+  wfRuns,
 } from "./db/index.js";
 import { getProject } from "./projects.js";
 import { WorkspaceError } from "./workspace-fs.js";
@@ -256,14 +256,16 @@ async function journalStats(ids: string[], now: number): Promise<ReturnType<type
 
 async function workflowStats(ids: string[]): Promise<ProjectStats["workflows"]> {
   const rows = await db
-    .select({ status: workflowRuns.status, n: sql<number>`count(*)` })
-    .from(workflowRuns)
-    .where(inArray(workflowRuns.parentSessionId, ids))
-    .groupBy(workflowRuns.status);
+    .select({ status: wfRuns.status, n: sql<number>`count(*)` })
+    .from(wfRuns)
+    .where(inArray(wfRuns.parentSessionId, ids))
+    .groupBy(wfRuns.status);
   const at = (status: string) => rows.find((row) => row.status === status)?.n ?? 0;
   return {
     total: rows.reduce((sum, row) => sum + row.n, 0),
     running: at("running"),
-    failed: at("failed"),
+    /* A run a budget stopped did not do its work either: it is counted with
+       the failures (the wire shape has no fourth bucket). */
+    failed: at("failed") + at("budget_exceeded"),
   };
 }

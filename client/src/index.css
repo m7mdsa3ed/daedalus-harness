@@ -1481,7 +1481,17 @@ html[data-window-controls-overlay="true"] {
    --tw-prose-td-borders: var(--border);
  }
 
-/* TipTap placeholder inside the task editor and the composer — match input placeholder colour. */
+/* TipTap placeholder inside the task editor and the composer — match input placeholder colour.
+
+   The hint floats at `height: 0` so it never adds height to the paragraph it
+   labels, and that is also why it has to be *one* line: a hint that wraps draws
+   its second line into a box that is only one line tall, and the editor's own
+   `overflow-y-auto` cuts it through the middle of the glyphs — a broken
+   sentence over dead space, which is what "Queue a message for when the agent
+   finishes…" became in a narrow composer. No rule can fix that after the fact
+   (`nowrap` would have the text overflow into a scroll container instead), so
+   the strings are kept short enough to fit the line they label: see the
+   placeholder triple in `composer.tsx` and the `sendHint`s in `lib/thread/hold.ts`. */
 :is(.task-editor, .composer-editor) .tiptap p.is-editor-empty:first-child::before {
   color: var(--muted-foreground);
   content: attr(data-placeholder);
@@ -3774,7 +3784,7 @@ html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
 /* Voice call card: the wave's bars (components/thread-view/voice-call.tsx). */
 @keyframes voice-wave {
   0%, 100% { transform: scaleY(0.2); }
-  50% { transform: scaleY(1); }
+  50% { transform: scaleY(var(--peak, 1)); }
 }
 .voice-bar {
   animation: voice-wave var(--d, 1s) ease-in-out infinite;
@@ -3800,4 +3810,18 @@ html[data-sidebar-density="compact"] [data-sidebar="menu-button"][data-thread-id
 }
 html[data-sidebar-density="compact"] [data-sidebar="menu-item"]:has(> [data-thread-id]) > [data-sidebar="menu-action"] {
   top: calc(var(--spacing) * 0.5) !important;
+}
+
+/* The same switch, for a thread's sub threads (asks, workflow steps): the rail
+   they hang from (`NEST`, marked `data-nest`) and the gap between its rows
+   close up with the rows, instead of leaving four pixels of air around every
+   24px row. The rail's x stays put under the parent's mark. */
+html[data-sidebar-density="compact"] [data-sidebar="menu-button"][data-run-group] {
+  height: calc(var(--spacing) * 6);
+}
+html[data-sidebar-density="compact"] [data-nest] {
+  padding-block: calc(var(--spacing) * 0.5);
+}
+html[data-sidebar-density="compact"] [data-nest] > [data-sidebar="menu"] {
+  gap: calc(var(--spacing) * 0.5);
 }

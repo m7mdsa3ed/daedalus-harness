@@ -10,6 +10,7 @@
 import * as React from "react"
 import { AtSignIcon, FileTextIcon, LinkIcon, SquareCheckIcon, type LucideIcon } from "lucide-react"
 import { TASK_KEY } from "@/lib/task-mentions"
+import { useKindFace } from "@/lib/mentions"
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { CopyButton } from "@/components/ui/copy-button"
@@ -92,6 +93,9 @@ export function ChipBody({
 export function useMentionFace(path: string): ChipFace {
   const trimmed = path.replace(/\/+$/, "")
   const project = useProjects().find((p) => p.cwd.replace(/\/+$/, "") === trimmed)
+  // A typed reference (`@thread:abc`) wears its source's face (lib/mentions/).
+  const kind = useKindFace(path)
+  if (kind) return kind
   // A board task (`@DAE-12`, file-mentions.tsx) is named by its key.
   if (TASK_KEY.test(path)) return { icon: SquareCheckIcon, label: path }
   if (project) {

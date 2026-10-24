@@ -8,11 +8,13 @@ import {
   exportProfile,
   getProfile,
   listProfiles,
+  profileSupports,
   redact,
   resolveProfileAgent,
   setProfileFlags,
   syncProfile,
   updateProfile,
+  type Profile,
 } from "../profiles.js";
 import { AgentInputSchema, getAgent, isBuiltInAgent, listAgents, resetAgent, updateAgent } from "../registry.js";
 import { evictAgentStatus, getAgentsStatus, installAgent } from "../agent-status.js";
@@ -173,11 +175,32 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   app.delete("/api/profiles/:id", async (c) => {
     const id = c.req.param("id");
     if (c.req.query("force") === "1") {
-      /* Confirmed: every thread on the profile is reset to its agent's
-         Default first, so nothing is left naming a profile that no longer
-         exists. Still atomic from the caller's side — a busy thread refuses
-         the whole reset rather than moving half the threads. */
-      const { moved, busy } = await sessions.resetThreadsFromProfile(id);
+      /* Confirmed: every thread on the profile is moved first, so nothing is
+         left naming a profile that no longer exists — onto the replacement the
+         user chose, or each thread's agent's Default when none was named. Still
+         atomic from the caller's side — a busy thread refuses the whole move
+         rather than moving half the threads. */
+      const replacementId = c.req.query("replacement") || null;
+      let replacement: Profile | null = null;
+      if (replacementId) {
+        if (replacementId === id) return c.json({ error: "A profile cannot replace itself." }, 400);
+        replacement = (await getProfile(replacementId)) ?? null;
+        if (!replacement) return c.json({ error: "The replacement profile was not found." }, 404);
+        if (replacement.disabled) return c.json({ error: `“${replacement.name}” is disabled, so it cannot take threads.` }, 400);
+        const target = replacement;
+        const stranded = sessions
+          .list()
+          .filter((s) => s.profileId === id && s.deletedAt === null && !profileSupports(target, s.agentId));
+        if (stranded.length > 0) {
+          const names = stranded.slice(0, 5).map((s) => `“${s.title}”`).join(", ");
+          const more = stranded.length > 5 ? ` and ${stranded.length - 5} more` : "";
+          return c.json(
+            { error: `“${target.name}” has no agent for ${names}${more}. Choose a profile that serves their agent.` },
+            400,
+          );
+        }
+      }
+      const { moved, busy } = await sessions.moveThreadsOffProfile(id, replacement);
       if (busy.length > 0) {
         const names = busy.slice(0, 5).map((s) => `“${s.title}”`).join(", ");
         const more = busy.length > 5 ? ` and ${busy.length - 5} more` : "";

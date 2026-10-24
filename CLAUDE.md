@@ -52,7 +52,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   user's, and so are `install`/`icon` (descriptive, not protocol).
 - **What the harness believes about a runtime is a column on its row, never a comparison
   against its id.** `spawnCategories`, `liveConfig`, `quotaProbe`, `personaVia`,
-  `rewindVia`, `workflowsVia`, `workspaceLayout`, `builtinTools`, `sharedProcess`,
+  `rewindVia`, `workflowsVia`, `callsVia`, `workspaceLayout`, `builtinTools`, `sharedProcess`,
   `catalogProbe`, `discovery`, `install`, `icon` — a user who repoints `command` at a fork
   repoints these with it, and nothing outside `registry.ts` spells a vendor's tool name,
   config path, install line or id.
@@ -194,6 +194,19 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   child and `send_message` to follow up. A stopped or failed child resumes from its last
   complete model/tool step; a running child rejects a message instead of racing. This resumes
   the conversation, not an in-flight model request or unfinished tool call.
+- **A model call is one record (`_daedalus/model_call`, the `ModelCall` under `call`), whoever
+  observed it — no spans.** Which door a runtime has is `AgentDef.callsVia`, ordered
+  (`CallDoor`: `acp`, `otlp`, `proxy`, `files`); `chooseDoor` runs once per process in
+  `SessionManager.start`, the first that attaches is the thread's for its life, said on
+  `session_config.callsVia`, and the implicit last is `usage`. **That choice is the double-count
+  guard**: a `usage_update` rows only on a `usage` thread (`usageFallback`) — the removed design
+  had four producers and the client reconciled them. Every door hands a draft to `recordCall`
+  and touches nothing else; the emit lands in `fileCall`, the one path that fills `step`/turn
+  and writes the `model_calls` row for a record the runtime sent and a server-built one alike.
+  Every server-built record is counted by `model-calls/prompt-parts.ts` **after** the response
+  ended (the shim once froze every socket counting inside the forward) and anchored to the
+  billed prompt; a part a door cannot see is `unseen` → `null`, named in `missing` in words,
+  never "overhead". → `docs/protocol.md` "Model calls".
 - Agent stderr is spliced into errors on the way out; every route throw becomes the
   `{ error }` shape the client parses.
 
@@ -352,11 +365,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   name for name, and its saved workflows live in Claude Code's own `.claude/workflows/`.
   **A run starts in the background and its end is a message** (`<task-notification>` through
   the scheduler's `fire`), never a poll the agent has to keep up. **Every step is a real thread** on the parent's own profile, agent, model,
-  effort, persona and links. One level, never a tree. Nothing survives a restart.
+  effort, persona and links. One level, never a tree. **A restart resumes a run, it does not end it**: the script replays from the journal, a completed step is never re-run, an unresolved gate resumes, and a step in flight follows its `onRestart` (`resume` by default). Downtime is not run time (`run_recovered`). Anything hashed or handed back to a script crosses `canon()` first, because `jsonb` reorders keys. Design: `docs/workflow-engine-v2.md`.
 - **A run pauses as a state, never as a cancel-and-restart**, and its clocks stand still. A
   restart ends a paused run as it ends a running one.
 - **Asking another agent is the one door to another pair** (`builtin:agents`, `agents-mcp.ts`,
-  `WorkflowRunner.ask`): a **one-step run** whose step names its own profile and agent, so
+  `WorkflowEngine.ask`): a **one-step run** whose step names its own profile and agent, so
   the child, the mirroring, the cost and the cancel are the workflow's. Drawn as a plain
   subagent — no workflow `_meta`, a `_meta.daedalus.ask` pair instead, so its row is named by
   the `description` the caller gave it (else `agent · profile`) and wears the asked agent's
@@ -621,7 +634,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A slash command is either the agent's or the harness's and the composer draws one list**;
   the agent's shadows the harness's, and a draft is offered no harness commands. An `@`
   mention is text *and* a `resource_link`, added server-side for any `~`/absolute/relative
-  path that exists — the scope is the person's, never only the cwd.
+  path that exists — the scope is the person's, never only the cwd. A typed `@kind:ref` (`thread`, `commit`, `branch`, `tag`, `git`, `run`, `kb`, `term`, `mcp`, and `@path:40-80` for lines) is expanded at send into a `<context>` block by `POST /api/mentions/context`; sources are one file each on both halves (`client/src/lib/mentions/`, `server/src/mentions/`) and the kind list is copied in both, `test:mentions` failing on drift. → `docs/mention-sources.md`.
   A `!` line is a **shell command and the composer's third completer**: the project's helpers
   **and the scripts its `package.json` files declare** (root and one directory deep,
   `GET /api/projects/:id/scripts`, read off the disk and never stored — helpers first, a row
@@ -1031,7 +1044,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   zeroed bar.
 - **The provider's plan is read from the profile, which outranks the agent's probe.** The
   adapter owns the endpoint; an unknown `kind` throws rather than falling through. Settings ›
-  Usage is the only surface that lists plans.
+  Usage is the only surface that lists plans — and, on its Spend tab, the `model_calls`
+  ledger (`GET /api/usage/calls`); a thread's own reading is its Trace panel. → `docs/ops.md`.
 - **A profile preset is a starting point, never a stored kind**: nothing about it is saved on
   the profile.
 

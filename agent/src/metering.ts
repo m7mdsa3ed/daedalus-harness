@@ -18,6 +18,30 @@ import type { LanguageModelCallEndEvent, LanguageModelUsage } from "ai";
 export interface TurnGeneration {
   outputTokens: number;
   decodeMs: number;
+  waits?: TurnWaits;
+}
+
+/** The time between a turn's model requests, and what part of it the agent can
+    name. Mirrors `TurnWaits` in the server's `protocol.ts`. What is left of
+    `totalMs` once the named parts are out is the tools (their approvals
+    included) and the harness's own work. */
+export interface TurnWaits {
+  totalMs: number;
+  heldMs?: number;
+  compactMs?: number;
+  retryMs?: number;
+}
+
+export type WaitCause = "heldMs" | "compactMs" | "retryMs";
+
+/** What one model request's wait was made of, stamped on the first tool call it
+    made (`_meta.daedalus.lead`): the causes booked since the request before it,
+    how long the model took to its first output, and how long it wrote before
+    the call opened. What the client's gap has beyond these is the tools
+    settling and the harness's own work. */
+export interface StepLead extends Partial<Record<WaitCause, number>> {
+  ttftMs?: number;
+  writeMs?: number;
 }
 
 export type CallMetering = Pick<LanguageModelCallEndEvent, "usage" | "performance"> &
@@ -174,6 +198,76 @@ export function generationOf(call: CallMetering): TurnGeneration | undefined {
 export class Meter {
   usage: LanguageModelUsage | null = null;
   generation: TurnGeneration | undefined;
+  /* When each root-loop request was in flight, on the performance clock. A
+     call is placed by its end (when the SDK reports it) less its own length. */
+  private spans: Array<[number, number]> = [];
+  private causes: Record<WaitCause, number> = { heldMs: 0, compactMs: 0, retryMs: 0 };
+  private taken: Record<WaitCause, number> = { heldMs: 0, compactMs: 0, retryMs: 0 };
+
+  /** The cause time booked since the last call, per cause — one request's lead. */
+  take = (): Partial<Record<WaitCause, number>> => {
+    const out: Partial<Record<WaitCause, number>> = {};
+    for (const cause of Object.keys(this.causes) as WaitCause[]) {
+      const ms = Math.round(this.causes[cause] - this.taken[cause]);
+      this.taken[cause] = this.causes[cause];
+      if (ms > 0) out[cause] = ms;
+    }
+    return out;
+  };
+
+  /** Place a root-loop request on the clock. Only the loop's own calls: a
+      subagent's run inside the parent's tool call and would hide the very
+      wait the tool made. */
+  span = (call: CallMetering): void => {
+    const end = performance.now();
+    this.spans.push([end - call.performance.responseTimeMs, end]);
+  };
+
+  /** Run `work` and book its time to `cause`. Counted only once a request has
+      answered — before that there is no "between" for it to be in. */
+  async during<T>(cause: WaitCause, work: () => Promise<T>): Promise<T> {
+    const counts = this.spans.length > 0;
+    const started = performance.now();
+    try {
+      return await work();
+    } finally {
+      if (counts) this.causes[cause] += performance.now() - started;
+    }
+  }
+
+  /** Time between the first request starting and the last one ending that no
+      request was in flight for. Overlapping requests count once. */
+  waits(): TurnWaits | undefined {
+    if (this.spans.length < 2) return undefined;
+    const spans = [...this.spans].sort((a, b) => a[0] - b[0]);
+    let busy = 0;
+    let [from, to] = spans[0];
+    let last = to;
+    for (const [start, end] of spans.slice(1)) {
+      if (start > to) {
+        busy += to - from;
+        from = start;
+        to = end;
+      } else to = Math.max(to, end);
+      last = Math.max(last, end);
+    }
+    busy += to - from;
+    const totalMs = Math.round(last - spans[0][0] - busy);
+    if (totalMs <= 0) return undefined;
+    const named = (cause: WaitCause) => {
+      const ms = Math.min(totalMs, Math.round(this.causes[cause]));
+      return ms > 0 ? { [cause]: ms } : {};
+    };
+    return { totalMs, ...named("heldMs"), ...named("compactMs"), ...named("retryMs") };
+  }
+
+  /** What the turn reports about its model calls, or `null` when it can say
+      nothing. A record with no tokens is a turn that has waits and no speed. */
+  reading(): TurnGeneration | null {
+    const waits = this.waits();
+    if (!this.generation && !waits) return null;
+    return { outputTokens: 0, decodeMs: 0, ...this.generation, ...(waits ? { waits } : {}) };
+  }
 
   record = (call: CallMetering): void => {
     this.usage = addUsage(this.usage, normalizeUsage(call.usage));
@@ -192,6 +286,6 @@ export class Meter {
       measures nothing — only the first must stop the harness's own clock from
       timing the same buffered output and drawing the number this refused. */
   meta(): { daedalus: { generation: TurnGeneration | null } } {
-    return { daedalus: { generation: this.generation ?? null } };
+    return { daedalus: { generation: this.reading() } };
   }
 }

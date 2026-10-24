@@ -98,7 +98,7 @@ interface SqlRunner {
     the only value there is to write. */
 export async function indexEventRow(runner: SqlRunner, row: EventRow): Promise<boolean> {
   /* A workflow step's events are mirrored onto its parent's log carrying the
-     step's `sessionId` (workflows.ts); they are indexed once, under the step's
+     step's `sessionId` (workflows/step.ts); they are indexed once, under the step's
      own thread, or every search hit in a step would come back twice. */
   if (row.kind === "update" && (row.payload as { sessionId?: unknown }).sessionId) return false;
   const text = extractSearchText(row.kind, row.payload);

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
 import { buildAgentApp } from "../src/app.js";
-import { initialize, makeClient, promptOf, testEnv, textScript } from "./helpers/scripted.js";
+import { connectPair, initialize, makeClient, promptOf, testEnv, textScript } from "./helpers/scripted.js";
 
 const cwd = mkdtempSync(join(tmpdir(), "daedalus-agent-cwd-"));
 const env = testEnv({ autoTitle: true });
@@ -26,7 +26,7 @@ const makeModel = (_env: unknown, id: string) =>
 
 const agent = buildAgentApp({ env, makeModel });
 const { app: client, harness } = makeClient();
-await client.connectWith(agent, async (ctx) => {
+await connectPair(agent, client, async (ctx) => {
   await initialize(ctx);
   const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
   await ctx.request("session/prompt", { sessionId, prompt: promptOf("the login page redirects wrong, please fix") });
@@ -51,7 +51,7 @@ const shortTitleAgent = buildAgentApp({
   }),
 });
 const { app: shortClient, harness: shortHarness } = makeClient();
-await shortClient.connectWith(shortTitleAgent, async (ctx) => {
+await connectPair(shortTitleAgent, shortClient, async (ctx) => {
   await initialize(ctx);
   const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
   await ctx.request("session/prompt", { sessionId, prompt: promptOf("the login page redirects wrong, please fix") });

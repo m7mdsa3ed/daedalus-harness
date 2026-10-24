@@ -21,7 +21,7 @@
  * decode runs inside the parent's step and is billed to its own session.
  */
 import type * as acp from "./acp.js";
-import type { SessionUpdate, TurnGeneration, WireError } from "./protocol.js";
+import type { SessionUpdate, TurnGeneration, TurnWaits, WireError } from "./protocol.js";
 
 /** Whether an update is the model's own output — prose, thought, or the
     opening of a tool call. The moment time to first token stops. */
@@ -89,10 +89,27 @@ export function generationFromMeta(meta: unknown): TurnGeneration | null | undef
   const raw = own.generation;
   if (raw === null) return null;
   if (typeof raw !== "object") return undefined;
-  const { outputTokens, decodeMs } = raw as Record<string, unknown>;
-  return typeof outputTokens === "number" && outputTokens > 0 && typeof decodeMs === "number" && decodeMs > 0
-    ? { outputTokens, decodeMs }
-    : undefined;
+  const { outputTokens, decodeMs, waits } = raw as Record<string, unknown>;
+  const said = waitsFromMeta(waits);
+  if (typeof outputTokens === "number" && outputTokens > 0 && typeof decodeMs === "number" && decodeMs > 0) {
+    return { outputTokens, decodeMs, ...(said ? { waits: said } : {}) };
+  }
+  return said ? { outputTokens: 0, decodeMs: 0, waits: said } : undefined;
+}
+
+/** The waits off a generation record: a positive total and any named part that
+    is a positive number, or nothing. */
+function waitsFromMeta(raw: unknown): TurnWaits | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const { totalMs, heldMs, compactMs, retryMs } = raw as Record<string, unknown>;
+  if (typeof totalMs !== "number" || !(totalMs > 0)) return undefined;
+  const part = (ms: unknown) => (typeof ms === "number" && ms > 0 ? ms : undefined);
+  return {
+    totalMs,
+    ...(part(heldMs) ? { heldMs: heldMs as number } : {}),
+    ...(part(compactMs) ? { compactMs: compactMs as number } : {}),
+    ...(part(retryMs) ? { retryMs: retryMs as number } : {}),
+  };
 }
 
 /** What a turn that threw had already spent. The runtime rides it on the

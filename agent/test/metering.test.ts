@@ -15,7 +15,7 @@ import type { LanguageModelV4StreamPart, LanguageModelV4Usage } from "@ai-sdk/pr
 import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
 import { buildAgentApp } from "../src/app.js";
 import { Meter, addUsage, generationOf, normalizeUsage, toAcpUsage } from "../src/metering.js";
-import { initialize, makeClient, promptOf, scriptedModel, testEnv, textScript, toolCallScript } from "./helpers/scripted.js";
+import { connectPair, initialize, makeClient, promptOf, scriptedModel, testEnv, textScript, toolCallScript } from "./helpers/scripted.js";
 
 const cwd = mkdtempSync(join(tmpdir(), "daedalus-agent-metering-"));
 
@@ -128,12 +128,43 @@ const sdkUsage = (inputTokens: number, cacheRead: number, cacheWrite: number | u
   console.log("metering: generation ok");
 }
 
+// --- the wait between requests is the clock no request was in flight on ---
+{
+  const call = (responseTimeMs: number) => ({ usage: sdkUsage(1, 0, undefined, 1), performance: { responseTimeMs } }) as never;
+  const meter = new Meter();
+  meter.span(call(0));
+  await meter.during("retryMs", () => new Promise((resolve) => setTimeout(resolve, 60)));
+  meter.span(call(0));
+  const waits = meter.waits()!;
+  assert.ok(waits.totalMs >= 55 && waits.totalMs < 250, `the gap is the wait: ${waits.totalMs}`);
+  assert.ok(waits.retryMs! >= 55 && waits.retryMs! <= waits.totalMs, "the named cause is part of it");
+  assert.equal(waits.heldMs, undefined, "a cause that took no time is not said");
+  assert.deepEqual(meter.reading()?.waits, waits);
+  assert.equal(meter.reading()?.decodeMs, 0, "waits without a speed is a record with none");
+
+  const overlapping = new Meter();
+  overlapping.span(call(1000));
+  overlapping.span(call(1000));
+  assert.equal(overlapping.waits(), undefined, "overlapping requests leave no gap");
+  const first = new Meter();
+  await first.during("heldMs", () => new Promise((resolve) => setTimeout(resolve, 20)));
+  first.span(call(0));
+  assert.equal(first.reading(), null, "time before the first request is not between requests");
+  const taking = new Meter();
+  taking.span(call(0));
+  await taking.during("heldMs", () => new Promise((resolve) => setTimeout(resolve, 20)));
+  const lead = taking.take();
+  assert.ok(lead.heldMs! >= 15, "a lead is the causes booked since the last one");
+  assert.deepEqual(taking.take(), {}, "and is taken once");
+  console.log("metering: waits ok");
+}
+
 // --- a turn cancelled during a tool call still reports the call that was billed ---
 {
   const tool = withUsage(toolCallScript("bash", { command: "sleep 5" }), cachedUsage(1000, 900, undefined, 50));
   const agent = buildAgentApp({ env: testEnv(), makeModel: scriptedModel([tool]) });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -158,8 +189,8 @@ const sdkUsage = (inputTokens: number, cacheRead: number, cacheWrite: number | u
       withUsage(textScript("done "), cachedUsage(1100, 1000, undefined, 30)),
     ]),
   });
-  const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  const { app: client, harness } = makeClient();
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -168,6 +199,9 @@ const sdkUsage = (inputTokens: number, cacheRead: number, cacheWrite: number | u
       [response.usage?.inputTokens, response.usage?.cachedReadTokens, response.usage?.outputTokens],
       [200, 1900, 80],
     );
+    const lead = (harness.updatesOf("tool_call")[0].update as { _meta?: { daedalus?: { lead?: Record<string, number> } } })._meta
+      ?.daedalus?.lead;
+    assert.ok(lead && typeof lead.ttftMs === "number" && typeof lead.writeMs === "number", "a step's first call says where its wait went");
   });
   console.log("metering: steps sum ok");
 }
@@ -188,7 +222,7 @@ const sdkUsage = (inputTokens: number, cacheRead: number, cacheWrite: number | u
       }),
   });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });

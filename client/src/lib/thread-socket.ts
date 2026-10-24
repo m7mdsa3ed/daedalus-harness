@@ -10,6 +10,7 @@ import type {
   QueuedMessage,
   QuotaSnapshot,
   SessionFailure,
+  CallsVia,
   SessionUpdate,
   StagedConfig,
   ThreadCommand,
@@ -24,6 +25,7 @@ import type {
   RequestFrom,
 } from "@daedalus/protocol"
 import { api, wsUrl, type ServerSettings } from "./settings"
+import { earlierPageSteps, replayWindowSteps } from "./layout-options"
 
 /** The hold, as both the `paused` event and `caught_up` state it — the
     protocol's own shape, re-exported so readers of this module need not know
@@ -31,17 +33,20 @@ import { api, wsUrl, type ServerSettings } from "./settings"
 export type { ThreadHold, ThreadRetry }
 
 /**
- * How much of a thread's tail to ask for on a fresh attach, in **steps** (turns).
+ * How much of a thread's tail to ask for on a fresh attach, in **steps** (turns),
+ * is the reader's pick — Settings › Appearance › Transcript › History, read
+ * through `replayWindowSteps` (`lib/layout-options`). It used to be a constant
+ * here, and a long archive was the wrong size for everybody at once.
  *
- * The window is the *minimum* of two budgets, whichever binds first: this many
- * turns, or `REPLAY_WINDOW_BYTES` payload bytes — the half the *server* keeps,
- * because a step is a turn and a turn is not a size (one is a sentence, the
- * next is a build log). Below the window the transcript arrives whole and
- * `earlier` is 0, so nothing about short threads changes — no button, no
- * paging, no retained raw events. Long threads open with only their tail, and
- * the rest is paged back on demand (`load_earlier`).
+ * The window is the *minimum* of two budgets, whichever binds first: the picked
+ * number of turns, or `REPLAY_WINDOW_BYTES` payload bytes — the half the
+ * *server* keeps, because a step is a turn and a turn is not a size (one is a
+ * sentence, the next is a build log). Below the window the transcript arrives
+ * whole and `earlier` is 0, so nothing about short threads changes — no button,
+ * no paging, no retained raw events. Long threads open with only their tail, and
+ * the rest is paged back on demand (`load_earlier`), `earlierPageSteps` turns at
+ * a time.
  */
-export const REPLAY_WINDOW_STEPS = 10
 
 /**
  * How often a connected socket asks the server whether it is still there.
@@ -143,7 +148,9 @@ export interface ThreadCallbacks {
     /** Whether the runtime takes pause. Absent means unchanged. */
     canPause: boolean | undefined,
     /** Whether the runtime takes a compaction request. Absent means unchanged. */
-    canCompact: boolean | undefined
+    canCompact: boolean | undefined,
+    /** Which door the process's model calls come through. Absent means unchanged. */
+    callsVia: CallsVia | undefined
   ) => void
   /** A mode, model or effort change that landed mid-turn. Journaled, so replays
       redraw it inline where it happened; rendered as a `notice` rule. */
@@ -488,7 +495,8 @@ export class ThreadSocket {
     const params = new URLSearchParams({ cursor: String(cursor) })
     /* Same rule as `connect`: a resume asks for a delta whose size it already
        knows, and windowing that would hide events this device is missing. */
-    if (cursor === 0) params.set("window", String(REPLAY_WINDOW_STEPS))
+    const steps = cursor === 0 ? replayWindowSteps() : 0
+    if (steps > 0) params.set("window", String(steps))
     const doc = await api<ReplayDocument>(
       this.settings,
       `/api/sessions/${this.serverSessionId}/replay?${params}`
@@ -512,7 +520,7 @@ export class ThreadSocket {
        window a resume for the same reason; sending 0 keeps the two ends saying
        the same thing rather than relying on one of them to correct the other. */
     const ws = new WebSocket(
-      wsUrl(this.settings, this.serverSessionId, cursor, cursor > 0 ? 0 : REPLAY_WINDOW_STEPS)
+      wsUrl(this.settings, this.serverSessionId, cursor, cursor > 0 ? 0 : replayWindowSteps())
     )
     this.ws = ws
 
@@ -794,7 +802,8 @@ export class ThreadSocket {
           event.configOptions,
           event.promptCapabilities,
           event.canPause,
-          event.canCompact
+          event.canCompact,
+          event.callsVia
         )
         return
       case "config_notice":
@@ -1011,13 +1020,16 @@ export class ThreadSocket {
       HTTP answers it without a socket, which is the case an archived thread is
       in for the whole of its life. */
   private async requestEarlier(before: number): Promise<EarlierPage> {
+    /* Asked for at the click, not at attach: the page size is the reader's pick
+       and a change to it should land on the next page, not the next thread. */
+    const steps = earlierPageSteps()
     if (!this.ws) {
       return await api<EarlierPage>(
         this.settings,
-        `/api/sessions/${this.serverSessionId}/earlier?before=${before}`
+        `/api/sessions/${this.serverSessionId}/earlier?before=${before}&steps=${steps}`
       )
     }
-    return (await this.request((id) => ({ id, cmd: "load_earlier", before }))) as EarlierPage
+    return (await this.request((id) => ({ id, cmd: "load_earlier", before, steps }))) as EarlierPage
   }
 
   private async fetchEarlier(): Promise<void> {

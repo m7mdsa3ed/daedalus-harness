@@ -455,7 +455,7 @@ export function annotate(
 }
 
 /** git's well-known empty tree, the base an unborn branch diffs against. */
-const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 const warn = (what: string) => (err: unknown) => {
   console.warn(`[turn-changes] ${what} failed:`, err instanceof Error ? err.message : err);

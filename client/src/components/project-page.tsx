@@ -83,6 +83,7 @@ import { activityDays, type ProjectStats } from "@/lib/workspace/project-stats"
 import { useProjectRepos, useProjectStats } from "@/lib/queries/surfaces"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { useAutomationReads, useAutomations } from "@/lib/queries/automations"
+import { SavedWorkflows } from "@/components/workflow/saved-workflows"
 import { nextFireOf, triggersLine, untilLabel } from "@/components/automations/trigger-summary"
 
 /** Matches the server's `ACTIVITY_DAYS`. The strip is drawn as a fixed run of
@@ -273,6 +274,12 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
               sessions={sessions}
               onOpen={(id) => void navigate(automationPath(id))}
               onManage={() => void navigate(automationsPath())}
+            />
+            {/* A run hangs on a thread, so the Run button names the project's newest. */}
+            <SavedWorkflows
+              projectId={project.id}
+              sessionId={threads[0]?.id}
+              onStarted={(id) => void navigate(threadPath(id))}
             />
             <GlanceCard stats={stats} trashed={trashed} failed={!!error} />
           </div>

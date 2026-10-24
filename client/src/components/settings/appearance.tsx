@@ -282,7 +282,7 @@ export function AppearancePage() {
                   onChange={(next) => setLayoutOption("sidebarVariant", next)}
                 />
               </Group>
-              <LayoutSettings scope="sidebar" />
+              <LayoutSettings scope="interface" />
               <Group label="Text and spacing" hint="Scale the whole app on this device.">
                 <SliderRow
                   title="Font size"

@@ -133,3 +133,18 @@ export const agentOptionsKey = (s: ServerSettings, profileId: string, agentId: s
     One family, so a write invalidates every open level of the tree at once. */
 export const filesKey = (s: ServerSettings, parentId?: string | null) =>
   scope(s).concat(parentId === undefined ? ["files"] : ["files", parentId ?? "root"])
+/** A thread's model-call ledger (`GET /api/sessions/:id/calls`) — the Trace
+    panel's cold read; the socket files the live ones. */
+export const sessionCallsKey = (s: ServerSettings, sessionId: string) => scope(s).concat(["calls", sessionId])
+/** Spend across threads, grouped (`GET /api/usage/calls?groupBy=`). */
+export const spendKey = (s: ServerSettings, groupBy: string) => scope(s).concat(["spend", groupBy])
+/** One harness workflow run's folded view (`GET /api/sessions/:id/workflows/:runId`):
+    gates, state, artifacts, logs and budget meters — what the transcript's step
+    rows cannot carry. */
+export const workflowRunKey = (s: ServerSettings, sessionId: string, runId: string) =>
+  scope(s).concat(["workflow-run", sessionId, runId])
+/** The saved-workflow library of one project (`GET /api/workflows/saved?projectId=`);
+    the family prefix is what a save or a delete invalidates. */
+export const savedWorkflowsFamilyKey = (s: ServerSettings) => scope(s).concat(["saved-workflows"])
+export const savedWorkflowsKey = (s: ServerSettings, projectId: string) =>
+  savedWorkflowsFamilyKey(s).concat([projectId])

@@ -25,21 +25,22 @@ import {
   toolViewOf,
 } from "./tools"
 import type { WorkflowPlanPhase } from "./tools"
+import { batchSpanOf, layoutBatches } from "./tool-batches"
 import type { WorkflowProgressEntry } from "@daedalus/protocol"
 
 /** A transcript rule a run may hold: an interrupt notice, or a `config_notice`
  *  row (a setting changed mid-turn). The only `TextItem` there is room for. */
 export type NoticeItem = TextItem & { kind: "notice" }
 
-/** A thought, which stands where it arrived: the reasoning that produced the
- *  calls around it ends the run it lands in rather than joining it, so no fold
- *  can hide thinking behind a counting line that only ever mentions calls. */
+/** A thought: the reasoning that produced the calls it leads or sits between.
+ *  It rides inside their run, so the group is the thinking and the work it
+ *  explains; a thought nothing follows stands where it arrived. */
 export type ThoughtItem = TextItem & { kind: "thought" }
 
-/** What a run may hold — a call, and a setting changed between two of them.
- *  Prose is not one, and neither is a thought: a row that is not a call ends the
- *  run it would have joined. */
-export type RunItem = ToolItem | NoticeItem
+/** What a run may hold — a call, the reasoning before or between calls, and a
+ *  setting changed between two of them. Prose is not one: it ends the run it
+ *  would have joined. */
+export type RunItem = ToolItem | NoticeItem | ThoughtItem
 
 /** A run of consecutive calls with the same resolved tool view, folded into
  *  one row (layout-options). A setting changed between two of them rides along,
@@ -48,6 +49,9 @@ export interface ToolRunGroup {
   kind: "run"
   id: string
   items: RunItem[]
+  /** These calls went out in one model response and ran side by side
+   *  (`lib/tool-batches.ts`) — a group of its own inside the run, drawn marked. */
+  parallel?: true
 }
 
 /** Consecutive tool calls collected under one parent, split into layout runs. */
@@ -55,7 +59,9 @@ export interface ToolGroup {
   kind: "tool-group"
   id: string
   items: RunItem[]
-  children: Array<RunItem | ToolRunGroup>
+  /** A nested tool group is only ever a parallel batch of mixed kinds. */
+  children: Array<RunItem | ToolRunGroup | ToolGroup>
+  parallel?: true
 }
 
 /**
@@ -198,6 +204,59 @@ export function rowTailId(row: Row): string {
   return row.id
 }
 
+/**
+ * Which rows an open turn is still writing — the rows a view hands `streaming`
+ * to. Ordinarily that is the one row whose tail is the thread's newest item
+ * (`rowTailId`).
+ *
+ * **A trailing thought takes nothing away from the run it is about to join.**
+ * Reasoning that arrives after the last call of a run stands outside the fold
+ * until the next call lands (`groupToolRuns`: a thought nothing follows is the
+ * live tail, and folding it away would hide the thinking in progress). Reading
+ * "is this the tail" off `rowTailId` alone then went looking for the newest
+ * item and found the thought where it wanted the run — so the group above it
+ * stopped being the transcript's tail for exactly as long as the model was
+ * thinking: it folded shut the moment the reasoning started and opened again
+ * when the call after it arrived. That is the transcript rewriting itself
+ * mid-read, at the one moment a reader is watching it.
+ *
+ * So a thought standing at the tail is live, and so is the group directly above
+ * it — the fold it is being written for. Prose is deliberately not: a reply
+ * already on screen does not become unfinished because the agent has started
+ * thinking again after it.
+ *
+ * `last` is the id of the newest item *these* rows end in, so the same reading
+ * works on a fold's own children (a work fold is a row like any other, and the
+ * group inside it folds for the same reason).
+ */
+export function streamingRowIds(rows: Row[], last: string | undefined): ReadonlySet<string> {
+  const live = new Set<string>()
+  if (last === undefined || rows.length === 0) return live
+  /* Only the row that ends these rows can be the one being written: a newer
+     item drawn a level down (a subagent's step, a fold's child) leaves the top
+     level with a tail that ends nothing, and answering for it here would mark
+     whatever happens to be last as live. */
+  if (rowTailId(rows[rows.length - 1]) !== last) return live
+
+  let index = rows.length - 1
+  while (index >= 0 && rows[index].kind === "thought") {
+    live.add(rows[index].id)
+    index--
+  }
+  const above = rows[index]
+  if (!above) return live
+  if (live.size === 0) {
+    live.add(above.id)
+    return live
+  }
+  /* Thinking at the tail: the group it is being written for is still live
+     whatever its own last call settled at. A run never holds a trailing
+     thought (`groupToolRuns`), so the fold it explains has to be told some
+     other way — and this is that way. */
+  if (above.kind === "run" || above.kind === "tool-group") live.add(above.id)
+  return live
+}
+
 /** The row a stack of folds ends in — a `work-fold`'s last inner row, walked
     the same way `rowTailId` walks it. "Answers only" can put the workflow's
     card inside a fold, and the rule then hangs off the fold rather than off the
@@ -206,6 +265,45 @@ function lastInnerRow(row: Row): Row {
   let last = row
   while (last.kind === "work-fold" && last.rows.length > 0) last = last.rows[last.rows.length - 1]
   return last
+}
+
+/** When the last tool call a row ends in settled, or undefined where that is
+    unknown: a call still out, one with no recorded end (a `session/load`
+    replay), or a row that is not tool calls at all. */
+function toolsEndedAt(row: Row): number | undefined {
+  const tools: ToolItem[] =
+    row.kind === "tool" ? [row] : row.kind === "run" || row.kind === "tool-group" ? row.items.filter((item): item is ToolItem => item.kind === "tool") : []
+  if (tools.length === 0 || tools.some((tool) => tool.endedAt === undefined)) return undefined
+  return Math.max(...tools.map((tool) => tool.endedAt!))
+}
+
+/** The wait between a tool call settling and the agent's reply to it starting
+    to be written — the model reading the result, mostly. `row` is the agent's
+    prose and `above` the row before it; `layoutBatches` draws the waits between
+    steps of a run, and this is the one it cannot, since prose ends the run it
+    follows. Undefined when either end has no honest stamp.
+
+    **The wait is measured to the last call, not to the row directly above it.**
+    Reasoning that ends a step — a request whose last act was thinking, with no
+    call after it — leaves its thought standing between the run and the reply,
+    because a trailing thought is the live tail rather than part of the fold
+    (`groupToolRuns`). Reading only `rows[index - 1]` then found a thought where
+    it wanted a call and said nothing at all, so the whole wait — the thinking
+    included — went unmeasured on exactly the steps where it was longest. The
+    chain of thoughts is walked back to the run it followed, and the gap is the
+    wall clock across it: the thought is part of the wait, and it says its own
+    duration separately. Undefined when that walk reaches anything that is not a
+    settled call, so a message from the person between them still breaks it. */
+export function proseGapAfter(rows: Row[], index: number): number | undefined {
+  const row = rows[index]
+  if (!row || row.kind !== "agent" || row.parentId || row.at === undefined) return undefined
+  for (let i = index - 1; i >= 0; i--) {
+    const above = lastInnerRow(rows[i])
+    if (above.kind === "thought" && !above.parentId) continue
+    const end = toolsEndedAt(above)
+    return end === undefined ? undefined : row.at - end
+  }
+  return undefined
 }
 
 /** Whether this row opens with the hairline that closes off a workflow run —
@@ -258,13 +356,16 @@ export function buildRows(
   turnActive = false,
   groupShells = false,
   groupEdits = false,
-  answersOnly = false
+  answersOnly = false,
+  /** The burst window that makes a response's calls one parallel group of
+      their own inside a run (`groupToolRuns`); unset, batches are not grouped. */
+  parallelBurstMs?: number
 ): Row[] {
   const nested = mergeSubagentBatches(
-    mergeWorkflowRuns(nestSubagents(withoutAsyncTasks(items), groupTools, turnActive, groupEdits))
+    mergeWorkflowRuns(nestSubagents(withoutAsyncTasks(items), groupTools, turnActive, groupEdits, parallelBurstMs))
   )
   const placed = placeNativeWorkflows(nested, items)
-  const grouped = groupTools ? groupToolRuns(placed, groupEdits) : placed
+  const grouped = groupTools ? groupToolRuns(placed, groupEdits, parallelBurstMs) : placed
   const shelled = groupShells ? groupShellRuns(grouped) : grouped
   return answersOnly ? foldWork(shelled) : shelled
 }
@@ -501,6 +602,20 @@ function placeNativeWorkflows(rows: Row[], items: ThreadItem[]): Row[] {
 }
 
 /**
+ * The plan a run card draws from. Every spawn restates the outline as the
+ * script had registered it by then, and a script only ever adds — steps it
+ * discovers, phases it reaches — so the fullest plan is the newest one, and
+ * keeping the first would file every later step under the last phase as a
+ * stray. A tie goes to the later spawn, which is the same outline.
+ */
+function fuller(kept: WorkflowPlanPhase[] | undefined, next: WorkflowPlanPhase[] | undefined) {
+  if (!next) return kept
+  if (!kept) return next
+  const size = (plan: WorkflowPlanPhase[]) => plan.length + plan.reduce((n, phase) => n + phase.steps.length, 0)
+  return size(next) >= size(kept) ? next : kept
+}
+
+/**
  * Fold the steps of a workflow run into one `WorkflowGroup`. A step is a
  * top-level subagent group whose head session the server stamped with
  * `_meta.daedalus.workflow` (read by `lib/tools.workflowInfoOf` into
@@ -523,7 +638,7 @@ function mergeWorkflowRuns(rows: Row[]): Row[] {
     const run = runs.get(wf.runId)
     if (run) {
       run.steps.push(row)
-      run.plan ??= wf.plan
+      run.plan = fuller(run.plan, wf.plan)
     } else {
       const group: WorkflowGroup = {
         kind: "workflow-group",
@@ -625,9 +740,11 @@ const inFlight = (item: ThreadItem): boolean =>
  * Is this subagent still at work? Read off the transcript, because the
  * runtimes give the client no one signal for it:
  *
- * - Nothing runs outside a turn. Turn end is the one boundary every runtime
- *   shares (Claude Code holds the turn open until its background subagents
- *   settle), so an archived thread, or one whose turn ended, has no workers.
+ * - Nothing runs outside a turn — or outside the background work the server
+ *   says the thread still has (`ThreadState.background`: an `ask_agent` or a
+ *   workflow run outlives the turn that launched it). The caller passes the
+ *   two folded into `turnActive` (`workLive`), so an archived thread, or one
+ *   whose turn ended with nothing left going, has no workers.
  * - A worker whose *child* is at work is at work — a nested group that is
  *   active, or a step under it still in flight.
  * - An RFD session says so itself: `state: "running"` until the terminal
@@ -688,7 +805,8 @@ function nestSubagents(
   items: ThreadItem[],
   groupTools: boolean,
   turnActive: boolean,
-  groupEdits: boolean
+  groupEdits: boolean,
+  parallelBurstMs?: number
 ): Row[] {
   const heads = new Set<string>()
   for (const item of items) {
@@ -752,7 +870,7 @@ function nestSubagents(
         head,
         ...(launch ? { launch } : {}),
         active: subagentActive(head, kids, children, items, indexOf, turnActive),
-        children: groupTools ? groupToolRuns(children, groupEdits) : children,
+        children: groupTools ? groupToolRuns(children, groupEdits, parallelBurstMs) : children,
       })
     }
     return rows
@@ -928,24 +1046,26 @@ function groupCodexLifecycle(
 /** A setting the person changed mid-turn: the server's `config_notice`, kept as
     a `notice` row flagged `config` (store/items.ts) so a view option can hide
     it. Not a break in the conversation — a line about the run it landed in. */
+const isThought = (row: Row): row is ThoughtItem => row.kind === "thought"
 const isConfigNotice = (row: Row): row is NoticeItem => row.kind === "notice" && row.config === true
 
 /**
  * A stretch of consecutive calls becomes one parent group. Its children split at
  * changes of `runKeyOf` — the resolved view, and for an MCP call the server that
  * took it — with repeated same-key calls folded into expandable subgroups. Other content stays outside these groups — prose, a plan, a
- * subagent, a `!` command, a thought: a row that is not a call ends the run it
+ * subagent, a `!` command: a row that is not a call or a thought ends the run it
  * would have joined. A call on its own remains ungrouped, including while a turn
  * is active.
  *
- * **A thought ends the run and stands where it arrived.** The reasoning between
- * two calls is not what the fold counts, and it is the part a reader most needs
- * to see: swept in, `call -> think -> call` is one line reading "Reading 2
- * files" with the thinking hidden behind it, and opening the fold gives back ten
- * calls to find the three lines that explain them. So a thought is a break like
- * prose — `think -> read -> think -> edit` is four rows, two of them folds — and
- * a fold holds calls and the setting changes between them and nothing else. What
- * a group cannot be is a group of one call: that is still a step, not a fold.
+ * **A thought rides inside the run it explains.** The reasoning that leads a
+ * run or sits between two of its calls is part of the work: left outside,
+ * `think -> read -> read` was a thought hanging over a fold that did not own it.
+ * The counting line still counts calls only (a thought is not a step it
+ * summarises). One a call does not follow — trailing, before prose, a subagent
+ * or an edit that is not grouped — stands where it arrived, like a trailing
+ * setting change: it is the live tail, and folding it away would hide the
+ * thinking in progress. What a group cannot be is a group of one call: that is
+ * still a step, not a fold.
  *
  * A setting changed mid-turn goes *inside* the run when it is between two of
  * its calls, and nowhere else. Between them the agent changed nothing about the
@@ -956,26 +1076,24 @@ const isConfigNotice = (row: Row): row is NoticeItem => row.kind === "notice" &&
  * anchors on (`turn-footers.ts`), so folding it into the run would both hide it
  * behind a counting line and move the strip that belongs under it.
  */
-export function groupToolRuns(rows: Row[], groupEdits = false): Row[] {
+export function groupToolRuns(rows: Row[], groupEdits = false, parallelBurstMs?: number): Row[] {
   const out: Row[] = []
   let items: RunItem[] = []
   /* A setting change that arrived between two steps and has not been placed
      yet: it rides inside the run when it is between two of its calls, and is a
      break anywhere else (see `settle`). */
-  let held: NoticeItem[] = []
+  let held: (NoticeItem | ThoughtItem)[] = []
 
   const flush = () => {
     const tools = items.filter((item): item is ToolItem => item.kind === "tool")
-    const keys = new Set(tools.map(runKeyOf))
-    if (tools.length > 1 && keys.size === 1) {
-      out.push({ kind: "run", id: items[0].id, items })
-    } else if (tools.length > 1) {
-      out.push({
-        kind: "tool-group",
-        id: items[0].id,
-        items,
-        children: groupSameViewRuns(items),
-      })
+    if (tools.length > 1) {
+      /* One fold standing for the whole stretch — every call of one kind, or
+         one parallel batch — is the stretch's row; anything else is a group of
+         the parts. */
+      const children = foldStretch(items, parallelBurstMs)
+      const only = children.length === 1 ? children[0] : undefined
+      if (only && (only.kind === "run" || only.kind === "tool-group")) out.push(only)
+      else out.push({ kind: "tool-group", id: items[0].id, items, children })
     } else out.push(...items)
     items = []
   }
@@ -985,7 +1103,7 @@ export function groupToolRuns(rows: Row[], groupEdits = false): Row[] {
      arriving puts one inside (the tool branch below), which is what "between two
      calls" means — the call that settles it is the one that proves it was in the
      middle and not at the end. */
-  const settle = (): NoticeItem[] => {
+  const settle = (): (NoticeItem | ThoughtItem)[] => {
     const waiting = held
     held = []
     return waiting
@@ -1001,11 +1119,15 @@ export function groupToolRuns(rows: Row[], groupEdits = false): Row[] {
       }
       items.push(...held, row)
       held = []
-    } else if (isConfigNotice(row)) {
+    } else if (isThought(row) && items.length === 0 && held.length === 0) {
+      /* The reasoning that leads a run: it opens it. Alone (nothing follows) the
+         flush hands it back as a plain row. */
+      items.push(row)
+    } else if (isConfigNotice(row) || isThought(row)) {
       held.push(row)
     } else {
-      /* Prose, a plan, a subagent, a thought — everything that is not a call —
-         ends the run and is drawn where it arrived. */
+      /* Prose, a plan, a subagent — everything that is not a call or the
+         thinking around one — ends the run and is drawn where it arrived. */
       const outside = settle()
       flush()
       out.push(...outside, row)
@@ -1046,6 +1168,44 @@ function runKeyOf(item: ToolItem): string {
   const key = call ? `mcp:${mcpServerKey(call.server)}` : view
   RUN_KEY_CACHE.set(item, key)
   return key
+}
+
+/**
+ * A stretch's children. With a burst window, the calls one model response sent
+ * together (`layoutBatches` — the runtime's step id, else timing) become one
+ * group of their own, marked `parallel`: a run when they share a key, else a
+ * tool group with the same by-key folding inside it. The calls around a batch,
+ * and the whole stretch when there is no window, fold by key as before.
+ */
+function foldStretch(items: RunItem[], burstMs?: number): ToolGroup["children"] {
+  const batches =
+    burstMs === undefined
+      ? null
+      : layoutBatches(
+          items.map((item) => (item.kind === "tool" ? batchSpanOf(item) : {})),
+          { burstMs, gapMinMs: null }
+        )
+  const out: ToolGroup["children"] = []
+  let i = 0
+  while (i < items.length) {
+    let end = i
+    if (batches?.[i].edge === "start") {
+      while (batches[end].edge !== "end") end++
+      const members = items.slice(i, end + 1)
+      const folded = groupSameViewRuns(members)
+      const one = folded.length === 1 ? folded[0] : undefined
+      out.push(
+        one && one.kind === "run"
+          ? { ...one, parallel: true }
+          : { kind: "tool-group", id: members[0].id, items: members, children: folded, parallel: true }
+      )
+    } else {
+      while (end + 1 < items.length && batches?.[end + 1].edge !== "start") end++
+      out.push(...groupSameViewRuns(items.slice(i, end + 1)))
+    }
+    i = end + 1
+  }
+  return out
 }
 
 /** Split one consecutive sequence into same-key expandable subgroups. */

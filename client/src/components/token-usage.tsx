@@ -191,7 +191,10 @@ export function StepTokens({
             aria-label={`This step: ${exact ? "" : "about "}${usage.used} tokens`}
             className={cn(FIGURE, className)}
           >
-            <CoinsIcon aria-hidden className="size-3 shrink-0" />{approx}{formatTokens(usage.used)} tokens
+            {/* The coin already says "tokens"; a narrow panel keeps the figure
+                and drops the word, so the step's title keeps the line. */}
+            <CoinsIcon aria-hidden className="size-3 shrink-0" />{approx}{formatTokens(usage.used)}
+            <span className="hidden @panel-sm:inline">tokens</span>
           </button>
         }
       />
@@ -298,7 +301,8 @@ export function TokenSummary({
   const prompt = promptTokens(usage)
   const cached = usage.cachedReadTokens ?? 0
   const cacheRate = prompt > 0 ? Math.round((cached / prompt) * 100) : null
-  const speed = generation ? formatTps(generationRate(generation) ?? 0) : null
+  const generationSpeed = generation ? generationRate(generation) : null
+  const speed = generationSpeed === null ? null : formatTps(generationSpeed)
   const throughput = durationMs !== undefined ? formatRate(usage.outputTokens, durationMs) : null
   /* The figure on the chip: the speed when it was measured, else throughput —
      never both, and the popover says which one it is. */
@@ -347,6 +351,7 @@ export function TokenSummary({
               )}
             </>
           )}
+          {generation?.waits && <Stat label="Between requests" value={formatDuration(generation.waits.totalMs)} />}
           {speed && <Stat label="Output speed" value={speed} />}
           {throughput && <Stat label="Whole-turn throughput" value={throughput} />}
           {context && (

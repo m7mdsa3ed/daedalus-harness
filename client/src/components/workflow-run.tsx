@@ -3,11 +3,13 @@ import { useRowState } from "@/lib/row-open"
 import type * as acp from "@daedalus/acp"
 import {
   BotIcon,
+  BracesIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CircleDashedIcon,
   CircleSlashIcon,
+  BellRingIcon,
   GanttChartIcon,
   KanbanIcon,
   ListIcon,
@@ -16,7 +18,11 @@ import {
   LoaderCircleIcon,
   PauseIcon,
   PlayIcon,
+  RotateCwIcon,
+  ScrollTextIcon,
+  ShieldQuestionIcon,
   WorkflowIcon,
+  MoonIcon,
   XIcon,
 } from "lucide-react"
 /* The workflow/subagent *run* surfaces — a run in the transcript, and the
@@ -46,7 +52,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { TokenSummary } from "@/components/token-usage"
 import { KIND_CHIPS, KIND_COLORS } from "@/components/tool-parts"
-import { extractSubagent, toolHeading, toolOutputText } from "@/lib/tools"
+import { extractSubagent, readableStep, toolHeading, toolOutputText } from "@/lib/tools"
 import type { Row, SubagentBatch, SubagentGroup, WorkflowGroup } from "@/lib/transcript-rows"
 import { formatTokens, sumUsage } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
@@ -55,6 +61,20 @@ import { useStoreSelect, type ToolItem } from "@/lib/store"
 import { reportError } from "@/lib/errors"
 import { useServer } from "@/lib/server-context"
 import { api } from "@/lib/settings"
+import { isTerminalRun, useWorkflowRun, type WorkflowRunView } from "@/lib/queries/workflows"
+import { BudgetMeters } from "@/components/workflow/budget-meters"
+import { GatePanel } from "@/components/workflow/gate-panel"
+import { hasStateOrArtifacts, RunLogs, RunStatePanel } from "@/components/workflow/run-state-panel"
+import {
+  EXTRA_BADGE,
+  EXTRA_LABEL,
+  RUN_BADGE,
+  headlineState,
+  isExtraState,
+  restStepFor,
+  waitingGates,
+  type ExtraStepState,
+} from "@/components/workflow/step-status"
 
 const WorkflowGraph = React.lazy(() =>
   import("@/components/workflow-graph").then((module) => ({ default: module.WorkflowGraph }))
@@ -248,7 +268,7 @@ export function stepNameOf(group: SubagentGroup, fallback?: string): string {
     head.kind === "subagent"
       ? head.name || head.task
       : (extractSubagent(head)?.description ?? toolHeading(head).title)
-  return info?.step || own || (fallback ?? "")
+  return info?.title || (info?.step ? readableStep(info.step) : "") || own || (fallback ?? "")
 }
 
 /** The last moment anything happened under a run, for the duration of one that
@@ -276,7 +296,8 @@ export function lastActivityAt(rows: Row[]): number {
 export interface PhaseView {
   /** Null for a definition written as a flat step list — one unnamed phase. */
   name: string | null
-  steps: { name: string; group: SubagentGroup | null }[]
+  /** `name` is what is drawn; `slug` is what the journal knows the step by. */
+  steps: { name: string; slug?: string; group: SubagentGroup | null; extra?: ExtraStepState }[]
   /** A live harness workflow's pause/resume, on the first phase of its run —
       set by `agentOutline` only: a run card carries it in its own header. */
   hold?: RunHold
@@ -315,6 +336,12 @@ const PhaseHold = ({ phase }: { phase: PhaseView }) => (phase.hold ? <WorkflowHo
  * — the arrived steps are the outline, in definition order, as one unnamed
  * phase.
  */
+/** What a step spawned under a definition is drawn as, and the slug it is joined by. */
+const namedStep = (info: { title?: string; step: string } | undefined) => ({
+  name: info?.title ?? (info?.step ? readableStep(info.step) : ""),
+  slug: info?.step,
+})
+
 function phasesOf(group: Pick<WorkflowGroup, "steps" | "plan">): PhaseView[] {
   const infoOf = (step: SubagentGroup) => (step.head.kind === "subagent" ? step.head.workflow : undefined)
   const byName = new Map<string, SubagentGroup>()
@@ -328,17 +355,20 @@ function phasesOf(group: Pick<WorkflowGroup, "steps" | "plan">): PhaseView[] {
     const steps = [...group.steps].sort(
       (a, b) => (infoOf(a)?.index ?? Number.MAX_SAFE_INTEGER) - (infoOf(b)?.index ?? Number.MAX_SAFE_INTEGER)
     )
-    return [{ name: null, steps: steps.map((s) => ({ name: infoOf(s)?.step ?? "", group: s })) }]
+    return [{ name: null, steps: steps.map((s) => ({ ...namedStep(infoOf(s)), group: s })) }]
   }
   const named = new Set(group.plan.flatMap((phase) => phase.steps))
+  /* The plan names steps by slug, which is what joins them to their spawns; a
+     step that has not spawned yet reads by the newest title map the run sent. */
+  const titles = group.steps.reduce<Record<string, string>>((all, step) => ({ ...all, ...infoOf(step)?.titles }), {})
   const phases: PhaseView[] = group.plan.map((phase) => ({
     name: phase.name,
-    steps: phase.steps.map((name) => ({ name, group: byName.get(name) ?? null })),
+    steps: phase.steps.map((name) => ({ name: titles[name] ?? readableStep(name), slug: name, group: byName.get(name) ?? null })),
   }))
   // A step the outline does not name cannot be placed, and must not vanish.
   const strays = group.steps.filter((s) => !named.has(infoOf(s)?.step ?? ""))
   if (strays.length) {
-    phases[phases.length - 1].steps.push(...strays.map((s) => ({ name: infoOf(s)?.step ?? "", group: s })))
+    phases[phases.length - 1].steps.push(...strays.map((s) => ({ ...namedStep(infoOf(s)), group: s })))
   }
   return phases
 }
@@ -350,6 +380,10 @@ const STATE_ICON = {
   cancelled: [CircleSlashIcon, "text-muted-foreground"],
   disconnected: [CircleSlashIcon, "text-muted-foreground"],
   pending: [CircleDashedIcon, "text-muted-foreground"],
+  retrying: [RotateCwIcon, "text-warning motion-safe:animate-spin"],
+  awaiting_approval: [ShieldQuestionIcon, "text-warning"],
+  sleeping: [MoonIcon, "text-primary"],
+  waiting_signal: [BellRingIcon, "text-primary"],
 } as const
 
 /**
@@ -362,28 +396,33 @@ const STATE_ICON = {
 function StepCard({
   name,
   group,
+  extra,
   selected,
   onPick,
 }: {
   name: string
   group: SubagentGroup | null
+  /** What the run's journal says this step is on, beyond what its thread does. */
+  extra?: ExtraStepState
   selected: boolean
   onPick: (id: string) => void
 }) {
-  const state: StepState = group ? stepStateOf(group) : "pending"
+  const state: StepState = extra ?? (group ? stepStateOf(group) : "pending")
   const startedAt = group?.head.startedAt ?? 0
-  const live = useElapsed(startedAt, state === "running" && startedAt > 0)
+  const live = useElapsed(startedAt, (state === "running" || state === "retrying") && startedAt > 0)
   const end = group ? lastActivityAt(group.children) : 0
   const ms = state === "running" ? live : end > startedAt && startedAt > 0 ? end - startedAt : null
   const tokens = stepTokensLabel(group, useLayoutOptionsContext().showTokens)
   const meta = [tokens, ms !== null && ms >= 1000 ? formatElapsed(ms) : null].filter(Boolean).join(" · ")
-  const detail = group
-    ? state === "running"
-      ? currentActivity(group)
-      : state === "completed" || state === "failed"
-        ? stepResultOf(group)
-        : undefined
-    : "waiting"
+  const detail = isExtraState(state)
+    ? EXTRA_LABEL[state].toLowerCase()
+    : group
+      ? state === "running"
+        ? currentActivity(group)
+        : state === "completed" || state === "failed"
+          ? stepResultOf(group)
+          : undefined
+      : "waiting"
   const label = name || (group ? stepNameOf(group) : "")
   const [Icon, tone] = STATE_ICON[state]
   const body = (
@@ -421,7 +460,8 @@ function StepCard({
         "block w-full min-w-0 rounded-xl border bg-card p-2 text-start transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
         selected ? "border-primary" : "",
         state === "failed" && !selected && "border-destructive/30 bg-destructive/10",
-        state === "running" && !selected && "border-primary/30"
+        (state === "running" || state === "sleeping" || state === "waiting_signal") && !selected && "border-primary/30",
+        (state === "retrying" || state === "awaiting_approval") && !selected && "border-warning/40"
       )}
     >
       {body}
@@ -429,7 +469,7 @@ function StepCard({
   )
 }
 
-export type StepState = ReturnType<typeof stepStateOf> | "pending"
+export type StepState = ReturnType<typeof stepStateOf> | "pending" | ExtraStepState
 
 /* One colour per state, shared by the progress segments and the phase nodes so
    the strip and the board under it read as the same legend. */
@@ -440,12 +480,18 @@ export const SEGMENT: Record<StepState, string> = {
   cancelled: "bg-muted-foreground/40",
   disconnected: "bg-muted-foreground/40",
   pending: "bg-muted-foreground/15",
+  retrying: "bg-warning motion-safe:animate-pulse",
+  awaiting_approval: "bg-warning",
+  sleeping: "bg-primary/40",
+  waiting_signal: "bg-primary/40",
 }
 
 /** A phase's own state, from its steps': any failure claims it, then any work
     in flight, and only a phase whose every step finished is done. */
 function phaseState(states: StepState[]): StepState {
   if (states.some((s) => s === "failed")) return "failed"
+  if (states.some((s) => s === "awaiting_approval" || s === "retrying" || s === "waiting_signal" || s === "sleeping"))
+    return states.find((s) => s === "awaiting_approval" || s === "retrying") ?? states.find((s) => s === "waiting_signal" || s === "sleeping")!
   if (states.some((s) => s === "running")) return "running"
   if (states.length > 0 && states.every((s) => s === "completed")) return "completed"
   return states.some((s) => s !== "pending") ? "running" : "pending"
@@ -486,9 +532,9 @@ interface ViewProps {
   showTimestamps?: boolean
 }
 
-const stateOfStep = (step: { group: SubagentGroup | null }): StepState =>
-  step.group ? stepStateOf(step.group) : "pending"
-const phaseLabel = (phase: PhaseView, p: number) => phase.name || `Phase ${p + 1}`
+const stateOfStep = (step: { group: SubagentGroup | null; extra?: ExtraStepState }): StepState =>
+  step.extra ?? (step.group ? stepStateOf(step.group) : "pending")
+const phaseLabel = (phase: PhaseView, p: number) => (phase.name ? readableStep(phase.name) : `Phase ${p + 1}`)
 
 /** A step's span on the clock: its start, and its last activity (now, while it
     runs). Null for one that has not started. */
@@ -506,6 +552,7 @@ function BoardView({ phases, staged, picked, pick }: ViewProps) {
       key={key}
       name={step.name}
       group={step.group}
+      extra={step.extra}
       selected={step.group !== null && step.group.id === picked}
       onPick={pick}
     />
@@ -518,7 +565,7 @@ function BoardView({ phases, staged, picked, pick }: ViewProps) {
     )
   /* A wide definition scrolls sideways rather than squeezing every column to a word. */
   return (
-    <div className="-mx-2 flex snap-x gap-2 overflow-x-auto px-2 pb-1">
+    <div className="-mx-3 flex snap-x gap-2 overflow-x-auto px-3 pb-1 scrollbar-none">
       {phases.map((phase, p) => {
         const own = phase.steps.map(stateOfStep)
         return (
@@ -550,19 +597,33 @@ function ListView({ phases, staged, stepRow: StepView, showTimestamps }: ViewPro
   const rows = (phase: PhaseView, p: number) =>
     phase.steps.map((step, i) =>
       step.group ? (
-        <StepView key={step.group.id} group={step.group} showTimestamps={showTimestamps} />
+        <React.Fragment key={step.group.id}>
+          <StepView group={step.group} showTimestamps={showTimestamps} />
+          {step.extra && <ExtraPill state={step.extra} className="ms-5" />}
+        </React.Fragment>
       ) : (
         <div key={`${p}:${i}`} className="flex h-6 items-center gap-2 text-sm text-muted-foreground">
           <span className="flex h-6 w-5 shrink-0 items-center justify-center">
-            <CircleDashedIcon aria-hidden className="size-3" />
+            {step.extra ? (
+              (() => {
+                const [Icon, tone] = STATE_ICON[step.extra]
+                return <Icon aria-hidden className={cn("size-3", tone)} />
+              })()
+            ) : (
+              <CircleDashedIcon aria-hidden className="size-3" />
+            )}
           </span>
-          <span className="sr-only">pending: </span>
+          <span className="sr-only">{step.extra ? `${EXTRA_LABEL[step.extra]}: ` : "pending: "}</span>
           <span className="min-w-0 flex-1 truncate">{step.name}</span>
-          <span className="shrink-0 text-xs text-muted-foreground">waiting</span>
+          {step.extra ? (
+            <ExtraPill state={step.extra} />
+          ) : (
+            <span className="shrink-0 text-xs text-muted-foreground">waiting</span>
+          )}
         </div>
       )
     )
-  if (!staged) return <div className="min-w-0 space-y-0.5">{rows(phases[0], 0)}</div>
+  if (!staged) return <div className="min-w-0 space-y-1">{rows(phases[0], 0)}</div>
   return (
     <ol className="min-w-0">
       {phases.map((phase, p) => {
@@ -578,6 +639,8 @@ function ListView({ phases, staged, stepRow: StepView, showTimestamps }: ViewPro
                   state === "completed" && "bg-success/10 text-success",
                   state === "running" && "bg-primary/10 text-primary",
                   state === "failed" && "bg-destructive/10 text-destructive",
+                  (state === "retrying" || state === "awaiting_approval") && "bg-warning/10 text-warning",
+                  (state === "sleeping" || state === "waiting_signal") && "bg-primary/10 text-primary",
                   (state === "pending" || state === "cancelled" || state === "disconnected") &&
                     "bg-muted text-muted-foreground"
                 )}
@@ -596,7 +659,7 @@ function ListView({ phases, staged, stepRow: StepView, showTimestamps }: ViewPro
                 </span>
                 <PhaseHold phase={phase} />
               </div>
-              <div className="min-w-0 space-y-0.5">{rows(phase, p)}</div>
+              <div className="min-w-0 space-y-1">{rows(phase, p)}</div>
             </div>
           </li>
         )
@@ -618,7 +681,7 @@ function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
   const width = t1 - t0
   let k = 0
   return (
-    <div className="min-w-0 space-y-0.5">
+    <div className="min-w-0 space-y-1">
       {phases.map((phase, p) => (
         <React.Fragment key={phase.name ?? p}>
           {staged && (
@@ -707,8 +770,8 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
   ].filter(Boolean)
 
   return (
-    <div className="min-w-0">
-      <nav aria-label="Run" className="mb-2 flex h-6 min-w-0 items-center gap-1 text-sm">
+    <div className="flex min-w-0 flex-col gap-2">
+      <nav aria-label="Run" className="flex h-6 min-w-0 items-center gap-1 text-sm">
         {(level === 2 || (level === 1 && staged)) && (
           <Button
             type="button"
@@ -742,7 +805,13 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
                   onClick={() => setPhaseAt(i)}
                   className={cn(
                     "group/phase flex w-full min-w-0 flex-1 items-center gap-2 rounded-2xl border bg-card p-2 text-start transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
-                    state === "running" ? "border-primary/30" : state === "failed" ? "border-destructive/30" : ""
+                    state === "running" || state === "sleeping" || state === "waiting_signal"
+                      ? "border-primary/30"
+                      : state === "failed"
+                        ? "border-destructive/30"
+                        : state === "retrying" || state === "awaiting_approval"
+                          ? "border-warning/40"
+                          : ""
                   )}
                 >
                   <span
@@ -752,6 +821,8 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
                       state === "completed" && "bg-success/10 text-success",
                       state === "running" && "bg-primary/15 text-primary",
                       state === "failed" && "bg-destructive/10 text-destructive",
+                      (state === "retrying" || state === "awaiting_approval") && "bg-warning/10 text-warning",
+                      (state === "sleeping" || state === "waiting_signal") && "bg-primary/10 text-primary",
                       (state === "pending" || state === "cancelled" || state === "disconnected") &&
                         "bg-muted text-muted-foreground"
                     )}
@@ -799,6 +870,7 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
               key={st.group?.id ?? i}
               name={st.name}
               group={st.group}
+              extra={st.extra}
               selected={false}
               onPick={setStepId}
             />
@@ -815,6 +887,18 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
   )
 }
 
+/** One of the four states only the journal knows, as the same pill the run's
+    head wears — so a step and its run say "sleeping" the same way. */
+function ExtraPill({ state, className }: { state: ExtraStepState; className?: string }) {
+  const [Icon] = STATE_ICON[state]
+  return (
+    <Badge variant="secondary" className={cn(EXTRA_BADGE[state], className)}>
+      <Icon aria-hidden />
+      {EXTRA_LABEL[state]}
+    </Badge>
+  )
+}
+
 /** The run's head: its mark, name, state badge and the line under it. */
 function RunHead({
   open,
@@ -825,6 +909,7 @@ function RunHead({
   caption,
   active,
   paused,
+  tint,
 }: {
   open: boolean
   onToggle: () => void
@@ -834,6 +919,8 @@ function RunHead({
   caption?: string
   active: boolean
   paused: boolean
+  /** The journal's word for what the run is parked on, tinting the mark. */
+  tint?: ExtraStepState | null
 }) {
   const inner = (
     <>
@@ -841,8 +928,7 @@ function RunHead({
         aria-hidden
         className={cn(
           "flex size-7 shrink-0 items-center justify-center rounded-lg",
-          KIND_CHIPS.other,
-          KIND_COLORS.other
+          tint ? EXTRA_BADGE[tint] : cn(KIND_CHIPS.other, KIND_COLORS.other)
         )}
       >
         <Icon className="size-3.5 group-hover/run:hidden" />
@@ -854,6 +940,9 @@ function RunHead({
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-medium leading-7">{name}</span>
           <Badge variant="secondary" className={badge[1]}>
+            {active && !paused && (
+              <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-current motion-safe:animate-pulse" />
+            )}
             {badge[0]}
           </Badge>
         </span>
@@ -889,27 +978,44 @@ export function RunViewTabs<V extends string>({
   onChange,
   label,
   className,
+  iconOnly = false,
 }: {
   views: { id: V; label: string; icon: React.ComponentType<{ className?: string }> }[]
   value: V
   onChange: (view: V) => void
   label: string
   className?: string
+  /** Below `@panel-sm` only the picked tab keeps its words, so a row of five
+      layouts is five marks and one name rather than two rows of wrapped
+      buttons. The name stays on `title` and for a screen reader. */
+  iconOnly?: boolean
 }) {
+  /* One row, always: a strip that cannot fit scrolls sideways (the scrollbar is
+     hidden, as on every other touch strip) instead of wrapping into a second
+     row that pushes the content down every time the panel is resized. */
   return (
-    <div className={cn("flex flex-wrap gap-0.5", className)} role="group" aria-label={label}>
+    <div
+      className={cn("flex min-w-0 gap-1 overflow-x-auto scrollbar-none", className)}
+      role="group"
+      aria-label={label}
+    >
       {views.map((mode) => (
         <Button
           key={mode.id}
           type="button"
           variant="ghost"
           size="xs"
+          title={mode.label}
+          aria-label={mode.label}
           aria-pressed={value === mode.id}
           onClick={() => onChange(mode.id)}
-          className={value === mode.id ? "bg-muted text-foreground" : "text-muted-foreground"}
+          className={cn(
+            "shrink-0 pointer-coarse:h-8 pointer-coarse:px-3",
+            value === mode.id ? "bg-muted text-foreground" : "text-muted-foreground"
+          )}
         >
           <mode.icon aria-hidden />
-          {mode.label}
+          <span className={cn(iconOnly && value !== mode.id && "hidden @panel-sm:inline")}>{mode.label}</span>
         </Button>
       ))}
     </div>
@@ -951,10 +1057,10 @@ export function RunLayout({
   const viewProps: ViewProps = { phases, staged, picked, pick, active, stepRow: StepView, showTimestamps }
   const holds = phases.filter((phase) => phase.hold)
   return (
-    <>
+    <div className={cn("flex min-w-0 flex-col", fill ? "min-h-0 flex-1" : "gap-3")}>
       {/* The flowchart has no headings, so its runs' toggles stand above it. */}
       {view === "flowchart" && holds.length > 0 && (
-        <div className={cn("flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground", fill ? "px-3 py-1" : "pb-2")}>
+        <div className={cn("flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground", fill && "px-3 py-1")}>
           {holds.map((phase, i) => (
             <span key={i} className="inline-flex min-w-0 items-center gap-0.5">
               <span className="truncate">{phase.name}</span>
@@ -967,7 +1073,7 @@ export function RunLayout({
         <div
           className={cn(
             "flex flex-col",
-            fill ? "min-h-0 flex-1" : "-mx-2 h-[min(70vh,600px)] min-h-64 border-y"
+            fill ? "min-h-0 flex-1" : "-mx-3 h-[min(70vh,600px)] min-h-64 border-y"
           )}
         >
           <React.Suspense fallback={<div className="flex-1" />}>
@@ -1000,14 +1106,14 @@ export function RunLayout({
       {pickedStep && view !== "list" && view !== "browse" && (
         <div
           className={cn(
-            "mt-2 min-w-0 border-t pt-2",
-            fill && view === "flowchart" && "mt-0 max-h-[45%] shrink-0 overflow-y-auto px-3 pb-3"
+            "min-w-0 border-t pt-3",
+            fill && view === "flowchart" && "max-h-[45%] shrink-0 overflow-y-auto px-3 pb-3"
           )}
         >
           <StepView group={pickedStep} showTimestamps={showTimestamps} />
         </div>
       )}
-    </>
+    </div>
   )
 }
 
@@ -1060,6 +1166,32 @@ export function agentOutline(rows: Row[]): PhaseView[] {
   return phases
 }
 
+/** The journal's extra states laid over the transcript's outline. The steps
+    stay the transcript's — a group per spawned step — and only a step the run's
+    REST view has an opinion about (retrying, parked on a person, a clock or a
+    signal) gains `extra`. A settled run has none: whatever it was parked on is
+    over. */
+function withExtras(phases: PhaseView[], run: WorkflowRunView | undefined): PhaseView[] {
+  if (!run || isTerminalRun(run.status) || !run.steps.some((step) => isExtraState(step.status))) return phases
+  return phases.map((phase) => ({
+    ...phase,
+    steps: phase.steps.map((step) => {
+      const head = step.group?.head
+      const info = head?.kind === "subagent" ? head.workflow : undefined
+      const sessionId = head?.kind === "subagent" ? head.sessionId : null
+      const rest = restStepFor(run, sessionId, info?.step ?? step.slug ?? step.name)
+      return rest && isExtraState(rest.status) ? { ...step, extra: rest.status } : step
+    }),
+  }))
+}
+
+/** How often a card re-reads its run: briskly while open, lazily while folded
+    (the badge and the hold toggle still have to be right), never once settled. */
+const POLL_OPEN_MS = 2_000
+const POLL_FOLDED_MS = 10_000
+
+type RunTab = "steps" | "state" | "logs"
+
 /**
  * A set of subagents in the transcript — a harness workflow run, or the N
  * workers an agent fired side by side — as **an expandable run card**.
@@ -1086,17 +1218,22 @@ function RunRow({
   countNoun,
   showTimestamps,
   stepRow: StepView,
-  paused = false,
-  control,
+  paused: transcriptPaused = false,
+  hold: transcriptHold,
+  runRef,
 }: {
   name: string
   steps: SubagentGroup[]
   plan?: WorkflowGroup["plan"]
   /** The run is held (a harness workflow's `_daedalus/workflow_state`). */
   paused?: boolean
-  /** A control in the header — the hold toggle. Outside the disclosure button,
-      because a button may not hold a button. */
-  control?: React.ReactNode
+  /** The hold toggle's address, from the transcript. Drawn in the header,
+      outside the disclosure button, because a button may not hold a button. */
+  hold?: RunHold
+  /** Where the run's own view lives (`GET /api/sessions/:id/workflows/:runId`).
+      Absent for a batch of subagents and for a native Claude Code run, which
+      have no run of ours behind them. */
+  runRef?: { sessionId: string; runId: string }
   icon: React.ComponentType<{ className?: string }>
   /** What the `2/9` counts — "steps" of a definition, "done" of a batch, which
       has no shape beyond the workers in it. */
@@ -1105,22 +1242,77 @@ function RunRow({
   stepRow: StepRowComponent
 }) {
   const view = useLayoutOptionsContext()
-  const phases = phasesOf({ steps: runSteps, plan })
+  const basePhases = phasesOf({ steps: runSteps, plan })
+  const [runView, setRunView] = React.useState<RunView>("browse")
+  const [tab, setTab] = React.useState<RunTab>("steps")
+  const transcriptActive = runSteps.some((step) => step.active)
+  const declaredTotal = Math.max(
+    0,
+    ...runSteps.map((s) => (s.head.kind === "subagent" ? (s.head.workflow?.total ?? 0) : 0))
+  )
+
+  /* A run that is running when it mounts opens itself, and then stays where
+     the reader leaves it; the view option re-applies the default. */
+  /* Remembered across the row going dormant (`lib/row-open`), keyed by the
+     run's first step: a revived card that opened itself while it ran must not
+     come back closed because it is no longer running. */
+  const [open, setOpen] = useRowState(
+    runSteps[0] && `wf:${runSteps[0].id}`,
+    transcriptActive || view.showToolDetails,
+    view.showToolDetails
+  )
+  const firstSetting = React.useRef(view.showToolDetails)
+  React.useEffect(() => {
+    if (firstSetting.current === view.showToolDetails) return
+    firstSetting.current = view.showToolDetails
+    setOpen(view.showToolDetails)
+  }, [view.showToolDetails])
+
+  /* The run's own view: what the transcript cannot carry — gates, state,
+     artifacts, logs, budgets, and the steps' journal-only states. Read when
+     the card is open, or when the transcript cannot rule out that the run is
+     still going (a step running, held, or the outline not finished: a run
+     sleeping between steps looks finished from its rows alone). It *adds to*
+     the transcript's step list and never replaces it. */
+  const maybeLive = transcriptActive || transcriptPaused || runSteps.length < declaredTotal
+  /* A run the view once called live stays read until it says otherwise: one
+     parked on its last gate has every step it will ever have in the
+     transcript, so the rows alone cannot say it is still going. */
+  const [knownLive, setKnownLive] = React.useState(false)
+  const query = useWorkflowRun(runRef?.sessionId, runRef?.runId, {
+    enabled: runRef !== undefined && (open || maybeLive || knownLive),
+    poll: open ? POLL_OPEN_MS : POLL_FOLDED_MS,
+  })
+  const rest = query.data
+  const restLive = rest !== undefined && !isTerminalRun(rest.status)
+  React.useEffect(() => setKnownLive(restLive), [restLive])
+  /* The transcript flipping (a step settling, the hold toggling) is news the
+     poll would only hear up to a period later. */
+  const { refetch } = query
+  const transcriptKey = `${transcriptActive}:${transcriptPaused}:${runSteps.length}`
+  const seenKey = React.useRef(transcriptKey)
+  React.useEffect(() => {
+    if (seenKey.current === transcriptKey) return
+    seenKey.current = transcriptKey
+    if (runRef) void refetch()
+  }, [transcriptKey, runRef, refetch])
+
+  const phases = withExtras(basePhases, rest)
   const staged = phases.length > 1
   const all = phases.flatMap((p) => p.steps)
-  const stateOf = (step: { group: SubagentGroup | null }): StepState =>
-    step.group ? stepStateOf(step.group) : "pending"
-  const [runView, setRunView] = React.useState<RunView>("browse")
-  const active = runSteps.some((step) => step.active)
+  const stateOf = stateOfStep
+  const active = transcriptActive || restLive
+  const paused = transcriptPaused || rest?.status === "paused"
   const states = all.map(stateOf)
   const done = states.filter((s) => s === "completed").length
   const failedCount = states.filter((s) => s === "failed").length
+  const headline = restLive ? headlineState(rest.steps) : null
+  const hold: RunHold | undefined =
+    transcriptHold ??
+    (restLive && runRef ? { ...runRef, paused: rest.status === "paused" } : undefined)
   /* The outline's count, so "1/9 steps" is honest while the later steps have
      not been spawned yet; a run with no outline falls back to what arrived. */
-  const total = Math.max(
-    all.length,
-    ...runSteps.map((s) => (s.head.kind === "subagent" ? (s.head.workflow?.total ?? 0) : 0))
-  )
+  const total = Math.max(all.length, declaredTotal)
   const started = runSteps.map((step) => step.head.startedAt)
   const startedAt = started.length ? Math.min(...started) : 0
   /* Live while it runs; once settled, start-to-last-activity — an
@@ -1130,40 +1322,43 @@ function RunRow({
   const ms = active ? liveMs : settledEnd > startedAt ? settledEnd - startedAt : null
   /* The run's cost is its steps' — a workflow spends nothing of its own. */
   const tokens = view.showTokens ? sumUsage(runSteps.map(stepUsage)) : null
-  const runningStep = all.find((step) => step.group?.active)?.group ?? null
+  const runningStep = all.find((step) => step.group?.active && !step.extra)?.group ?? null
   const runningPhase = runningStep
     ? (phases.find((phase) => phase.steps.some((s) => s.group === runningStep))?.name ?? null)
     : null
   const where = runningStep ? [runningPhase, stepNameOf(runningStep)].filter(Boolean).join(" · ") : ""
+  /* What a parked run says it is parked on: the first gate's own words, else
+     the name of the step. */
+  const parked = headline
+    ? [
+        EXTRA_LABEL[headline],
+        waitingGates(rest!.gates)[0]?.text ?? rest!.steps.find((s) => s.status === headline)?.name,
+      ]
+        .filter(Boolean)
+        .join(" — ")
+    : ""
   /* Which step is being written and what it is on this second; settled, the
      line admits to a failure instead, so a folded run never hides one. */
   const caption = paused
     ? where
-    : runningStep
-      ? [where, currentActivity(runningStep)].filter(Boolean).join(" — ")
-      : failedCount > 1
-        ? `${failedCount} steps failed`
-        : failedCount === 1
-          ? `${stepNameOf(all.find((s) => stateOf(s) === "failed")!.group!)} failed`
-          : undefined
-  const badge = BADGE[paused ? "paused" : active ? "running" : failedCount > 0 ? "failed" : "completed"]
-
-  /* A run that is running when it mounts opens itself, and then stays where
-     the reader leaves it; the view option re-applies the default. */
-  /* Remembered across the row going dormant (`lib/row-open`), keyed by the
-     run's first step: a revived card that opened itself while it ran must not
-     come back closed because it is no longer running. */
-  const [open, setOpen] = useRowState(
-    runSteps[0] && `wf:${runSteps[0].id}`,
-    active || view.showToolDetails,
-    view.showToolDetails
-  )
-  const firstSetting = React.useRef(view.showToolDetails)
-  React.useEffect(() => {
-    if (firstSetting.current === view.showToolDetails) return
-    firstSetting.current = view.showToolDetails
-    setOpen(view.showToolDetails)
-  }, [view.showToolDetails])
+    : parked && !runningStep
+      ? parked
+      : runningStep
+        ? [where, currentActivity(runningStep)].filter(Boolean).join(" — ")
+        : failedCount > 1
+          ? `${failedCount} steps failed`
+          : failedCount === 1
+            ? `${stepNameOf(all.find((s) => stateOf(s) === "failed")!.group!)} failed`
+            : rest?.error && !restLive
+              ? rest.error
+              : undefined
+  const badge: readonly [string, string] = paused
+    ? BADGE.paused
+    : headline && !runningStep
+      ? [EXTRA_LABEL[headline], EXTRA_BADGE[headline]]
+      : (rest && RUN_BADGE[rest.status]) ||
+        BADGE[active ? "running" : failedCount > 0 || rest?.status === "failed" ? "failed" : "completed"]
+  const tint = paused ? null : headline
 
   /* The head's readings and the shape strip are declared once for the card. */
   const meta = (
@@ -1175,50 +1370,89 @@ function RunRow({
       ]}
     />
   )
-  const body = (
+  const layouts = (
     <>
       <RunViewTabs
         views={RUN_VIEWS}
         value={runView}
         onChange={setRunView}
         label="Run view"
-        className="pb-2"
+        iconOnly
       />
       <RunLayout phases={phases} view={runView} active={active} stepRow={StepView} showTimestamps={showTimestamps} />
     </>
   )
 
-  const steps =
+  const stepsBody =
     all.length === 0 ? (
       <div className={cn("text-sm text-muted-foreground", active && "harness-shimmer")}>
         {active ? "Starting…" : "No steps ran"}
       </div>
     ) : (
-      body
+      layouts
     )
 
+  /* The journal's half, when the server gave it: meters and gates stand above
+     the steps (a gate wants an answer, so it is never behind a tab), and the
+     state and the log are tabs of their own, drawn only when they hold
+     something. */
+  const hasState = rest ? hasStateOrArtifacts(rest) : false
+  const hasLogs = (rest?.logs.length ?? 0) > 0
+  const tabs = [
+    { id: "steps" as const, label: "Steps", icon: ListTreeIcon },
+    ...(hasState ? [{ id: "state" as const, label: "State & artifacts", icon: BracesIcon }] : []),
+    ...(hasLogs ? [{ id: "logs" as const, label: `Logs (${rest!.logs.length})`, icon: ScrollTextIcon }] : []),
+  ]
+  const shownTab = tabs.some((t) => t.id === tab) ? tab : "steps"
+  const steps = (
+    <>
+      {rest && runRef && rest.gates.length > 0 && <GatePanel gates={rest.gates} run={runRef} live={restLive} />}
+      {rest && <BudgetMeters run={rest} />}
+      {tabs.length > 1 && (
+        <RunViewTabs views={tabs} value={shownTab} onChange={setTab} label="Run section" />
+      )}
+      {shownTab === "steps" && stepsBody}
+      {shownTab === "state" && rest && <RunStatePanel run={rest} />}
+      {shownTab === "logs" && rest && <RunLogs logs={rest.logs} />}
+    </>
+  )
+
   return (
-    <Card size="sm" className="my-2 gap-0 py-0">
-      <div className="flex min-w-0 items-start gap-2 p-2 pb-0">
-        <RunHead
-          open={open}
-          onToggle={() => setOpen((v) => !v)}
-          icon={Icon}
-          name={name}
-          badge={badge}
-          caption={caption}
-          active={active}
-          paused={paused}
-        />
-        <span className="flex h-7 shrink-0 items-center gap-2">
-          {meta}
-          {control}
-        </span>
+    <Card
+      size="sm"
+      className={cn(
+        "my-2 gap-0 py-0",
+        (tint === "awaiting_approval" || tint === "retrying") && "ring-warning/40",
+        (tint === "sleeping" || tint === "waiting_signal") && "ring-primary/30"
+      )}
+    >
+      <div className="flex min-w-0 flex-col gap-2 p-3">
+        <div className="flex min-w-0 items-start gap-2">
+          <RunHead
+            open={open}
+            onToggle={() => setOpen((v) => !v)}
+            icon={Icon}
+            name={name}
+            badge={badge}
+            caption={caption}
+            active={active}
+            paused={paused}
+            tint={tint}
+          />
+          {hold && (
+            <span className="flex h-7 shrink-0 items-center">
+              <WorkflowHold {...hold} />
+            </span>
+          )}
+        </div>
+        {/* The readings under the title, aligned with it (the mark is 28px and
+            the gap 8px). Beside the title they took its whole line on a phone:
+            the name collapsed to nothing and the badge landed on the count. */}
+        <div className="flex min-h-5 min-w-0 items-center ps-9">{meta}</div>
+        <RunStrip phases={phases} />
       </div>
 
-      <RunStrip phases={phases} className="px-2 pt-2 pb-2" />
-
-      {open && <div className="min-w-0 border-t p-2">{steps}</div>}
+      {open && <div className="flex min-w-0 flex-col gap-3 border-t p-3">{steps}</div>}
     </Card>
   )
 }
@@ -1236,6 +1470,12 @@ export const WorkflowRun = React.memo(function WorkflowRun({
   const hold = holdOf(group)
   /* Paused is read off the steps even once the toggle is gone, for the badge. */
   const paused = group.steps.some((s) => s.head.kind === "subagent" && s.head.workflow?.paused)
+  /* A native (Claude Code) run has no thread of ours behind it: its steps
+     carry no `sessionId` stamp, so it has no run to read and draws as before. */
+  const info = group.steps.map((s) => (s.head.kind === "subagent" ? s.head.workflow : undefined)).find(Boolean)
+  const runRef = info?.sessionId
+    ? { sessionId: info.sessionId, runId: group.id.slice("workflow:".length) }
+    : undefined
   return (
     <RunRow
       name={group.name}
@@ -1246,7 +1486,8 @@ export const WorkflowRun = React.memo(function WorkflowRun({
       showTimestamps={showTimestamps}
       stepRow={stepRow}
       paused={paused}
-      control={hold ? <WorkflowHold {...hold} /> : undefined}
+      hold={hold}
+      runRef={runRef}
     />
   )
 })
@@ -1281,7 +1522,7 @@ function WorkflowHold({ sessionId, runId, paused }: { sessionId: string; runId: 
       title={paused ? "Resume the workflow" : "Pause the workflow after the steps in flight"}
       // No margin of its own: it is the row's own trailing slot now, so the
       // row's gap is the gap (see StepRow's `control`).
-      className={paused ? "text-primary hover:text-primary" : "text-muted-foreground"}
+      className={cn("pointer-coarse:size-8", paused ? "text-primary hover:text-primary" : "text-muted-foreground")}
     >
       {paused ? <PlayIcon /> : <PauseIcon />}
       <span className="sr-only">{paused ? "Resume" : "Pause"}</span>

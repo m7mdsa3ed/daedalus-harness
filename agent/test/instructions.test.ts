@@ -7,6 +7,7 @@ import { findInstructionFiles, readInstructions } from "../src/instructions.js";
 import { Session } from "../src/session.js";
 import { systemPrompt } from "../src/turn.js";
 import {
+  connectPair,
   initialize,
   makeClient,
   promptOf,
@@ -197,7 +198,7 @@ process.env.HOME = home;
     },
   });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     const init = await initialize(ctx);
     const air = (init.agentCapabilities?._meta as { jetbrains?: { air?: { capabilities?: string[] } } })
       ?.jetbrains?.air;

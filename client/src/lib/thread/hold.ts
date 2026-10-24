@@ -27,8 +27,16 @@ export interface Hold {
   /** What sending does while held. Held either way, the words are *steered*:
       they join the turn at the boundary it is waiting at, so they land the
       moment it goes on. Queued, they would sit behind a turn that never ends
-      on its own. */
+      on its own.
+
+      Short on purpose: this is the composer's placeholder, drawn at
+      `height: 0` (see `index.css`), so a hint long enough to wrap is cut
+      through its second line rather than wrapped. `sendHintDetail` carries the
+      rest for the places that can show it — the Send button's tooltip — so the
+      box stays one line without the explanation being lost. */
   sendHint: string
+  /** The same answer in full, for a tooltip: no layout is spent on it. */
+  sendHintDetail: string
 }
 
 const NONE: Hold = {
@@ -38,6 +46,7 @@ const NONE: Hold = {
   error: null,
   message: "",
   sendHint: "",
+  sendHintDetail: "",
 }
 
 export function holdOf(thread: Pick<ThreadState, "paused" | "pausedReason" | "pausedError">): Hold {
@@ -50,7 +59,8 @@ export function holdOf(thread: Pick<ThreadState, "paused" | "pausedReason" | "pa
       byUser: false,
       error: thread.pausedError ?? null,
       message: reason ? `Held — ${reason}` : "Held — the model provider returned an error",
-      sendHint: "Add to the held turn — it lands when you continue",
+      sendHint: "Add to the held turn",
+      sendHintDetail: "Add to the held turn — it lands when you continue",
     }
   }
   return {
@@ -59,6 +69,7 @@ export function holdOf(thread: Pick<ThreadState, "paused" | "pausedReason" | "pa
     byUser: true,
     error: null,
     message: "Paused",
-    sendHint: "Add to the paused turn — it lands when you resume",
+    sendHint: "Add to the paused turn",
+    sendHintDetail: "Add to the paused turn — it lands when you resume",
   }
 }

@@ -14,7 +14,10 @@
      — `@path` becomes a mention chip, on the composer's rule: a path-looking
        token (a `/`, `.` or `~` in it), trailing sentence punctuation left out;
      — `@KEY-12` becomes a task chip whose popover is what the agent was sent
-       about it (`splitTaskContext` folds the block out first, as pastes are). */
+       about it (`splitTaskContext` folds the block out first, as pastes are);
+     — `@kind:ref` (a known kind, `lib/mentions/grammar.ts`) becomes a kind chip
+       whose popover is what the agent was sent for it
+       (`splitMentionContext` folds the `<context>` block out first). */
 import * as React from "react"
 import { ClipboardListIcon, SquareCheckIcon, TextQuoteIcon } from "lucide-react"
 
@@ -28,6 +31,7 @@ import {
 } from "@/components/inline-chip"
 import { FilePreviewContext, projectPath } from "@/lib/file-preview"
 import { TASK_KEY } from "@/lib/task-mentions"
+import { useKindFace, parseKindToken, parseRangeToken } from "@/lib/mentions"
 
 type MdNode = {
   type: string
@@ -62,10 +66,15 @@ function splitText(value: string): MdNode[] {
     } else {
       const path = match[3].replace(TRAILING, "")
       const task = TASK_KEY.test(path)
-      if (!path || !(task || PATH_LIKE.test(path))) continue
+      const kind = parseKindToken(path) !== null
+      if (!path || !(task || kind || PATH_LIKE.test(path))) continue
       start = match.index + match[2].length
       end = start + 1 + path.length
-      node = task ? chip("task-mention", { task: path }) : chip("file-mention", { path })
+      node = task
+        ? chip("task-mention", { task: path })
+        : kind
+          ? chip("kind-mention", { token: path })
+          : chip("file-mention", { path })
     }
     if (start > last) out.push({ type: "text", value: value.slice(last, start) })
     out.push(node)
@@ -161,6 +170,20 @@ export function UserTasks({
   return <TasksContext.Provider value={tasks}>{children}</TasksContext.Provider>
 }
 
+/* ── typed mentions ── */
+
+const MentionsContext = React.createContext<ReadonlyMap<string, string>>(new Map())
+
+export function UserMentions({
+  mentions,
+  children,
+}: {
+  mentions: ReadonlyMap<string, string>
+  children: React.ReactNode
+}) {
+  return <MentionsContext.Provider value={mentions}>{children}</MentionsContext.Provider>
+}
+
 /* ── the chips, as markdown components ── */
 
 type Hast = { node?: unknown; children?: React.ReactNode }
@@ -195,10 +218,19 @@ function QuoteChip({ quote = "" }: Hast & { quote?: string }) {
 function MentionChip({ path = "" }: Hast & { path?: string }) {
   const face = useMentionFace(path)
   const ctx = React.useContext(FilePreviewContext)
-  const target = ctx ? projectPath(path, ctx.scope) : null
+  /* `@src/a.ts:40-80` names lines: the file is what opens, and the lines the
+     agent was sent (`file:` + the token, from the `<context>` block) are what
+     the chip previews. */
+  const range = parseRangeToken(path)
+  const lines = React.useContext(MentionsContext).get(`file:${path}`)
+  const target = ctx ? projectPath(range?.path ?? path, ctx.scope) : null
   return (
     <span className={chipClass()} title={target ? `Preview ${target}` : `@${path}`}>
-      <ChipBody {...face} onClick={ctx && target ? () => ctx.open(target) : undefined} />
+      <ChipBody
+        {...face}
+        preview={lines === undefined ? undefined : <ChipPreview caption="Sent to the agent" text={lines} />}
+        onClick={ctx && target && lines === undefined ? () => ctx.open(target) : undefined}
+      />
     </span>
   )
 }
@@ -220,7 +252,24 @@ function TaskChip({ task = "" }: Hast & { task?: string }) {
   )
 }
 
+/* What the agent was sent for `@kind:ref`, as it was at send. Without a body
+   (an older server, a ref nothing resolved) the chip is the face alone. */
+function KindChip({ token = "" }: Hast & { token?: string }) {
+  const body = React.useContext(MentionsContext).get(token)
+  const face = useKindFace(token)
+  if (!face) return <>{`@${token}`}</>
+  return (
+    <span className={chipClass()} title={`@${token}`}>
+      <ChipBody
+        {...face}
+        preview={body === undefined ? undefined : <ChipPreview caption="Sent to the agent" text={body} />}
+      />
+    </span>
+  )
+}
+
 export const USER_CHIP_COMPONENTS = {
+  "kind-mention": KindChip,
   "task-mention": TaskChip,
   "paste-chip": PasteChip,
   "quote-chip": QuoteChip,

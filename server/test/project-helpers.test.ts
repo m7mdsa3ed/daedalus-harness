@@ -190,6 +190,7 @@ try {
     suggestKinds: ["prompts", "commands"],
     uiGroups: [...UI_GROUP_IDS],
     voiceProvider: "",
+    askProfiles: {},
   });
   assert.equal("defaultProfileId" in fresh, false, "the wire folds the columns, not raw");
 

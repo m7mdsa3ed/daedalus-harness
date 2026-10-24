@@ -43,7 +43,7 @@ export type {
 } from "./store/items"
 
 export type { ThreadState, State } from "./store/thread"
-export { emptyThread, configView, stagedPicks, threadIsEmpty } from "./store/thread"
+export { emptyThread, configView, stagedPicks, threadIsEmpty, workLive } from "./store/thread"
 
 export { applySessionUpdate } from "./store/session-update"
 

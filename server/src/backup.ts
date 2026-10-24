@@ -1,4 +1,4 @@
-import { getTableColumns, inArray, sql, type SQL } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { commandFromPrompt } from "./legacy-prompts.js";
@@ -40,7 +40,9 @@ import {
   boardStatuses as boardStatusesTable,
   tasks as tasksTable,
   webSearchUsage as usageTable,
-  workflowRuns as workflowRunsTable,
+  wfEvents as wfEventsTable,
+  wfRuns as wfRunsTable,
+  wfSaved as wfSavedTable,
   rules as rulesTable,
   modelRoles as modelRolesTable,
   voiceProviders as voiceTable,
@@ -156,7 +158,7 @@ const ModelRow = z.object({
 const ProfileRow = z.object({
   id: str.min(1),
   name: str,
-  agents: z.record(str, z.object({ baseUrl: str.optional() })).default({}),
+  agents: z.record(str, z.object({ baseUrl: str.optional(), protocol: z.enum(["openai", "anthropic"]).optional() })).default({}),
   baseUrl: str.default(""),
   /** Absent = redacted on export; "" is also read as "nothing to say". */
   apiKey: str.optional(),
@@ -455,14 +457,19 @@ const SessionRow = z.object({
      before the column existed. */
   lastTurnError: optStr,
   /* Measured output-speed extrema. Older bundles have no recorded rates. */
-  tps: z.object({ min: z.number(), max: z.number(), outputTokens: z.number(), durationMs: z.number(), toolDurationMs: z.number().optional(), generatedTokens: z.number().optional(), decodeMs: z.number().optional() }).nullish(),
+  tps: z.object({ min: z.number(), max: z.number(), outputTokens: z.number(), durationMs: z.number(), toolDurationMs: z.number().optional(), generatedTokens: z.number().optional(), decodeMs: z.number().optional(), waits: z.object({ totalMs: z.number(), heldMs: z.number().optional(), compactMs: z.number().optional(), retryMs: z.number().optional() }).optional() }).nullish(),
   deletedAt: int.nullish(),
   /* Absent in a bundle written before pins moved to the server, which reads as
      unpinned — which is what every thread in it was. */
   pinnedAt: int.nullish(),
+  /* Absent in a bundle from before hiding existed, which reads as shown. */
+  hiddenAt: int.nullish(),
   /* Absent in a bundle from before the setting: ask each time, as every thread did. */
   askProfiles: z.record(z.string(), z.object({ profileId: z.string(), model: z.string().optional() })).nullish(),
   parentSessionId: optStr,
+  childKind: optStr,
+  childRunId: optStr,
+  childRunName: optStr,
   /* Absent in a bundle written before forks existed, which reads as a thread
      that was never branched — which is what every thread in it was. */
   forkedFromSessionId: optStr,
@@ -499,28 +506,49 @@ const ScheduledRow = z.object({
   createdAt: int,
 });
 
-const WorkflowRunRow = z.object({
+/* Workflow engine v2 (workflows/): a run's header, its append-only event
+   journal (the steps are a fold over it, so a run without its events is an
+   empty shell) and the saved-workflow library. `spec`, `result` and `payload`
+   are opaque here for the same reason a routine's `body` is — the engine owns
+   those shapes. A header whose events are not in the bundle still restores:
+   the fold of nothing is a run with no steps. */
+const WfRunRow = z.object({
   id: str.min(1),
   parentSessionId: str.min(1),
+  projectId: optStr,
   name: str,
-  definition: z.record(z.string(), z.unknown()),
-  inputs: z.record(z.string(), z.unknown()),
-  status: z.enum(["running", "paused", "completed", "failed", "cancelled"]),
+  spec: z.record(z.string(), z.unknown()),
+  status: z.enum(["running", "paused", "completed", "failed", "cancelled", "budget_exceeded"]),
   error: optStr,
-  steps: z.array(
-    z.object({
-      name: str,
-      status: z.enum(["pending", "running", "completed", "failed", "cancelled", "skipped"]),
-      sessionId: str.nullable(),
-      attempt: int,
-      output: z.unknown(),
-      error: str.nullable(),
-      startedAt: int.nullable(),
-      endedAt: int.nullable(),
-    }),
-  ),
+  result: json,
+  notify: z.boolean().default(false),
   createdAt: int,
   endedAt: int.nullish(),
+});
+
+const WfEventRow = z.object({
+  runId: str.min(1),
+  seq: int,
+  at: int,
+  key: optStr,
+  kind: str,
+  payload: z.record(z.string(), z.unknown()),
+});
+
+/* The library. A root (project_id is not a foreign key), upserted by id; the
+   `(name, scope, project_id)` unique index is cleared by the import first. */
+const WfSavedRow = z.object({
+  id: str.min(1),
+  name: str,
+  scope: z.enum(["project", "personal"]),
+  projectId: optStr,
+  description: str.default(""),
+  whenToUse: optStr,
+  source: str,
+  version: str,
+  inputs: z.record(z.string(), z.unknown()).nullish(),
+  createdAt: int,
+  updatedAt: int,
 });
 
 /* Routines and their two children (routines.ts). A routine is a root: nothing
@@ -540,7 +568,7 @@ const RoutineRow = z.object({
   effort: str.default(""),
   configChoices: z.record(str, z.union([str, z.boolean()])).default({}),
   /* Opaque but required. Their INTERNALS are deliberately not validated here:
-     `body` holds a whole workflow definition (workflow-schema.ts owns that
+     `body` holds a whole workflow definition (workflows/graph.ts owns that
      shape) and `autonomy` a policy (autonomy.ts owns that one), and restating
      either would be a second copy to keep in step. `z.custom` rather than
      `z.unknown()` because both columns are NOT NULL and an `unknown` key is
@@ -850,7 +878,9 @@ export const BundleSchema = z.object({
   sessions: z.array(SessionRow).default([]),
   queue: z.array(QueueRow).default([]),
   scheduled: z.array(ScheduledRow).default([]),
-  workflowRuns: z.array(WorkflowRunRow).default([]),
+  wfRuns: z.array(WfRunRow).default([]),
+  wfEvents: z.array(WfEventRow).default([]),
+  wfSaved: z.array(WfSavedRow).default([]),
   routines: z.array(RoutineRow).default([]),
   routineTriggers: z.array(RoutineTriggerRow).default([]),
   routineRuns: z.array(RoutineRunRow).default([]),
@@ -949,7 +979,9 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
     /* Scheduled messages travel as routines now; the key stays so an old
        reader still parses a new bundle, and is still READ on import. */
     scheduled: [] as z.infer<typeof ScheduledRow>[],
-    workflowRuns: await db.select().from(workflowRunsTable),
+    wfRuns: await db.select().from(wfRunsTable),
+    wfEvents: await db.select().from(wfEventsTable).orderBy(wfEventsTable.runId, wfEventsTable.seq),
+    wfSaved: await db.select().from(wfSavedTable),
     routines: withLinks(routines, await readLinks(ROUTINE_LINKS, routines.map((r) => r.id))),
     /* A trigger's token hash is a credential like a profile's key: the key is
        ABSENT under `secrets=0`, not blanked to "", because absent is what the
@@ -999,7 +1031,7 @@ export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
   | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "modelPrompts" | "spaces" | "projects" | "projectHelpers" | "knowledge" | "settings"
-  | "rules" | "modelRoles" | "themes" | "voiceProviders" | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "boardLists" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
+  | "rules" | "modelRoles" | "themes" | "voiceProviders" | "sessions" | "queue" | "scheduled" | "wfRuns" | "wfEvents" | "wfSaved" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "boardLists" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
   number
@@ -1116,7 +1148,7 @@ function foldLegacyScheduled(bundle: Bundle, summary: ImportSummary): void {
 export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<ImportSummary> {
   const summary: ImportSummary = {
     agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, modelPrompts: 0, spaces: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
-    rules: 0, modelRoles: 0, themes: 0, voiceProviders: 0, sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, boardLists: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
+    rules: 0, modelRoles: 0, themes: 0, voiceProviders: 0, sessions: 0, queue: 0, scheduled: 0, wfRuns: 0, wfEvents: 0, wfSaved: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, boardLists: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
     orphaned: 0, missingSecrets: false,
@@ -1144,6 +1176,8 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
         modelPromptsTable,
         // A root of its own: its triggers, runs and links all cascade from it.
         routinesTable,
+        // The saved-workflow library is a root; runs and their events cascade off sessions.
+        wfSavedTable,
         agentsTable, taskLinksTable, taskActivityTable, taskCommentsTable, tasksTable, boardViewsTable, boardListsTable, sprintsTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
         notificationsTable,
         composerHistoryTable,
@@ -1365,8 +1399,12 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
           acpSessionId: columns.acpSessionId ?? null,
           deletedAt: columns.deletedAt ?? null,
           pinnedAt: columns.pinnedAt ?? null,
+          hiddenAt: columns.hiddenAt ?? null,
           askProfiles: columns.askProfiles ?? null,
           parentSessionId: columns.parentSessionId ?? null,
+          childKind: columns.childKind ?? null,
+          childRunId: columns.childRunId ?? null,
+          childRunName: columns.childRunName ?? null,
           forkedFromSessionId: columns.forkedFromSessionId ?? null,
           forkedFromTurnId: columns.forkedFromTurnId ?? null,
           asideQuote: columns.asideQuote ?? null,
@@ -1394,21 +1432,56 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
       for (let i = 0; i < owned.length; i += CHUNK) {
         const ids = owned.slice(i, i + CHUNK);
         await tx.delete(queueTable).where(inArray(queueTable.sessionId, ids));
-        await tx.delete(workflowRunsTable).where(inArray(workflowRunsTable.parentSessionId, ids));
+        // Cascades to the run's events.
+        await tx.delete(wfRunsTable).where(inArray(wfRunsTable.parentSessionId, ids));
         if (!bundle.redacted.journals) await tx.delete(eventsTable).where(inArray(eventsTable.sessionId, ids));
       }
     }
     const queue = keep(bundle.queue);
     insertChunked(tx, queueTable, queue);
     summary.queue = queue.length;
-    const runs = bundle.workflowRuns.filter((r) => sessionIds.has(r.parentSessionId));
-    summary.orphaned += bundle.workflowRuns.length - runs.length;
+    const runs = bundle.wfRuns.filter((r) => sessionIds.has(r.parentSessionId));
+    summary.orphaned += bundle.wfRuns.length - runs.length;
     insertChunked(
       tx,
-      workflowRunsTable,
-      runs.map((r) => ({ ...r, error: r.error ?? null, endedAt: r.endedAt ?? null })),
+      wfRunsTable,
+      runs.map((r) => ({ ...r, projectId: r.projectId ?? null, error: r.error ?? null, result: r.result ?? null, endedAt: r.endedAt ?? null })),
     );
-    summary.workflowRuns = runs.length;
+    summary.wfRuns = runs.length;
+    /* Events after the headers they cascade off, in chunks like the thread
+       journal below; one whose run did not make it in is orphaned. */
+    const runIds = new Set(runs.map((r) => r.id));
+    const wfEvents = bundle.wfEvents.filter((e) => runIds.has(e.runId));
+    summary.orphaned += bundle.wfEvents.length - wfEvents.length;
+    insertChunked(
+      tx,
+      wfEventsTable,
+      wfEvents.map((e) => ({ ...e, key: e.key ?? null })),
+    );
+    summary.wfEvents = wfEvents.length;
+    /* The library: a root, upserted by id. Another row already holding the
+       same (name, scope, project) under a different id would trip the unique
+       index, so it is cleared first — the bundle's copy wins, as every other
+       merged row does. */
+    for (const w of bundle.wfSaved) {
+      await tx
+        .delete(wfSavedTable)
+        .where(
+          and(
+            eq(wfSavedTable.name, w.name),
+            eq(wfSavedTable.scope, w.scope),
+            w.projectId ? eq(wfSavedTable.projectId, w.projectId) : isNull(wfSavedTable.projectId),
+            ne(wfSavedTable.id, w.id),
+          ),
+        );
+    }
+    upsertChunked(
+      tx,
+      wfSavedTable,
+      "id",
+      bundle.wfSaved.map((w) => ({ ...w, projectId: w.projectId ?? null, whenToUse: w.whenToUse ?? null, inputs: w.inputs ?? null })),
+    );
+    summary.wfSaved = bundle.wfSaved.length;
     const events = keep(bundle.events);
     insertChunked(tx, eventsTable, events);
     summary.events = events.length;

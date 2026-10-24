@@ -20,8 +20,9 @@ import { modelPromptsFilePath } from "./model-prompts.js";
 // Type-only: personas.ts imports `usesPersonaFile` from here at runtime, and
 // the dependency has to stay one-directional.
 import type { PersonaSpawn } from "./personas.js";
-import { profileAgentIds, profileBaseUrl, profileSupports, type Profile } from "./profiles.js";
+import { profileAgentIds, profileBaseUrl, profileProtocol, profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
+import type { CallDoor } from "./protocol.js";
 
 /**
  * An ACP agent definition. `args`/`env` values may contain {placeholders}
@@ -188,6 +189,16 @@ export interface AgentDef {
    * (`"env"`, through its config template), once their trust review is solved.
    */
   pauseVia?: "acp-meta" | null;
+  /**
+   * The doors this runtime's model calls can come through, in order
+   * (`model-calls/index.ts`). At spawn the first whose `attach` answers is the
+   * thread's for its life; with none, the thread's `usage_update`s are its
+   * records (`"usage"`, the implicit last door, never listed here). Data for
+   * the reason `quotaProbe` is: the `otlp` door's env switches, the `proxy`
+   * door's dialect and the `files` door's format are facts about the binary
+   * behind `command`, and a user who repoints it repoints these with it.
+   */
+  callsVia?: CallDoor[] | null;
   /**
    * How this runtime's *own* subagents take a role's model (docs/model-roles.md,
    * `rewindVia`'s sibling): a subagent spawned on a role rather than on the
@@ -706,6 +717,32 @@ export function withoutClaudeOtlp(env: Record<string, string>): Record<string, s
   return Object.fromEntries(Object.entries(env).filter(([key, value]) => SEEDED_CLAUDE_OTLP_ENV[key] !== value));
 }
 
+/* ── Seed 36: which doors a runtime's model calls come through ──
+ *
+ * `AgentDef.callsVia`, ordered. The same OTEL_* switches seed 35 took out of
+ * Claude Code's env come back here, on the door that owns them: the `otlp`
+ * source fills `{otlpUrl}`/`{otlpBodies}` when it attaches (a booted receiver)
+ * and every value resolves empty — the key prunes — when it does not, so a
+ * thread with no receiver never turns the exporter on. Nothing in `env`
+ * changes, so the probe cache stands.
+ */
+const CALLS_VIA: Record<string, CallDoor[]> = {
+  daedalus: [{ kind: "acp" }],
+  "claude-code": [
+    { kind: "otlp", dialect: "claude-otlp", env: SEEDED_CLAUDE_OTLP_ENV },
+    { kind: "proxy", dialect: "anthropic-messages" },
+    { kind: "files", format: "claude-jsonl" },
+  ],
+  codex: [
+    { kind: "proxy", dialect: "openai-responses" },
+    { kind: "files", format: "codex-rollout" },
+  ],
+  opencode: [
+    { kind: "proxy", dialect: "openai-chat" },
+    { kind: "files", format: "opencode-sqlite" },
+  ],
+};
+
 /**
  * The env names Claude Code resolves its `sonnet`/`opus`/`fable` aliases
  * through. Unlike the haiku pair these are not side-jobs — they are the models
@@ -876,11 +913,14 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // Seeds 32 and 34 (a saved prompt file, OpenTelemetry to the harness) are
     // taken back by seed 35: the Tokens and Trajectory panels are gone, so the
     // OTEL_* keys seed 34 added go (`withoutClaudeOtlp`).
-    since: 35,
+    // Seed 36 names the doors its model calls come through (`callsVia`); the
+    // OTEL_* switches live on the `otlp` door now, not in the env.
+    since: 36,
     backfill: (existing) => ({
       env: withoutClaudeOtlp(withoutSubagentModelKey(
         withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
       )),
+      callsVia: existing.callsVia ?? CALLS_VIA["claude-code"],
       quotaProbe: withProbeLogin(existing.quotaProbe, QUOTA_PROBES["claude-code"]),
       liveConfig: existing.liveConfig ?? "acp",
       personaVia: !existing.personaVia || existing.personaVia === "acp-meta" ? "air-meta" : existing.personaVia,
@@ -911,6 +951,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     sharedProcess: "acp-meta",
     rewindVia: "acp-fork-point",
     pauseVia: "acp-meta",
+    callsVia: CALLS_VIA["claude-code"],
   },
   {
     // Official ACP adapter for OpenAI Codex. Auth: CODEX_API_KEY, or ChatGPT
@@ -948,11 +989,12 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // line and its mark. Deliberately no `workspaceLayout`: codex resolves
     // skills and prompts only under `$CODEX_HOME`, never per project, so there
     // is nowhere in a cwd to write them and pretending otherwise is what the
-    // old `.claude` write did.
-    since: 32,
+    // old `.claude` write did. Seed 36 names its call doors (`callsVia`).
+    since: 36,
     introduced: 2,
     backfill: (existing) => ({
       env: withCodexPersonaKey(withCodexGatewayUrl(withCodexCatalogKey(existing.env))),
+      callsVia: existing.callsVia ?? CALLS_VIA.codex,
       quotaProbe: existing.quotaProbe ?? QUOTA_PROBES.codex,
       liveConfig: existing.liveConfig ?? "gateway",
       personaVia: existing.personaVia ?? "env",
@@ -969,6 +1011,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     liveConfig: "gateway",
     personaVia: "env",
     rewindVia: "acp-fork-point",
+    callsVia: CALLS_VIA.codex,
     env: {
       CODEX_API_KEY: "{apiKey}",
       MODEL_PROVIDER: "{baseUrl?daedalus}",
@@ -1015,11 +1058,12 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // (`opencode/session/child_update`, subagent-update.ts). And it replaces
     // the provider block (`withOpencodeProvider`), which 2.x broke both ways.
     // Seed 31 sent it through the gateway shim and seed 33 takes that back
-    // (`withoutOpencodeGateway`).
-    since: 33,
+    // (`withoutOpencodeGateway`). Seed 36 names its call doors (`callsVia`).
+    since: 36,
     introduced: 1,
     backfill: (existing) => ({
       env: withoutOpencodeGateway(withOpencodeProvider(withOpencodeBypass(withOpencodePersonaKey(withOpencodeModelPrefix(existing.env))))),
+      callsVia: existing.callsVia ?? CALLS_VIA.opencode,
       personaVia: existing.personaVia ?? "env",
       ...backfill20(existing),
     }),
@@ -1030,6 +1074,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     ...seed20("opencode"),
     spawnCategories: SPAWN_CATEGORIES,
     personaVia: "env",
+    callsVia: CALLS_VIA.opencode,
     env: {
       OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG,
     },
@@ -1077,10 +1122,14 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // construction) to AIR's `customInstructions`, which the runtime reads on
     // every session/new, load and resume. Only the old default moves; a door
     // the user picked stays. The env key is left to resolve empty.
-    since: 29,
+    // Seed 36 names its call door: the runtime sends the record itself (`acp`).
+    // Seed 37 adds `{protocol}` (`DAEDALUS_AGENT_PROTOCOL`): the wire protocol the
+    // profile's per-agent link picks, OpenAI chat or Anthropic messages.
+    since: 37,
     introduced: 14,
     backfill: (existing) => ({
       ...backfill20(existing),
+      callsVia: existing.callsVia ?? CALLS_VIA.daedalus,
       personaVia: !existing.personaVia || existing.personaVia === "env" ? "air-meta" : existing.personaVia,
       env: {
         DAEDALUS_AGENT_PROJECT_INSTRUCTIONS: "1",
@@ -1091,6 +1140,8 @@ const DEFAULT_AGENTS: SeedAgent[] = [
         DAEDALUS_AGENT_MODEL_WINDOWS: "{modelWindows}",
         // Seed 26: the role → model map, same bargain.
         DAEDALUS_AGENT_MODEL_ROLES: "{modelRoles}",
+        // Seed 37: the wire protocol, same bargain.
+        DAEDALUS_AGENT_PROTOCOL: "{protocol}",
         ...existing.env,
       },
       subagentModelsVia: existing.subagentModelsVia ?? "acp-env",
@@ -1106,9 +1157,11 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     personaVia: "air-meta",
     subagentModelsVia: "acp-env",
     rewindVia: "acp-fork-point",
+    callsVia: CALLS_VIA.daedalus,
     env: {
       DAEDALUS_AGENT_API_KEY: "{apiKey}",
       DAEDALUS_AGENT_BASE_URL: "{gatewayUrl}",
+      DAEDALUS_AGENT_PROTOCOL: "{protocol}",
       DAEDALUS_AGENT_MODEL: "{model}",
       DAEDALUS_AGENT_SMALL_MODEL: "{smallModel}",
       DAEDALUS_AGENT_EFFORT: "{effort}",
@@ -1162,6 +1215,7 @@ export async function seedAgents(): Promise<void> {
           rewindVia: agent.rewindVia ?? null,
           workflowsVia: agent.workflowsVia ?? null,
           pauseVia: agent.pauseVia ?? null,
+          callsVia: agent.callsVia ?? null,
           workspaceLayout: agent.workspaceLayout ?? null,
           builtinTools: agent.builtinTools ?? null,
           catalogProbe: agent.catalogProbe ?? null,
@@ -1191,6 +1245,7 @@ export async function seedAgents(): Promise<void> {
         rewindVia: existing.rewindVia ?? agent.rewindVia ?? null,
         workflowsVia: existing.workflowsVia ?? agent.workflowsVia ?? null,
         pauseVia: existing.pauseVia ?? agent.pauseVia ?? null,
+        callsVia: existing.callsVia ?? agent.callsVia ?? null,
         workspaceLayout: existing.workspaceLayout ?? agent.workspaceLayout ?? null,
         builtinTools: existing.builtinTools ?? agent.builtinTools ?? null,
         catalogProbe: existing.catalogProbe ?? agent.catalogProbe ?? null,
@@ -1302,6 +1357,7 @@ export async function resetAgent(id: string): Promise<AgentDef | undefined> {
       rewindVia: seed.rewindVia ?? null,
       workflowsVia: seed.workflowsVia ?? null,
       pauseVia: seed.pauseVia ?? null,
+      callsVia: seed.callsVia ?? null,
       workspaceLayout: seed.workspaceLayout ?? null,
       builtinTools: seed.builtinTools ?? null,
       catalogProbe: seed.catalogProbe ?? null,
@@ -1610,6 +1666,7 @@ export function resolveSpawn(
     gatewayUrl:
       gatewayUrlFor(profile.id, agent.id, profileBaseUrl(profile, agent.id), sessionId) ||
       profileBaseUrl(profile, agent.id),
+    protocol: profileProtocol(profile, agent.id),
     model: resolvedModel,
     /* Always the session model: a profile means "run everything on this
        model", and the cheap side-jobs (the auto-mode classifier) and the alias

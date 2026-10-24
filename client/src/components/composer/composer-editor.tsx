@@ -284,13 +284,29 @@ const Link = Node.create({
    than from the document — the same reason the placeholder is a decoration and
    needs a transaction to redraw. `side: 1` puts it after the character at the
    caret, which is where a completion belongs. */
-const ghostPlacement = (doc: Parameters<typeof offsetToPos>[0], ghost: ComposerGhost): DecorationSet => {
+const ghostPlacement = (
+  doc: Parameters<typeof offsetToPos>[0],
+  ghost: ComposerGhost,
+  onAccept: (() => void) | null
+): DecorationSet => {
   const span = document.createElement("span")
-  span.className =
-    "pointer-events-none select-none whitespace-pre-wrap text-muted-foreground/60"
+  span.className = cn(
+    "select-none whitespace-pre-wrap text-muted-foreground/60",
+    onAccept ? "cursor-pointer" : "pointer-events-none"
+  )
   span.setAttribute("aria-hidden", "true")
   span.setAttribute("contenteditable", "false")
   span.textContent = ghost.text
+  if (onAccept) {
+    /* A tap takes the suggestion, where there is no Tab to do it. The press is
+       held back from the editor so the soft keyboard stays up and the caret
+       stays where the gap goes. */
+    span.addEventListener("pointerdown", (event) => event.preventDefault())
+    span.addEventListener("click", (event) => {
+      event.preventDefault()
+      onAccept()
+    })
+  }
   return DecorationSet.create(doc, [Decoration.widget(offsetToPos(doc, ghost.at), span, { side: 1 })])
 }
 
@@ -329,6 +345,7 @@ export function ComposerEditor({
   pastes,
   placeholder,
   ghost,
+  onAcceptGhost,
   pending,
   disabled,
   ariaLabel,
@@ -350,6 +367,9 @@ export function ComposerEditor({
   /** A completion to draw at the caret, or null. Drawn from editor state, never
       written into `text`. */
   ghost?: ComposerGhost | null
+  /** Makes the drawn ghost tappable (a touch screen has no Tab). Omit to leave it
+      inert, as on a keyboard. */
+  onAcceptGhost?: () => void
   /** Where the completion lane is still working, as an offset: the spinner sits
       at that caret. Null when nothing is on the wire. */
   pending?: number | null
@@ -362,8 +382,8 @@ export function ComposerEditor({
      not it came from outside (a pick, a recall, a quote) and is loaded; one
      that is, is the editor's own echo and is left alone. */
   const agreed = React.useRef(value)
-  const latest = React.useRef({ onChange, onSelect, onPaste, placeholder })
-  latest.current = { onChange, onSelect, onPaste, placeholder }
+  const latest = React.useRef({ onChange, onSelect, onPaste, placeholder, onAcceptGhost })
+  latest.current = { onChange, onSelect, onPaste, placeholder, onAcceptGhost }
   const editorContentRef = React.useRef<HTMLDivElement>(null)
   /* What the decorations read. A ref, not state: the plugin asks on every
      redraw, and the effect below is what redraws it. */
@@ -381,7 +401,11 @@ export function ComposerEditor({
               props: {
                 decorations: (state) => {
                   const current = markRef.current
-                  if (current.ghost?.text) return ghostPlacement(state.doc, current.ghost)
+                  if (current.ghost?.text) return ghostPlacement(
+                      state.doc,
+                      current.ghost,
+                      latest.current.onAcceptGhost ? () => latest.current.onAcceptGhost?.() : null
+                    )
                   if (current.pending !== null) return pendingPlacement(state.doc, current.pending)
                   return null
                 },

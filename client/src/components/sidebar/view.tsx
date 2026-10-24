@@ -10,23 +10,27 @@ import { useNavigate } from "react-router"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
   setLayoutOption,
   type SidebarFilter,
   type SidebarSort,
+  type SidebarSubs,
   type SidebarWithin,
 } from "@/lib/layout-options"
 import { settingsPath } from "@/lib/router"
 import { cn } from "@/lib/utils"
-import { MENU_WIDTH } from "@/components/menu-row"
+import { MENU_ROW, MENU_WIDTH } from "@/components/menu-row"
 
 export const SORT_LABELS: Record<SidebarSort, string> = {
   recent: "Recent activity",
@@ -39,12 +43,50 @@ export const FILTER_LABELS: Record<SidebarFilter, string> = {
   running: "Running",
   waiting: "Needs you",
   unread: "Unread",
+  hidden: "Hidden",
+}
+export const SUBS_LABELS: Record<SidebarSubs, string> = {
+  all: "All sub threads",
+  active: "Active only",
+  off: "Hidden",
 }
 export const WITHIN_LABELS: Record<SidebarWithin, string> = {
   any: "Any time",
   day: "Last 24 hours",
   week: "Last 7 days",
   month: "Last 30 days",
+}
+
+/** One reading of the list as a submenu: the trigger names it and says what it
+    is set to, the radio group inside picks. */
+function ChoiceSub<T extends string>({
+  title,
+  labels,
+  value,
+  onChange,
+}: {
+  title: string
+  labels: Record<T, string>
+  value: T
+  onChange: (value: T) => void
+}) {
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger className={MENU_ROW}>
+        <span className="flex-1">{title}</span>
+        <span className="text-xs text-muted-foreground">{labels[value]}</span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className={MENU_WIDTH}>
+        <DropdownMenuRadioGroup value={value} onValueChange={(next) => onChange(next as T)}>
+          {(Object.keys(labels) as T[]).map((key) => (
+            <DropdownMenuRadioItem key={key} value={key}>
+              {labels[key]}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  )
 }
 
 /** Sort and filter, in one small menu on the Threads label — the controls
@@ -55,13 +97,17 @@ export function ViewMenu({
   sort,
   filter,
   within,
+  subs,
+  compact,
 }: {
   sort: SidebarSort
   filter: SidebarFilter
   within: SidebarWithin
+  subs: SidebarSubs
+  compact: boolean
 }) {
   const navigate = useNavigate()
-  const filtered = filter !== "all" || within !== "any"
+  const filtered = filter !== "all" || within !== "any" || subs !== "all"
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -78,35 +124,37 @@ export function ViewMenu({
         <span className="sr-only">Sort and filter threads</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" align="start" className={MENU_WIDTH}>
-        {/* The label is Base UI's Menu.GroupLabel: it reads its group from
-            context and throws outside one, so it sits inside the radio group
-            it names rather than loose in the content. */}
-        <DropdownMenuRadioGroup value={sort} onValueChange={(value) => setLayoutOption("sidebarSort", value as SidebarSort)}>
-          <DropdownMenuLabel>Sort</DropdownMenuLabel>
-          {(Object.keys(SORT_LABELS) as SidebarSort[]).map((value) => (
-            <DropdownMenuRadioItem key={value} value={value}>
-              {SORT_LABELS[value]}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
+        {/* One submenu per reading, its current value on the trigger, so the
+            top level stays four rows and a filter that is on can be seen
+            without opening anything. */}
+        <ChoiceSub
+          title="Sort"
+          labels={SORT_LABELS}
+          value={sort}
+          onChange={(value) => setLayoutOption("sidebarSort", value)}
+        />
+        <ChoiceSub
+          title="Show"
+          labels={FILTER_LABELS}
+          value={filter}
+          onChange={(value) => setLayoutOption("sidebarFilter", value)}
+        />
+        <ChoiceSub
+          title="Active in"
+          labels={WITHIN_LABELS}
+          value={within}
+          onChange={(value) => setLayoutOption("sidebarWithin", value)}
+        />
+        <ChoiceSub
+          title="Sub threads"
+          labels={SUBS_LABELS}
+          value={subs}
+          onChange={(value) => setLayoutOption("sidebarSubThreads", value)}
+        />
         <DropdownMenuSeparator />
-        <DropdownMenuRadioGroup value={filter} onValueChange={(value) => setLayoutOption("sidebarFilter", value as SidebarFilter)}>
-          <DropdownMenuLabel>Show</DropdownMenuLabel>
-          {(Object.keys(FILTER_LABELS) as SidebarFilter[]).map((value) => (
-            <DropdownMenuRadioItem key={value} value={value}>
-              {FILTER_LABELS[value]}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuRadioGroup value={within} onValueChange={(value) => setLayoutOption("sidebarWithin", value as SidebarWithin)}>
-          <DropdownMenuLabel>Active in</DropdownMenuLabel>
-          {(Object.keys(WITHIN_LABELS) as SidebarWithin[]).map((value) => (
-            <DropdownMenuRadioItem key={value} value={value}>
-              {WITHIN_LABELS[value]}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
+        <DropdownMenuCheckboxItem checked={compact} onCheckedChange={(checked) => setLayoutOption("sidebarCompact", checked)}>
+          Compact rows
+        </DropdownMenuCheckboxItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void navigate(`${settingsPath("appearance")}#interface`)}>
           {/* No glyph: every other row here is words alone, and one text column. */}

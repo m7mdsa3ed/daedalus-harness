@@ -613,6 +613,9 @@ export interface ProfileAgentLink {
   /** Overrides the profile's shared baseUrl for this agent only — a gateway
       often serves Claude Code and Codex at different paths. Empty = shared. */
   baseUrl?: string
+  /** Wire protocol the agent speaks to the endpoint; only the Daedalus agent
+      chooses. Absent = OpenAI-compatible. */
+  protocol?: "openai" | "anthropic"
 }
 
 /** Which provider API answers "how much of this plan is left" — the profile's
@@ -947,6 +950,10 @@ export interface SessionMeta {
       so a pin follows the thread to every device — and the timestamp is also
       the order the pinned group is drawn in (oldest pin first). */
   pinnedAt?: number | null
+  /** Epoch ms this thread was hidden; null/absent = shown. The server's, so it
+      follows the thread to every device. A hidden thread leaves the sidebar's
+      default list and is read back with the "Hidden" filter. */
+  hiddenAt?: number | null
   /** Which profile and model this thread's `ask_agent` uses for each agent;
       an agent not in it is asked about. The server's, and read at ask time,
       so changing it costs the thread nothing. */
@@ -1001,6 +1008,15 @@ export interface SessionMeta {
   /** The thread this one is a workflow step of; such threads are hidden from
       the lists and reached from the parent's subagent row or by URL. */
   parentSessionId?: string | null
+  /** What kind of child a `parentSessionId` thread is: an `ask_agent` run or a
+      workflow step. Absent on a child from before the server recorded it, which
+      `childKindOf` reads off the `Ask · ` title prefix the server gave it. */
+  childKind?: "ask" | "workflow" | null
+  /** The workflow run a step belongs to and its name: the sidebar folds a
+      run's steps into one row. Absent on an ask and on a step from before the
+      server recorded it, which draws flat. */
+  childRunId?: string | null
+  childRunName?: string | null
   /** Where this thread was forked from: the parent thread and the turn the
       branch carries through. Provenance only — drawn as a chip in the header,
       never a query. A fork is its own thread in every other respect (unlike
@@ -1038,11 +1054,21 @@ export interface SessionPage {
   total: number
   trashed: SessionMeta[]
   pinned: SessionMeta[]
+  /** Hidden top-level threads, whatever their age: they take no slot in the
+      paged window, so the "Hidden" filter needs them handed over. Absent from
+      a server that predates it. */
+  hidden?: SessionMeta[]
   /** The live child threads (asks, workflow steps) of the page's and the
       pins' rows — drawn under their parent, never paged themselves. Absent
       from a server that predates it. */
   children?: SessionMeta[]
 }
+
+/** Whether a sub thread is an ask or a workflow step; null for a top-level
+    thread. The server's `childKind` wins; a child written before it existed is
+    told by the `Ask · ` prefix every ask's title starts with. */
+export const childKindOf = (s: SessionMeta): "ask" | "workflow" | null =>
+  !s.parentSessionId ? null : (s.childKind ?? (s.title.startsWith("Ask · ") ? "ask" : "workflow"))
 
 /** A thread that is nobody's workflow step. Half of `isListed`, which is what
     every list actually asks for. */
@@ -1115,6 +1141,7 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.lastTurnError === b.lastTurnError &&
     a.deletedAt === b.deletedAt &&
     (a.pinnedAt ?? null) === (b.pinnedAt ?? null) &&
+    (a.hiddenAt ?? null) === (b.hiddenAt ?? null) &&
     JSON.stringify(a.askProfiles ?? {}) === JSON.stringify(b.askProfiles ?? {}) &&
     a.attached === b.attached &&
     a.peerCount === b.peerCount &&
@@ -1127,6 +1154,9 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.context?.size === b.context?.size &&
     a.cursor === b.cursor &&
     a.parentSessionId === b.parentSessionId &&
+    (a.childKind ?? null) === (b.childKind ?? null) &&
+    (a.childRunId ?? null) === (b.childRunId ?? null) &&
+    (a.childRunName ?? null) === (b.childRunName ?? null) &&
     a.forkedFromSessionId === b.forkedFromSessionId &&
     a.forkedFromTurnId === b.forkedFromTurnId &&
     (a.asideQuote ?? null) === (b.asideQuote ?? null) &&

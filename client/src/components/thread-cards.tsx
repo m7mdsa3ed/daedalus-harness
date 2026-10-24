@@ -32,6 +32,7 @@ import {
   CARD,
   ContentBlockView,
   Disclosure,
+  CHIP,
   KIND_CHIPS,
   KIND_COLORS,
   KIND_ICONS,
@@ -717,6 +718,10 @@ export const VoiceStep = React.memo(function VoiceStep({
 })
 VoiceStep.displayName = "VoiceStep"
 
+/** The ground a `!` row stands on: the execute kind's tint at a wash, in the
+    parallel group's geometry — one shape for "this stretch is marked". */
+const SHELL_WASH = "-mx-2 rounded-xl bg-emerald-500/[0.06] px-2 py-1"
+
 /**
  * A `!` command the reader ran against the thread's project, in the transcript
  * where it ran.
@@ -729,11 +734,11 @@ VoiceStep.displayName = "VoiceStep"
  * and the same `ShellPane` body. Two vocabularies for one act is the thing that
  * reads as a bug.
  *
- * The one thing it does differently is open: a Bash step folds itself away, and
- * nothing else in the thread says what a `!` command printed, so a folded one
- * would be a row with no reading in it. It is also drawn from the moment the
- * line starts — a command that showed nothing until it finished would read as
- * one that was ignored.
+ * Folded like a Bash step, and drawn from the moment the line starts — a
+ * command that showed nothing until it finished would read as one that was
+ * ignored. What sets it apart is said rather than shaped: the row sits on the
+ * kind's own wash and wears a "Not sent to the agent" chip, because a line the
+ * reader ran is the one step in the transcript the agent never saw.
  */
 export const ShellStep = React.memo(function ShellStep({
   item,
@@ -749,12 +754,25 @@ export const ShellStep = React.memo(function ShellStep({
      one rule that decides these (`lib/tools/heading.ts`). */
   const heading = toolHeading({ title: "", rawInput: { command: item.command }, toolKind: "execute" })
   return (
+    <div className={SHELL_WASH}>
     <StepRow
       icon={KIND_ICONS.execute}
       iconAccent={KIND_COLORS.execute}
       iconChip={KIND_CHIPS.execute}
       status={running ? "in_progress" : failed ? "failed" : null}
       target={heading.title}
+      chip={
+        <span
+          className={cn(CHIP, KIND_CHIPS.execute, KIND_COLORS.execute, "shrink-0 whitespace-nowrap font-sans")}
+          title="You ran this with `!`. The agent was not told about it and did not see its output."
+          aria-label="Not sent to the agent"
+        >
+          {/* Short on a narrow panel so the title line keeps room for the
+              command; the full sentence from a panel that has the width. */}
+          <span aria-hidden className="@panel-sm:hidden">Not sent</span>
+          <span aria-hidden className="hidden @panel-sm:inline">Not sent to the agent</span>
+        </span>
+      }
       /* The command under the sentence, the way a Bash step carries it. The pane
          below says it again in full — which is also what a Bash step does. */
       caption={view.showToolCommand ? heading.detail : undefined}
@@ -782,9 +800,13 @@ export const ShellStep = React.memo(function ShellStep({
           )}
         </>
       }
-      defaultOpen
+      /* "Expand `!` command output", the way a tool row takes "Expand tool
+         output": a default the reader's click outranks. */
+      defaultOpen={view.expandShellCommands}
+      openSetting={view.expandShellCommands}
       persistKey={item.id}
     />
+    </div>
   )
 })
 ShellStep.displayName = "ShellStep"
@@ -813,7 +835,7 @@ export const ShellRun = React.memo(function ShellRun({
   const [choice, setChoice] = useRowState<boolean | null>(items[0] && `shells:${items[0].id}`, null)
   const open = choice ?? running
   return (
-    <div>
+    <div className={SHELL_WASH}>
       <button
         type="button"
         onClick={() => setChoice(!open)}

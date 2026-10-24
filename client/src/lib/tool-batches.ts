@@ -17,6 +17,8 @@
  * transcript without evidence marks nothing rather than guessing.
  */
 import type { StepSpan } from "@/lib/tool-graph"
+import type { ToolItem } from "@/lib/store"
+import { stepIdOf, stepLeadOf, type StepLead } from "@/lib/tools"
 
 /** How close together calls must be announced to count as one response — only
     read for a call with no step id. A choice of presets, not a free number:
@@ -28,12 +30,15 @@ export const BATCH_BURSTS = [
 ] as const
 export type BatchBurst = (typeof BATCH_BURSTS)[number]["id"]
 
-/** The shortest wait between batches worth saying. `null` is Off. */
+/** The shortest wait between batches worth saying — a floor. `null` is Off,
+    `0` is every wait, and the rest draw only a wait at least that long. Each
+    carries the sentence the page says about the pick. */
 export const GAP_MINS = [
-  { id: "off", ms: null, label: "Off" },
-  { id: "1s", ms: 1000, label: "1 s" },
-  { id: "3s", ms: 3000, label: "3 s" },
-  { id: "10s", ms: 10_000, label: "10 s" },
+  { id: "off", ms: null, label: "Off", description: "No waits are drawn." },
+  { id: "all", ms: 0, label: "All", description: "Every wait between steps is drawn, however short." },
+  { id: "1s", ms: 1000, label: "1 s+", description: "Only waits of a second or longer are drawn." },
+  { id: "3s", ms: 3000, label: "3 s+", description: "Only waits of three seconds or longer are drawn." },
+  { id: "10s", ms: 10_000, label: "10 s+", description: "Only waits of ten seconds or longer are drawn." },
 ] as const
 export type GapMin = (typeof GAP_MINS)[number]["id"]
 
@@ -44,12 +49,23 @@ export const isGapMin = (value: unknown): value is GapMin => GAP_MINS.some((entr
 /** The preset's milliseconds; the default's for a value that is not one, since
     this is read on every render and must never throw. */
 export const burstMs = (id: BatchBurst): number => (BATCH_BURSTS.find((entry) => entry.id === id) ?? BATCH_BURSTS[1]).ms
-export const gapMinMs = (id: GapMin): number | null => (GAP_MINS.find((entry) => entry.id === id) ?? GAP_MINS[1]).ms
+export const gapMinMs = (id: GapMin): number | null => (GAP_MINS.find((entry) => entry.id === id) ?? GAP_MINS[2]).ms
 
 export interface BatchSpan extends StepSpan {
   /** The runtime's id for the model request that made this call. */
   step?: string
+  /** Where the wait before this call's request went, when the runtime says. */
+  lead?: StepLead
 }
+
+/** A call's span for the batch layout: a call still out has no end, and a
+    settled one that never recorded an end is a point at its start. */
+export const batchSpanOf = (item: ToolItem): BatchSpan => ({
+  start: item.startedAt,
+  end: item.endedAt ?? (item.status === "in_progress" || item.status === "pending" ? undefined : item.startedAt),
+  step: stepIdOf(item.meta),
+  lead: stepLeadOf(item.meta),
+})
 
 export interface BatchOptions {
   burstMs: number
@@ -69,6 +85,9 @@ export interface StepBatch {
   /** Ms between the end of this call's batch and the start of the next batch,
       on the batch's last call only, and only past the threshold. */
   gapMs?: number
+  /** What the next batch's request said its wait was made of — on the same call
+      as `gapMs`, and only when the runtime said. */
+  gapLead?: StepLead
   /** Ms from the batch's first call starting to its latest ending — what the
       calls cost together, since they ran side by side. On the batch's last call
       only, and only once every call has ended. */
@@ -111,7 +130,14 @@ export function layoutBatches(spans: readonly BatchSpan[], options: BatchOptions
     const next = batches[b + 1]
     if (options.gapMinMs === null || !next || !Number.isFinite(batch.end)) return
     const gap = next.start - batch.end
-    if (gap >= options.gapMinMs) out[batch.members[size - 1]].gapMs = gap
+    /* A zero wait is a step that started the instant the last ended — nothing
+       to say, even on "All". */
+    if (gap > 0 && gap >= options.gapMinMs) {
+      const row = out[batch.members[size - 1]]
+      row.gapMs = gap
+      const lead = spans[next.members[0]].lead
+      if (lead) row.gapLead = lead
+    }
   })
   return out
 }

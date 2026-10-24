@@ -153,7 +153,7 @@ export function ChatPanel({
       thread.turnActive,
       thread.permissions.length > 0 || thread.elicitations.length > 0,
       !!meta?.lastTurnError,
-      thread.phase.kind === "live" && backgroundRunning(thread.items)
+      thread.phase.kind === "live" && (thread.background || backgroundRunning(thread.items))
     )
   ]
   usePublishPanelStatus(api.id, status)

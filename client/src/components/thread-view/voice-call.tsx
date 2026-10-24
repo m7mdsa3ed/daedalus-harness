@@ -16,7 +16,7 @@ import * as React from "react"
 import { experimental_useRealtime as useRealtime } from "@ai-sdk/react"
 import { openai } from "@ai-sdk/openai"
 import { google } from "@ai-sdk/google"
-import { Hand, Mic, MicOff } from "lucide-react"
+import { Hand, LoaderCircle, Mic, MicOff } from "lucide-react"
 import type * as acp from "@daedalus/acp"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -166,25 +166,64 @@ function describe(thread: ThreadState, from: number) {
 /** Identifies the pending ask, so a proactive update says it once. */
 const askKey = (thread: ThreadState) => thread.permissions[0]?.requestId ?? thread.elicitations[0]?.requestId
 
-/** Five bars; the speed says what the call is doing, and nothing moves when it
-    is idle or the reader prefers reduced motion (`.voice-bar`, index.css). */
-function Wave({ mode }: { mode: "speaking" | "listening" | "idle" }) {
+type CallMode = "connecting" | "speaking" | "listening" | "waiting" | "muted" | "offline"
+
+/* What the call is doing, in the words the bar shows. One table, so the wave,
+   the label and the ring cannot disagree about the state they draw. */
+const MODES: Record<CallMode, { label: string; ring: string; dot: string }> = {
+  connecting: { label: "Connecting…", ring: "ring-foreground/10", dot: "bg-muted-foreground/60" },
+  speaking: { label: "Speaking", ring: "ring-primary/40", dot: "bg-primary" },
+  listening: { label: "Listening", ring: "ring-primary/25", dot: "bg-primary" },
+  waiting: { label: "Waiting on the agent", ring: "ring-foreground/15", dot: "bg-amber-500" },
+  muted: { label: "Muted", ring: "ring-destructive/30", dot: "bg-destructive" },
+  offline: { label: "Not connected", ring: "ring-foreground/10", dot: "bg-muted-foreground/40" },
+}
+
+const BAR_PEAKS = [0.55, 0.8, 1, 0.8, 0.55]
+
+/** Five bars shaped like a swell. Speaking is fast, listening slow, waiting a
+    slow ripple left to right; muted and offline stand still. Nothing moves
+    for a reader who prefers reduced motion (`.voice-bar`, index.css). */
+function Wave({ mode }: { mode: CallMode }) {
+  const live = mode === "speaking" || mode === "listening" || mode === "waiting"
+  const duration = mode === "speaking" ? "0.55s" : mode === "waiting" ? "1.1s" : "1.6s"
+  const step = mode === "speaking" ? 0.09 : mode === "waiting" ? 0.14 : 0.25
   return (
     <div className="flex h-6 items-center gap-0.5" aria-hidden>
-      {[0, 1, 2, 3, 4].map((i) => (
+      {BAR_PEAKS.map((peak, i) => (
         <span
           key={i}
-          className={cn("voice-bar h-full w-1 origin-center rounded-full", mode === "idle" ? "bg-muted-foreground/40" : "bg-primary")}
+          className={cn(
+            "voice-bar h-full w-1 origin-center rounded-full transition-colors duration-300",
+            mode === "waiting" ? "bg-amber-500" : mode === "muted" ? "bg-destructive/50" : live ? "bg-primary" : "bg-muted-foreground/40"
+          )}
           style={{
             transform: "scaleY(0.2)",
-            ...(mode === "idle"
-              ? { animation: "none" }
-              : { "--d": mode === "speaking" ? "0.55s" : "1.6s", animationDelay: `${i * (mode === "speaking" ? 0.09 : 0.25)}s` }),
+            ...(live
+              ? { "--d": duration, "--peak": peak, animationDelay: `${i * step}s` }
+              : { animation: "none" }),
           } as React.CSSProperties}
         />
       ))}
     </div>
   )
+}
+
+/** Seconds since the call connected, as m:ss (h:mm:ss past the hour). */
+function useElapsed(running: boolean) {
+  const [seconds, setSeconds] = React.useState(0)
+  React.useEffect(() => {
+    if (!running) return
+    const started = Date.now() - seconds * 1000
+    const id = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000)
+    return () => clearInterval(id)
+    // The start is fixed when the call connects; the tick re-reads the clock.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running])
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const sec = String(seconds % 60).padStart(2, "0")
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`
 }
 
 export function VoiceCall({
@@ -541,61 +580,91 @@ export function VoiceCall({
     }
   }, [realtime.status, sessionId])
 
-  const connecting = realtime.status === "connecting"
-  const label = connecting
-    ? "Connecting…"
-    : realtime.status !== "connected"
-      ? "Not connected"
-      : realtime.isPlaying
-        ? "Speaking"
-        : waiting
-          ? "Waiting on the agent"
-          : realtime.isCapturing
-            ? "Listening"
-            : "Muted"
+  const connected = realtime.status === "connected"
+  const mode: CallMode =
+    realtime.status === "connecting"
+      ? "connecting"
+      : !connected
+        ? "offline"
+        : realtime.isPlaying
+          ? "speaking"
+          : waiting
+            ? "waiting"
+            : realtime.isCapturing
+              ? "listening"
+              : "muted"
+  const elapsed = useElapsed(connected)
 
   /* A bar of the composer's own pill material, drawn beside the pill that ends
      the call (the composer places it): the box is away for the whole call, so
      this is the whole of the call's chrome. The caption is the label while the
      voice model speaks; the failure sits over the bar, where it is read. */
   const btn = "shrink-0"
+  const muted = mode === "muted"
   return (
     <div className="flex flex-col items-end gap-2">
       <ErrorNote error={error} className="w-[min(24rem,calc(var(--float-w)-2rem))] text-left" />
       {(heard || caption) && (
-        <p
-          dir="auto"
-          className={cn(
-            "line-clamp-3 w-fit max-w-[min(24rem,calc(var(--float-w)-2rem))] rounded-3xl px-3.5 py-2.5 text-start text-sm",
-            caption ? "bg-muted" : "bg-primary/10"
-          )}
-        >
-          {caption || heard}
-        </p>
-      )}
-      <div className="flex h-(--composer-pill) items-center gap-1 rounded-pill bg-composer-glass-hi ps-3 pe-0.5 text-sm ring-1 ring-foreground/10">
-        <Wave mode={realtime.status !== "connected" ? "idle" : realtime.isPlaying ? "speaking" : realtime.isCapturing && !waiting ? "listening" : "idle"} />
-        <span className="hidden text-muted-foreground @panel-sm:inline">{label}</span>
-        {realtime.status === "connected" && (
-          <span
-            className="tabular-nums text-muted-foreground"
-            title="Estimated cost of this call so far, at the provider's published rates. Input transcription is billed separately."
-          >
-            {formatCost(cost)}
+        <div className="flex w-fit max-w-[min(24rem,calc(var(--float-w)-2rem))] flex-col gap-0.5">
+          <span className={cn("px-1 text-[11px] font-medium text-muted-foreground", !caption && "self-end")}>
+            {caption ? "Voice" : "You"}
           </span>
+          <p
+            dir="auto"
+            className={cn(
+              "line-clamp-3 rounded-3xl px-3.5 py-2.5 text-start text-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-200 motion-reduce:animate-none",
+              caption ? "bg-muted" : "bg-primary/10"
+            )}
+          >
+            {caption || heard}
+          </p>
+        </div>
+      )}
+      <div
+        className={cn(
+          "flex h-(--composer-pill) items-center gap-1 rounded-pill bg-composer-glass-hi ps-3 pe-0.5 text-sm ring-1 transition-shadow duration-300",
+          MODES[mode].ring
+        )}
+      >
+        {mode === "connecting" ? (
+          <LoaderCircle className="size-5 shrink-0 text-muted-foreground motion-safe:animate-spin" aria-hidden />
+        ) : (
+          <Wave mode={mode} />
+        )}
+        {/* Always in the tree for assistive tech; drawn only where the panel has room. */}
+        <span
+          role="status"
+          aria-live="polite"
+          className={cn("sr-only @panel-sm:not-sr-only", muted ? "text-destructive" : "text-muted-foreground")}
+        >
+          {MODES[mode].label}
+        </span>
+        {connected && (
+          <>
+            <span className="hidden tabular-nums text-muted-foreground/80 @panel-sm:inline" title="Call length">
+              {elapsed}
+            </span>
+            <span
+              className="tabular-nums text-muted-foreground"
+              title="Estimated cost of this call so far, at the provider's published rates. Input transcription is billed separately."
+            >
+              {formatCost(cost)}
+            </span>
+          </>
         )}
         <Button
           variant={ptt ? "secondary" : "ghost"}
           size="icon-sm"
           className={btn}
-          disabled={realtime.status !== "connected"}
+          disabled={!connected}
           onClick={togglePtt}
           title={ptt ? "Push-to-talk on (click for open mic)" : "Push-to-talk"}
+          aria-label={ptt ? "Turn push-to-talk off" : "Turn push-to-talk on"}
           aria-pressed={ptt}
         >
           <Hand />
         </Button>
-        {ptt && realtime.status === "connected" ? (
+        {ptt && connected ? (
           <Button
             variant={realtime.isCapturing ? "default" : "outline"}
             size="sm"
@@ -611,12 +680,13 @@ export function VoiceCall({
           </Button>
         ) : (
           <Button
-            variant="ghost"
+            variant={muted ? "destructive" : "ghost"}
             size="icon-sm"
             className={btn}
-            disabled={realtime.status !== "connected"}
+            disabled={!connected}
             onClick={() => void (realtime.isCapturing ? realtime.stopAudioCapture() : realtime.resumeAudioCapture())}
             title={`${realtime.isCapturing ? "Mute" : "Unmute"}${muteChord ? ` (${muteChord})` : ""}`}
+            aria-label={realtime.isCapturing ? "Mute microphone" : "Unmute microphone"}
             aria-pressed={!realtime.isCapturing}
           >
             {realtime.isCapturing ? <Mic /> : <MicOff />}

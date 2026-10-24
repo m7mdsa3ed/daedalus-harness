@@ -34,6 +34,7 @@ import {
   api,
   ApiError,
   profileAgentIds,
+  profileSupports,
   type ModelKind,
   type Profile,
   type ProfileAgentLink,
@@ -82,6 +83,9 @@ import { sectionMeta } from "./sections"
 import { useTableFilter } from "@/lib/use-table-filter"
 import { useSettingsPage } from "./layout"
 import { settingsFormPath, settingsPath } from "@/lib/router"
+
+/* A thread the server names as still on a profile being deleted. */
+type MoveThread = { id: string; title: string; agentId: string }
 
 /* The providers whose plan usage the server can read, and what to call them.
    One entry per adapter in `server/src/usage-api.ts` — the labels are the only
@@ -225,6 +229,11 @@ export function ProfilesPage() {
   const confirm = useConfirm()
   const navigate = useNavigate()
   const setFlags = useSetProfileFlags()
+  /* A profile being deleted while threads still run on it: the threads and the
+     replacement the user picked for them ("" = each agent's Default). */
+  const [moveOff, setMoveOff] = React.useState<{ profile: Profile; threads: MoveThread[] } | null>(null)
+  const [replacementId, setReplacementId] = React.useState("")
+  const [moving, setMoving] = React.useState(false)
 
   /* The switches act at once, as the routines list's does: hiding, showing,
      disabling and enabling are all reversible, so there is nothing to ask
@@ -253,41 +262,43 @@ export function ProfilesPage() {
       await api(settings, `/api/profiles/${profile.id}`, { method: "DELETE" })
       await invalidate()
     } catch (err) {
-      /* Threads still on the profile: the server names them, the user confirms
-         the reset, and the retry moves them all to their agent's Default —
-         profile, model and effort — keeping every transcript. */
+      /* Threads still on the profile: the server names them, and the user picks
+         where they go — another profile that serves their agents, or each
+         agent's Default. Transcripts are kept either way. */
       if (err instanceof ApiError && err.status === 409) {
-        const threads = (err.body as { threads?: { id: string; title: string; agentId: string }[] } | null)?.threads
+        const threads = (err.body as { threads?: MoveThread[] } | null)?.threads
         if (threads?.length) {
-          const names = threads.slice(0, 5).map((t) => `“${t.title}”`).join(", ")
-          const more = threads.length > 5 ? ` and ${threads.length - 5} more` : ""
-          if (
-            await confirm({
-              title: `Reset ${threads.length} thread${threads.length === 1 ? "" : "s"} to Default?`,
-              description: `${names}${more} still run${threads.length === 1 ? "s" : ""} on "${profile.name}". Deleting moves each to its agent's Default profile with the default model — transcripts are kept, and the next message revives them there.`,
-              destructive: true,
-              confirmLabel: `Reset and delete`,
-            })
-          ) {
-            try {
-              const reply = await api<{ moved?: string[] }>(settings, `/api/profiles/${profile.id}?force=1`, {
-                method: "DELETE",
-              })
-              await invalidate()
-              /* The sidebar rows still name the deleted profile until re-read. */
-              await actions.refreshSessions().catch(() => {})
-              const moved = reply.moved?.length ?? threads.length
-              toast.success(`Deleted “${profile.name}” — ${moved} thread${moved === 1 ? "" : "s"} reset to Default`)
-              return
-            } catch (forceErr) {
-              reportError(forceErr, "Couldn't delete the profile")
-              return
-            }
-          }
+          setMoveOff({ profile, threads })
+          setReplacementId("")
           return
         }
       }
       reportError(err, "Couldn't delete the profile")
+    }
+  }
+
+  const confirmMoveOff = async () => {
+    if (!moveOff) return
+    const { profile, threads } = moveOff
+    setMoving(true)
+    try {
+      const query = replacementId ? `?force=1&replacement=${encodeURIComponent(replacementId)}` : "?force=1"
+      const reply = await api<{ moved?: string[] }>(settings, `/api/profiles/${profile.id}${query}`, {
+        method: "DELETE",
+      })
+      await invalidate()
+      /* The sidebar rows still name the deleted profile until re-read. */
+      await actions.refreshSessions().catch(() => {})
+      const moved = reply.moved?.length ?? threads.length
+      const target = replacementId ? profiles.find((p) => p.id === replacementId)?.name : undefined
+      toast.success(
+        `Deleted “${profile.name}” — ${moved} thread${moved === 1 ? "" : "s"} moved to ${target ? `“${target}”` : "each agent's Default"}`
+      )
+      setMoveOff(null)
+    } catch (err) {
+      reportError(err, "Couldn't delete the profile")
+    } finally {
+      setMoving(false)
     }
   }
 
@@ -644,6 +655,58 @@ export function ProfilesPage() {
           />
         </>
       )}
+      <ResponsiveDialog open={moveOff !== null} onOpenChange={(open) => !open && !moving && setMoveOff(null)}>
+        {moveOff && (() => {
+          const { profile, threads } = moveOff
+          const names = threads.slice(0, 5).map((t) => `“${t.title}”`).join(", ")
+          const more = threads.length > 5 ? ` and ${threads.length - 5} more` : ""
+          /* A replacement must serve every thread's agent, or the thread has
+             nowhere to run. Default (empty id) is always offered. */
+          const candidates = profiles.filter(
+            (p) =>
+              p.id !== profile.id &&
+              !p.disabled &&
+              threads.every((t) => profileSupports(p, t.agentId)),
+          )
+          return (
+            <ResponsiveDialogContent className="sm:max-w-md">
+              <ResponsiveDialogHeader>
+                <ResponsiveDialogTitle>
+                  Move {threads.length} thread{threads.length === 1 ? "" : "s"} off “{profile.name}”?
+                </ResponsiveDialogTitle>
+                <ResponsiveDialogDescription>
+                  {names}{more} still run{threads.length === 1 ? "s" : ""} on “{profile.name}”. Choose where {threads.length === 1 ? "it" : "they"} go before the profile is deleted. Transcripts are kept, and the next message revives {threads.length === 1 ? "it" : "them"} on the new profile.
+                </ResponsiveDialogDescription>
+              </ResponsiveDialogHeader>
+              <Field label="Replacement profile">
+                <Select value={replacementId} onValueChange={(value) => setReplacementId(value ?? "")}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue>
+                      {replacementId
+                        ? (candidates.find((p) => p.id === replacementId)?.name ?? "Choose a profile")
+                        : "Each agent's Default"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Each agent&apos;s Default</SelectItem>
+                    {candidates.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <ResponsiveDialogFooter>
+                <Button variant="outline" onClick={() => setMoveOff(null)} disabled={moving}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" onClick={() => void confirmMoveOff()} loading={moving}>
+                  Move and delete
+                </Button>
+              </ResponsiveDialogFooter>
+            </ResponsiveDialogContent>
+          )
+        })()}
+      </ResponsiveDialog>
       <ResponsiveDialog open={syncProfileRow !== null} onOpenChange={(open) => !open && setSyncProfileRow(null)}>
         <ResponsiveDialogContent className="sm:max-w-md">
           <ResponsiveDialogHeader>
@@ -731,6 +794,16 @@ function PlainShell({ children }: { sections: { id: string; label: string }[]; c
    the form through a context, because the inputs live inside table cells and a
    cell rebuilt per render would remount the input on every keystroke. */
 
+type AgentProtocol = "openai" | "anthropic"
+
+/* Only the Daedalus agent picks a wire protocol; every other runtime has its
+   own fixed one. */
+const PROTOCOL_AGENT = "daedalus"
+const PROTOCOL_LABELS: Record<AgentProtocol, string> = {
+  openai: "OpenAI chat",
+  anthropic: "Anthropic messages",
+}
+
 interface AgentRowData {
   id: string
   name: string
@@ -738,10 +811,11 @@ interface AgentRowData {
 }
 
 const AgentLinksContext = React.createContext<{
-  links: Record<string, { baseUrl: string }>
+  links: Record<string, { baseUrl: string; protocol?: AgentProtocol }>
   placeholder: string
   toggle: (id: string, on: boolean) => void
   setBaseUrl: (id: string, baseUrl: string) => void
+  setProtocol: (id: string, protocol: AgentProtocol) => void
 } | null>(null)
 
 function useAgentLinks() {
@@ -762,10 +836,10 @@ function AgentToggle({ agent }: { agent: AgentRowData }) {
 }
 
 function AgentOverride({ agent }: { agent: AgentRowData }) {
-  const { links, placeholder, setBaseUrl } = useAgentLinks()
+  const { links, placeholder, setBaseUrl, setProtocol } = useAgentLinks()
   const link = links[agent.id]
   if (!link) return <span className="text-sm text-muted-foreground">Not served</span>
-  return (
+  const input = (
     <Input
       value={link.baseUrl}
       onChange={(e) => setBaseUrl(agent.id, e.target.value)}
@@ -773,6 +847,23 @@ function AgentOverride({ agent }: { agent: AgentRowData }) {
       aria-label={`${agent.name} base URL override`}
       className="w-full min-w-0 font-mono pointer-coarse:h-11"
     />
+  )
+  if (agent.id !== PROTOCOL_AGENT) return input
+  const protocol = link.protocol ?? "openai"
+  return (
+    <div className="flex min-w-0 gap-2">
+      {input}
+      <Select value={protocol} onValueChange={(value) => value && setProtocol(agent.id, value as AgentProtocol)}>
+        <SelectTrigger className="w-44 shrink-0 pointer-coarse:h-11" aria-label={`${agent.name} protocol`}>
+          <SelectValue>{PROTOCOL_LABELS[protocol]}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {(Object.keys(PROTOCOL_LABELS) as AgentProtocol[]).map((p) => (
+            <SelectItem key={p} value={p}>{PROTOCOL_LABELS[p]}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   )
 }
 
@@ -854,9 +945,9 @@ export function ProfileForm({
   /* Which agents this profile serves, and each one's optional base-URL
      override. A new profile starts on the first registered agent, so the form
      never saves a profile no thread could start on. */
-  const [links, setLinks] = React.useState<Record<string, { baseUrl: string }>>(() => {
+  const [links, setLinks] = React.useState<Record<string, { baseUrl: string; protocol?: AgentProtocol }>>(() => {
     const initial = Object.entries(profile?.agents ?? {}).map(
-      ([id, link]) => [id, { baseUrl: link?.baseUrl ?? "" }] as const
+      ([id, link]) => [id, { baseUrl: link?.baseUrl ?? "", protocol: link?.protocol }] as const
     )
     if (initial.length === 0 && agents[0]) return { [agents[0].id]: { baseUrl: "" } }
     return Object.fromEntries(initial)
@@ -869,6 +960,8 @@ export function ProfileForm({
     })
   const setAgentBaseUrl = (id: string, baseUrl: string) =>
     setLinks((current) => ({ ...current, [id]: { ...current[id], baseUrl } }))
+  const setAgentProtocol = (id: string, protocol: AgentProtocol) =>
+    setLinks((current) => ({ ...current, [id]: { ...current[id], protocol } }))
   /* Agents this profile names that the server no longer registers: kept on the
      form (and saved back) so editing an unrelated field cannot silently drop
      them, and shown by id so the user can see what is dangling. */
@@ -956,7 +1049,11 @@ export function ProfileForm({
         agents: Object.fromEntries(
           Object.entries(links).map(([id, link]): [string, ProfileAgentLink] => [
             id,
-            link.baseUrl.trim() ? { baseUrl: link.baseUrl.trim() } : {},
+            {
+              ...(link.baseUrl.trim() ? { baseUrl: link.baseUrl.trim() } : {}),
+              // OpenAI is the default and is left out, like an empty URL.
+              ...(link.protocol && link.protocol !== "openai" ? { protocol: link.protocol } : {}),
+            },
           ])
         ),
         baseUrl: form.baseUrl,
@@ -1080,7 +1177,7 @@ export function ProfileForm({
             action={aside(`${Object.keys(links).length} of ${agentRows.length}`)}
           >
             <AgentLinksContext.Provider
-              value={{ links, placeholder: form.baseUrl || "Base URL override (optional)", toggle: toggleAgent, setBaseUrl: setAgentBaseUrl }}
+              value={{ links, placeholder: form.baseUrl || "Base URL override (optional)", toggle: toggleAgent, setBaseUrl: setAgentBaseUrl, setProtocol: setAgentProtocol }}
             >
               <DataTable
                 columns={AGENT_COLUMNS}

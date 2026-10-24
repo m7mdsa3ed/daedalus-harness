@@ -23,7 +23,7 @@ export const ProfileInputSchema = z.object({
       that differs per agent on one provider (see ProfileAgentLink). At least
       one — a profile no agent can use is a profile no thread can start on. */
   agents: z
-    .record(z.string().min(1), z.object({ baseUrl: z.string().optional() }))
+    .record(z.string().min(1), z.object({ baseUrl: z.string().optional(), protocol: z.enum(["openai", "anthropic"]).optional() }))
     .refine((agents) => Object.keys(agents).length > 0, "a profile needs at least one agent"),
   baseUrl: z.string().optional().default(""),
   apiKey: z.string().optional().default(""),
@@ -201,6 +201,12 @@ export function resolveProfileAgent(profile: Profile, agentId?: string | null): 
 export function profileBaseUrl(profile: Profile, agentId: string): string {
   const link: ProfileAgentLink | undefined = profile.agents?.[agentId];
   return link?.baseUrl?.trim() || profile.baseUrl || "";
+}
+
+/** The wire protocol this agent should speak to the endpoint; OpenAI-compatible
+    unless the profile's link says otherwise. */
+export function profileProtocol(profile: Profile, agentId: string): "openai" | "anthropic" {
+  return profile.agents?.[agentId]?.protocol ?? "openai";
 }
 
 /** A row with the nullable columns read back as the empty

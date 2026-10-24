@@ -529,10 +529,17 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   is the agent's own. Both options are Segmented presets, not free numbers (`BATCH_BURSTS`,
   `GAP_MINS`): `pick` drops a stored value outside the list.
   **A thinking row is a live view while it streams, and its shape is a view option.**
-  `RowView`'s `streaming` flag (set by `thread-view.tsx` on the transcript's tail row while
-  `turnActive`, and by the subagent rail on its tail while the child is active) opens the
+  `RowView`'s `streaming` flag (set by `thread-view.tsx` on the rows the open turn is still
+  writing, and by the subagent rail on its own while the child is active) opens the
   `thought` case for as long as it is being written (`autoOpen`, so a settled one folds again
-  unless the reader opened it) and ticks the clock that is its title. **Thinking as a step**
+  unless the reader opened it) and ticks the clock that is its title. **What is "still writing" is
+  `streamingRowIds`, not "the last row"**: a trailing thought stands outside the fold it explains
+  (`groupToolRuns` leaves it as the live tail), so a tail test answered by `rowTailId` alone
+  stopped matching the run the moment the model started thinking — the group folded shut on every
+  thinking block and opened again when the call after it landed. The reading is the newest row
+  plus the group under a thought standing at the tail (never prose: an answer already on screen
+  does not become unfinished because the agent thought again), and a work fold and a subagent rail
+  ask it of their own rows, because the newest item is a level down from both. **Thinking as a step**
   (`thoughtStep`, on) draws it the way a tool call is drawn — `BrainIcon` in the same mark
   column, `Thinking 12s` / `Thought for 12s` as the title, the reasoning behind the same
   disclosure a call's body is behind, and `toolLayout`/`toolVariant` applied to it — so a
@@ -542,7 +549,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   well (`.thought-preview`'s clamp and mask), so a folded thought says whether opening it is
   worth the click — and `ThoughtDetail` is the same well holding the whole of it, capped by
   `THOUGHT_MAX_H` and following itself while it streams. Opening swaps one for the other.
-  Either shape stands where it arrived: a thought ends a run and is never folded into one.
+  Either shape stands where it arrived, or rides inside the run it leads or sits within (`groupToolRuns`).
   **The reasoning's palette rides the prose element itself** (`thought-prose`), which restates
   `--tw-prose-*` so thinking reads a step below the answer rather than at its body colour — a
   wrapper class cannot do it, because such a rule would match a descendant and the class and
@@ -923,6 +930,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   what the user typed. Both halves travel on purpose: the text is what every runtime already
   understands, the links are what a runtime that reads the protocol can resolve without
   guessing, and dropping the text would make the transcript stop saying what the user typed.
+- **A typed `@kind:ref` is a source on both halves, expanded at send into a `<context>` block.**
+  The menu is a registry (`lib/mentions/`, one file per source) and the server's is its mirror
+  (`server/src/mentions/`); the kind list is copied and `test:mentions` fails on drift. Grammar,
+  kinds, the shared output budget, `@path:40-80` and `@mcp:` are in `docs/mention-sources.md`.
 
 ## `!` commands
 
@@ -1015,6 +1026,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   asking: the renderer reads no set, so a fence from a group the thread was not taught still draws.
   `library.tsx` builds its `componentGroups` from `groups.ts` (names and membership are one
   place), keeping each group's notes beside the components.
+- **The generated-view library has a component per recurring answer shape, and the prompt says which to
+  reach for** (`Verdict`, `Matrix`, `Checks`, `ChangeSet`, `Findings`, `Bars`, each in
+  `lib/openui/components/`). They came from reading what threads actually drew: a table for every shape
+  (a column of "Yes", a review as five-column prose, a ranking as a table of counts) and a conclusion
+  buried under its evidence. Each takes a **flat** schema with strings the model already has, and each
+  tolerates a half-streamed or empty prop. `Matrix` cells are plain strings whose first word is the
+  verdict (`yes`/`no`/`partial`/`n/a`, `readCell`), not a typed cell per column, because pairing a
+  typed cell with its column is what models get wrong; `Findings` sorts worst-first itself so the order
+  the model found them in does not matter; `ChangeSet` draws counts only when it was given them and
+  never zeros. The state chip (`ToneChip`) and the tone list (`TONES`) live in `kit.tsx` so a
+  severity, a status and a badge cannot drift apart. **A group's notes may only name its own
+  components** (`openui-trailer.test.ts` fails on a bare English word that is another group's
+  component name, e.g. "List"), and the three composition rules in `gen-openui.mjs` (lead with the
+  conclusion, prefer the most specific component, one view says one thing) name no component for the
+  same reason.
 - **A drawn answer may hold a choice and ask for words, and neither is a way out of the
   transcript** (`interactive` group, `lib/openui/components/interactive.tsx`). A field's value
   is the renderer's own store — a `$variable` when the program bound one (`reactive()` on the
@@ -1037,12 +1063,12 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   **Group `!` commands** folds a run of commands run back to back into one line (`ShellRun`,
   `groupShellRuns`). **Group tool calls** folds a stretch of consecutive *calls* into one
   expandable run (`ToolRunGroup`/`ToolGroup`, `groupToolRuns`).
-  **A thought ends the run it landed in and stands where it arrived**, whatever shape is drawn
-  for it: a fold counts calls, and thinking folded behind a line reading "Reading 2 files" is
-  reasoning that line throws away — the reader would open ten calls to find the three lines
-  that explain them. So `think -> read -> think -> edit` is four rows, two of them folds, and a
-  run holds calls and the settings changed between them and nothing else (`RunItem` is a call or
-  a notice). What a group cannot be is a group of one call: that is still a step, not a fold.
+  **A thought rides inside the run it explains.** One that leads a run or sits between two of its
+  calls is a `RunItem`, drawn in place (`think -> read -> think -> read` is one fold); it was
+  once a break, and the thinking hung over a fold that did not own it. One no call follows —
+  trailing, or before prose — stands where it arrived, because it is the live tail and the group
+  folds when it settles. A run is calls, thoughts and the settings changed between them. What a
+  group cannot be is a group of one call: that is still a step, not a fold.
   The counting line is the
   calls': it says what the group did, not what was on screen.
   **A run is keyed by the integration it went to, not only by the layout** (`runKeyOf`): every

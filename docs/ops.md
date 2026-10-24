@@ -279,6 +279,38 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   API key — it needs a browser session the harness will not hold) and Chutes (no pinned
   response shape). Their presets carry endpoints only.
 
+## The model-call ledger and the Spend tab
+
+- **`model_calls` is the install's reading of every model call; the journal is the thread's.**
+  Both are written once, from the one filing path (`fileCall`, `server/src/model-calls/index.ts`
+  — → `docs/protocol.md` "Model calls"), so neither is a second reading of the other. A row is
+  the `ModelCall` flattened: `session_id`, the `turn_id` open on the bridge when it was filed
+  (null for a call outside one), `call_id`, `at`, `ms`, `who`, `child_id`, `step`, `agent_id`,
+  `model`, `finish_reason`, `source`, the billed counters (`input_tokens` fresh,
+  `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `thought_tokens`), `cost_usd` only
+  when the runtime said it, the six nullable part columns plus `prompt_unknown` (null where the
+  door could not see the part — a billed-only record has `prompt_unknown` null and reads back
+  with no `prompt`), `missing` (jsonb), the three nullable output columns, and the **snapshot
+  columns `web_search_usage` keeps for the same reason** — `thread_title`, `profile_name`,
+  `project_name` beside their ids — so a group still has a name after the thread or profile is
+  gone. **No FK** and no cascade: the ledger outlives the session row on purpose, which is why
+  `GET /api/sessions/:id/calls` answers for a retired thread. Indexes `(session_id, at)` and
+  `(at)`. **Not exported by backup** — a spend history is a reading of this install, not data a
+  restore onto another machine should adopt. `pruneModelCalls(cutoff)` exists and is wired to no
+  sweep yet; when retention is decided it is one line beside `pruneWebSearchUsage`.
+- **Settings › Usage is the one surface that lists spend**, on its **Spend** tab
+  (`components/settings/spend.tsx`, a `TabBar` beside Plans, gated on the `modelCalls` feature):
+  `GET /api/usage/calls?groupBy=profile|model|project|agent|source&from=<ms>&to=<ms>` →
+  `{ groupBy, groups: [{ key, name, calls, input, cacheRead, cacheWrite, output, reasoning,
+  costUsd }] }` (`spendBy`; 400 on an unknown `groupBy`; biggest input+output first; `name` is
+  the newest snapshot; node-postgres hands bigint sums back as strings, so both halves coerce
+  with `Number`). A `Segmented` picks the group, a `StatStrip` sums, one `DataTable` lists.
+  **Billed figures only, and cost is only what a runtime reported** (Claude Code's `cost_usd`
+  through the `otlp` door, OpenCode's `cost` through `files`); a group with none says so rather
+  than drawing 0. `models.pricing` × the billed columns is the later multiplication, when the
+  tab is asked for money. The thread's own reading is its Trace panel — the per-thread
+  question belongs beside Changes, Plan, Agents and Details, not on this page.
+
 ## Profile presets
 
 - **A preset is a starting point, never a stored kind** (`server/src/profile-presets.ts`,

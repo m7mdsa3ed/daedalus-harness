@@ -36,13 +36,12 @@ export interface TextItem {
       a session/load replay: the journal carries no clock, so a replayed item
       has no honest time to show and shows none rather than the reload's. */
   at?: number
-  /** Epoch ms the run this item stands for stopped being written — the
-      journal's stamp on the run's LAST chunk, which only the read that merged
-      the run can know (see `endAt` on the protocol's `update`). Replay only,
-      and only ever beside `at`: together they are a run's measured length, so
-      a thought read back from history says "Thought for 12s" instead of having
-      no end to subtract its start from. Live items have neither — the client
-      times those off its own clock. */
+  /** Epoch ms the run this item stands for stopped being written — its LAST
+      chunk. Replayed, it is the journal's stamp, which only the read that
+      merged the run can know (see `endAt` on the protocol's `update`); live,
+      it is this device's clock at each chunk that joins the run. Only ever
+      beside `at`: together they are a run's measured length, so a thought says
+      "Thought for 12s" without waiting for whatever follows it to end it. */
   endedAt?: number
   /** Logical turn restore point, present on user messages. */
   turnId?: string

@@ -1,6 +1,7 @@
 import type * as acp from "@daedalus/acp"
 import type {
   AttachmentRef,
+  CallsVia,
   QueuedMessage,
   QuotaSnapshot,
   SessionUpdate,
@@ -196,6 +197,7 @@ export type Action =
       the list read that replaces it with the server's own. */
   | { type: "promote-draft"; id: string }
   | { type: "pin-session"; id: string; pinnedAt: number | null }
+  | { type: "hide-session"; id: string; hiddenAt: number | null }
   | { type: "ask-profiles-session"; id: string; askProfiles: AskProfiles }
   /** Absolute state, with one hole: an event may carry modes and leave the
       options out, which means "unchanged" and not "none". The reducer is where
@@ -210,6 +212,7 @@ export type Action =
       promptCapabilities?: acp.PromptCapabilities
       canPause?: boolean
       canCompact?: boolean
+      callsVia?: CallsVia
     }
   | { type: "mode"; id: string; modeId: string }
   | { type: "config-options"; id: string; configOptions: acp.SessionConfigOption[] }
@@ -683,6 +686,13 @@ export function reducer(state: State, action: Action): State {
           s.id === action.id ? { ...s, pinnedAt: action.pinnedAt } : s
         ),
       }
+    case "hide-session":
+      return {
+        ...state,
+        sessions: state.sessions.map((s) =>
+          s.id === action.id ? { ...s, hiddenAt: action.hiddenAt } : s
+        ),
+      }
     case "ask-profiles-session":
       return {
         ...state,
@@ -698,6 +708,7 @@ export function reducer(state: State, action: Action): State {
           action.promptCapabilities ?? thread(state, action.id).promptCapabilities,
         canPause: action.canPause ?? thread(state, action.id).canPause,
         canCompact: action.canCompact ?? thread(state, action.id).canCompact,
+        callsVia: action.callsVia ?? thread(state, action.id).callsVia,
       })
     case "paused":
       return withThread(state, action.id, {

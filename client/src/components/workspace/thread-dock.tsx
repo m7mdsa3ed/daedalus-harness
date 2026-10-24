@@ -34,6 +34,7 @@ import {
   AppWindowIcon,
   BotIcon,
   GitCompareIcon,
+  ActivityIcon,
   InfoIcon,
   Maximize2Icon,
   Minimize2Icon,
@@ -68,6 +69,7 @@ import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
 import { InspectorContext, ThreadJumpContext, type InspectorTab } from "@/lib/inspector"
 import { useProjects } from "@/lib/queries/catalog"
+import { useFeature } from "@/lib/queries/surfaces"
 import { useSessionMeta, useThread } from "@/lib/store"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
@@ -98,12 +100,13 @@ const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }>
   plan: { title: "Plan", icon: ListChecksIcon },
   agents: { title: "Agents", icon: BotIcon },
   details: { title: "Details", icon: InfoIcon },
+  trace: { title: "Trace", icon: ActivityIcon },
   terminal: { title: "Terminal", icon: SquareTerminalIcon },
   web: { title: "Preview", icon: AppWindowIcon },
 }
 
 /** The readings — one panel each, the id is the kind. */
-const SECTIONS: ThreadSectionKind[] = ["changes", "plan", "agents", "details"]
+const SECTIONS: ThreadSectionKind[] = ["changes", "plan", "agents", "details", "trace"]
 
 /* ── Where each kind lives ──
    A panel opens at its kind's own place, not wherever the focus happens to be:
@@ -115,6 +118,7 @@ const SLOT: Record<Exclude<ThreadPanelKind, "transcript">, Slot> = {
   plan: "side",
   agents: "side",
   details: "side",
+  trace: "side",
   web: "beside",
   terminal: "below",
 }
@@ -569,6 +573,8 @@ function ThreadTab({ api, containerApi }: IDockviewPanelHeaderProps) {
     not doubled; a terminal is a new shell. */
 function ThreadPanelsMenu() {
   const ctx = React.useContext(ThreadDockContext)
+  /* The Trace reading needs a server that records model calls. */
+  const modelCalls = useFeature("modelCalls")
   if (!ctx) return null
   const row = (kind: ThreadPanelKind, label = KINDS[kind].title) => {
     const Icon = KINDS[kind].icon
@@ -596,7 +602,7 @@ function ThreadPanelsMenu() {
           }
         />
         <DropdownMenuContent align="end" className={MENU_WIDTH}>
-          {SECTIONS.map((kind) => row(kind))}
+          {SECTIONS.filter((kind) => kind !== "trace" || modelCalls).map((kind) => row(kind))}
           <DropdownMenuSeparator />
           {row("terminal", "New terminal")}
         </DropdownMenuContent>

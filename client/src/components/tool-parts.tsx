@@ -34,6 +34,8 @@ import { VIEWER, ViewerHeader } from "@/components/ui/responsive-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
+import { PrettyButton, usePretty } from "@/components/ui/pretty-button"
+import { canPrettify, fencedBlock } from "@/lib/pretty"
 import { DiffView } from "@/components/ui/diff-view"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
@@ -612,12 +614,9 @@ export function Highlighted({
   if (!language) {
     return <pre className={cn("font-mono text-xs leading-relaxed whitespace-pre-wrap", className)}>{code}</pre>
   }
-  /* A fence closes only on a run at least as long as the one that opened it,
-     so one longer than any run in the payload cannot be broken out of. */
-  const fence = "`".repeat(Math.max(3, ...(code.match(/`+/g) ?? []).map((run) => run.length + 1)))
   return (
     <div className={cn("harness-code-bare prose prose-sm max-w-none", className)}>
-      <Markdown rehypePlugins={REHYPE}>{fence + language + "\n" + code.replace(/\n$/, "") + "\n" + fence}</Markdown>
+      <Markdown rehypePlugins={REHYPE}>{fencedBlock(code, language)}</Markdown>
     </div>
   )
 }
@@ -665,6 +664,16 @@ export function CodeBlock({
   tone?: "error"
   language?: string
 }) {
+  /* JSON in a tool's output is laid out by default — a minified result is
+     unreadable as one line — whether the tool labelled it or not. An error
+     stays as the tool said it. The button puts the original back. */
+  const json = React.useMemo(
+    () => tone !== "error" && (language === "json" || (!language && parseJsonDocument(children) !== null)),
+    [tone, language, children]
+  )
+  const effective = json ? "json" : language
+  const pretty = usePretty(effective, json ? children : undefined)
+  const shown = pretty.text ?? children
   const pane = (
     <div
       className={cn(
@@ -683,11 +692,21 @@ export function CodeBlock({
       {tone !== "error" && language === "bash" ? (
         <ShellScript command={children} />
       ) : (
-        <Highlighted code={children} language={tone === "error" ? undefined : language} />
+        <Highlighted code={shown} language={tone === "error" ? undefined : effective} />
       )}
     </div>
   )
-  if (tone !== "error") return pane
+  /* Pretty print lives outside the pane for the same reason the error copy
+     does: the pane scrolls. Only a language Prettier can lay out draws it. */
+  if (tone !== "error") {
+    if (!canPrettify(effective)) return pane
+    return (
+      <div className="group/code relative w-fit max-w-full">
+        {pane}
+        <PrettyButton language={effective} pretty={pretty} source={() => children} className="right-1" />
+      </div>
+    )
+  }
   /* The one place every failed tool call ends up — an MCP error, a non-zero
      bash run, a failed read, a fetch that 500'd all arrive here through
      `SmartBlock`, so the copy they each needed is written once.

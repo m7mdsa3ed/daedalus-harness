@@ -24,7 +24,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { HARNESS_TOOLS, type HarnessTool } from "./harness-tools.js";
-import { HARNESS_SERVER_NAME } from "./workflow-schema.js";
+import { HARNESS_SERVER_NAME } from "./workflows/types.js";
 
 const base = process.env.HARNESS_URL;
 if (!base) {

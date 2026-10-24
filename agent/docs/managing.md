@@ -126,10 +126,8 @@ OpenAI-compatible `prompt_tokens`, which is the only dialect this runtime
 speaks, means the whole prompt with `cached_tokens` counted *inside* it. So
 `toAcpUsage` (`src/metering.ts`) subtracts the hit — and a cache write, which a
 gateway reports in `prompt_tokens_details` and `normalizeUsage` lifts into the
-SDK's standard slot — before reporting. Passed through
-raw, every cached token was counted twice and the drawn cache rate was roughly
-half the real one — a turn hitting cache on 89% of its prompt read as 47%, and
-no amount of caching could have moved the figure past 50%.
+SDK's standard slot — before reporting. Passed through raw, every cached token
+was counted twice and the drawn cache rate was roughly half the real one.
 
 **A turn is metered per model call, as each one answers** (`Meter`, fed by the
 SDK's `onLanguageModelCallEnd`, which fires before any tool runs). Reading usage
@@ -138,25 +136,73 @@ tool, because an aborted stream never finishes; and a prompt that throws
 carries its spend on the error (`data.daedalus`) since it has no response to
 put it in. The root loop, its retries, its subagents, the compaction summary
 and the title call all feed the one meter. A call's output speed is the SDK's
-own timing (`performance.timeToFirstOutputMs`, so tool-argument tokens are
-inside the window) and rides the prompt answer as `_meta.daedalus.generation`;
-a call that arrived as one chunk has no decode to divide by and is left out of
-both sides. The summarizer sends the turn's `prompt_cache_key` like every
-other call.
+own timing and rides the prompt answer as `_meta.daedalus.generation`; a call
+that arrived as one chunk has no decode to divide by and is left out of both
+sides.
 
 The context-window reading (`usage_update`'s `used`) is a different number and
 deliberately untouched: it is the provider's own total for the last step, cache
-hits included, because a cached token still occupies the window.
+hits included, because a cached token still occupies the window. Each step's
+`usage_update` also carries the step's own bill (`_meta.daedalus.step`) and the
+provider's cache counters (`_meta.cache`), exact.
 
 A subagent's spend is part of the turn's answer: every child folds its total
-into the same `usage` the turn ends with, so a turn that spent most of its
-budget in three subagents no longer reports only the root's tokens. Each Task
-child also reports settled usage on the parent as `_daedalus/subagent_usage`,
-keyed by child session id, for its own card's cost figure; this is attribution,
-not spend to add again to the parent's total. The context-window gauge is the
-parent's alone — a child's steps measure the child's own, smaller window, and
-writing them onto the parent made compaction threshold against a context the
-parent never had.
+into the same `usage` the turn ends with. Each Task child also reports settled
+usage on the parent as `_daedalus/subagent_usage`, keyed by child session id,
+for its own card's cost figure; this is attribution, not spend to add again.
+The context-window gauge is the parent's alone.
+
+## What a turn reports about each model call
+
+Every provider request the turn makes is also one **`_daedalus/model_call`**
+update (`src/trace.ts`), journaled on the session it belongs to — a subagent's
+on the child's session id — and replayed by `session/load` like any other
+update. It is the harness's one record of a model call whichever runtime made
+it (`server/src/protocol.ts` `ModelCall`); this runtime's say `source: "acp"`.
+
+The same two SDK callbacks feed it at the four places a model is called (the
+loop, a subagent, the summarizer, the title call — `traced` in `src/turn.ts`
+composes them with the meter's record): `onLanguageModelCallStart` carries the
+request **exactly as sent** — instructions, messages and the prepared tool JSON
+— and `onLanguageModelCallEnd` the bill, under one `callId`. The record says
+`who` (`turn`, `subagent` + `childId`, `compaction`, `title`), its `step` within
+the turn, the model, the finish reason, `ms` to the parsed response and the
+SDK's time to first output, and three readings:
+
+- **`billed`** — the provider's own counters, `acp.Usage` shaped, exact.
+- **`prompt`** — where the prompt went: `system`, `tools`, `mcp` (tools named
+  `mcp__…`), `user`, `assistant`, `results`, plus `unknown`. These are
+  **estimates, anchored**: each part is counted locally with `gpt-tokenizer`
+  (`o200k_base` ranks, so only exactly right when OpenAI's model is serving) and
+  the provider's prompt total — fresh + cache read + cache write — is the truth
+  the counts are shared out over. Every part seen, they sum to it exactly; a
+  part a door could not see is `null`, named in words in `missing`, and its
+  share is `unknown`. A fence `~` on the panel means this. Media is not counted
+  and lands in the remainder rather than being guessed at.
+- **`output`** — text, tool calls and reasoning; reasoning is the provider's own
+  figure when it reports one, the other two share what is left.
+
+**`items`** — which system section (or `##` heading) and which tool definition
+is the big one, as raw local counts — ride only the first call of a turn and
+any call after the prefix changed (a search loaded an MCP tool, a persona
+rewrote the prompt; the key is a hash of the instructions text and the tool
+names): it is byte-identical between the steps of a turn, and a turn is the
+smallest window a reader ever loads. Both `step` and the "already said" memory
+are kept per `who` and per child (`Tracer`), so a retried attempt keeps
+counting, a second compaction in one turn is its step 2, and each subagent's
+first call carries its own `items`.
+
+The counting runs on the call's end, before the step's tools, so the record is
+in the journal before anything the step does — and the message counts are
+cached by content, so a step pays only for what it added to the history.
+
+On the server the record is filed by the same path every other door's take
+(`fileCall`, `server/src/model-calls/index.ts`): the `step` this runtime fills
+is kept, the open turn and a `model_calls` ledger row are added, and the
+thread's `session_config.callsVia` says `acp`. One request is still outside
+it: a Compact asked for from the menu while the thread is idle
+(`_daedalus/session/compact`, `src/app.ts`) runs the summarizer with no turn
+and no hooks, so that call is neither metered nor recorded.
 
 ## What is still not editable
 

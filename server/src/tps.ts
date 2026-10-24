@@ -1,4 +1,4 @@
-import type { TpsStats, TurnGeneration } from "./protocol.js";
+import type { TpsStats, TurnGeneration, TurnWaits } from "./protocol.js";
 
 /**
  * Output speed — one pure function, run at both ends.
@@ -37,10 +37,20 @@ export function generationRate(generation: TurnGeneration | undefined): number |
   return generation ? rateOf(generation.outputTokens, generation.decodeMs) : null;
 }
 
+const addWaits = (a: TurnWaits | undefined, b: TurnWaits): TurnWaits => ({
+  totalMs: (a?.totalMs ?? 0) + b.totalMs,
+  ...Object.fromEntries(
+    (["heldMs", "compactMs", "retryMs"] as const)
+      .map((key) => [key, (a?.[key] ?? 0) + (b[key] ?? 0)] as const)
+      .filter(([, ms]) => ms > 0),
+  ),
+});
+
 export function addTps(stats: TpsStats | null, turn: TurnReading): TpsStats | null {
   const wall = turn.durationMs !== undefined ? rateOf(turn.outputTokens, turn.durationMs) : null;
   const gen = generationRate(turn.generation);
-  if (wall === null && gen === null) return stats;
+  const waits = turn.generation?.waits;
+  if (wall === null && gen === null && !waits) return stats;
 
   const base: TpsStats = stats ?? { min: 0, max: 0, outputTokens: 0, durationMs: 0 };
   const next: TpsStats = { ...base };
@@ -57,10 +67,13 @@ export function addTps(stats: TpsStats | null, turn: TurnReading): TpsStats | nu
     next.max = first ? gen : Math.max(base.max, gen);
     next.generatedTokens = (base.generatedTokens ?? 0) + turn.generation!.outputTokens;
     next.decodeMs = (base.decodeMs ?? 0) + turn.generation!.decodeMs;
-  } else if (!inGeneration) {
-    next.min = stats ? Math.min(base.min, wall!) : wall!;
-    next.max = stats ? Math.max(base.max, wall!) : wall!;
+  } else if (!inGeneration && wall !== null) {
+    /* `stats` may exist for its waits alone, with no rate to take a min of. */
+    const rated = base.outputTokens > 0;
+    next.min = rated ? Math.min(base.min, wall) : wall;
+    next.max = rated ? Math.max(base.max, wall) : wall;
   }
+  if (waits) next.waits = addWaits(base.waits, waits);
   return next;
 }
 

@@ -1,6 +1,6 @@
 import { generateText } from "ai";
 import type { AgentEnv } from "./env.js";
-import type { CallMetering } from "./metering.js";
+import type { CallHooks } from "./trace.js";
 import type { ModelFactory } from "./provider.js";
 
 const SYSTEM =
@@ -16,7 +16,7 @@ export async function generateTitle(
   modelId: string,
   prompt: string,
   signal: AbortSignal,
-  onCall?: (call: CallMetering) => void,
+  hooks?: CallHooks,
 ): Promise<string | null> {
   try {
     const { text } = await generateText({
@@ -26,7 +26,7 @@ export async function generateTitle(
       maxOutputTokens: 64,
       maxRetries: 0,
       abortSignal: signal,
-      onLanguageModelCallEnd: onCall,
+      ...hooks,
     });
     const title = text.trim().split("\n")[0]!.replace(/^["'`]+|["'`.]+$/g, "").trim();
     const words = title.split(/\s+/);

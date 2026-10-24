@@ -24,7 +24,7 @@
  * choke point every ACP agent's question funnels through. The engine's job is
  * only to hand the policy to `manager.create`; `AcpBridge.park` does the rest.
  *
- * **It runs a whole workflow, not just a prompt.** `workflows.ts` already runs
+ * **It runs a whole workflow, not just a prompt.** `workflows/engine.ts` already runs
  * declarative phased pipelines against a real thread with per-step JSON-schema
  * outputs and a repair turn. A routine that could only ask one question nightly
  * would be the weaker half of a machine already built. A workflow-bodied
@@ -32,7 +32,7 @@
  * starts the runner on it. The one-level rule stands: a routine's run is a
  * parent, its steps are children, and a step can start neither.
  *
- * Modelled directly on `WorkflowRunner`, down to the shape of the derived key,
+ * Modelled directly on `WorkflowEngine`, down to the shape of the derived key,
  * the live-run cap, `recoverAtBoot` and `shutdown` — because it is the same
  * kind of object (a server-owned engine that puts real processes on this
  * machine) and a second idiom for it would be a second thing to reason about.
@@ -78,7 +78,9 @@ import { getProfile } from "./profiles.js";
 import { getProject } from "./projects.js";
 import { getAgent } from "./registry.js";
 import { getQuota } from "./quota.js";
-import { LIMITS, OutputError, extractJsonOutput, validateOutput } from "./workflow-schema.js";
+import { LIMITS, OutputError, extractJsonOutput, validateOutput } from "./workflows/graph.js";
+import type { RunView as WorkflowRunView } from "./workflows/types.js";
+import type { StartInput as WorkflowStartInput } from "./workflows/engine.js";
 import type { Session, SessionManager } from "./sessions.js";
 import type { ThreadEvent } from "./protocol.js";
 import { runFinishActions, type ActionDeps } from "./routine-actions.js";
@@ -103,7 +105,7 @@ export const ROUTINE_LINKS: LinkTables = {
 /**
  * Run threads alive at once, across every routine.
  *
- * The same shape and the same reason as `WorkflowRunner.MAX_LIVE_CHILDREN`:
+ * The same shape and the same reason as `ENGINE_LIMITS.liveChildren`:
  * these are real agent processes on one machine, each with a project's whole
  * cwd in front of it. The overlap policy below stops one routine from doubling
  * up on itself; this is what stops twenty of them from doing it at once.
@@ -248,7 +250,16 @@ const AutonomySchema = z.object({
 
 const BodySchema: z.ZodType<RoutineBody> = z.union([
   z.object({ kind: z.literal("prompt"), text: z.string().min(1).max(50_000) }),
-  z.object({ kind: z.literal("workflow"), definition: z.record(z.string(), z.unknown()) }),
+  z
+    .object({
+      kind: z.literal("workflow"),
+      definition: z.record(z.string(), z.unknown()).optional(),
+      ref: z.object({ name: z.string().min(1).max(200) }).optional(),
+      args: z.record(z.string(), z.unknown()).optional(),
+    })
+    .refine((b) => (b.definition !== undefined) !== (b.ref !== undefined), {
+      message: "a workflow body needs exactly one of `definition` or `ref`",
+    }),
 ]);
 
 const ActionSchema: z.ZodType<RoutineAction> = z.union([
@@ -752,22 +763,18 @@ export async function recordSkippedRun(
 // The engine
 // ---------------------------------------------------------------------------
 
-/** What the engine needs from `workflows.ts` to run a workflow-bodied routine.
+/** What the engine needs from `workflows/engine.ts` to run a workflow-bodied routine.
     A structural interface rather than the class, exactly as the manager takes
     `WorkflowUrlSource`, so the two engines do not import each other and either
     can be stood in for in a test. */
 export interface WorkflowHost {
-  start(parent: Session, definition: unknown, inputs?: unknown): Promise<{ id: string }>;
+  start(parent: Session, input: WorkflowStartInput): Promise<{ id: string }>;
   wait(runId: string, timeoutMs: number): Promise<WorkflowRunSummary | null>;
   cancel(runId: string, reason?: string): boolean;
 }
 
-export interface WorkflowRunSummary {
-  id: string;
-  status: string;
-  error: string | null;
-  steps: { name: string; status: string; output: unknown; error: string | null; endedAt: number | null }[];
-}
+/** The engine's own `RunView` — steps, gates, usage and the script's `result`. */
+export type WorkflowRunSummary = WorkflowRunView;
 
 export interface RoutineEngineDeps {
   port: number;
@@ -812,7 +819,7 @@ interface RunState {
 
 export class RoutineEngine {
   /** The credential in `/rt/<key>/…`, derived from `data/loopback-secret` (stable across
-      restarts, never written anywhere else) — exactly `WorkflowRunner`'s and the
+      restarts, never written anywhere else) — exactly `WorkflowEngine`'s and the
       gateway shim's. Its only readers are inside this process (and a caller a
       person pasted it to), and a leak is revoked by rotating the secret file,
       which changes every loopback key — which is why a trigger may also hold its
@@ -1165,7 +1172,7 @@ export class RoutineEngine {
   /**
    * Watch the run's thread: keep its prose, count its tokens, hold the ceiling.
    *
-   * The same subscription `workflows.ts` uses for a step, and for the same
+   * The same subscription `workflows/step.ts` uses for a step, and for the same
    * reason — ACP's `PromptResponse` carries no text, so the stream is the only
    * place a run's answer can be read from. Updates carrying a `sessionId` are a
    * child's (a Task tool's subagent, a workflow step) and are skipped: the
@@ -1291,7 +1298,7 @@ export class RoutineEngine {
    * A workflow-bodied run: the same thread, driven by the workflow engine.
    *
    * The run's thread is created exactly as a prompt-bodied one is and then
-   * handed to `WorkflowRunner.start`, so the steps are its children, the card
+   * handed to `WorkflowEngine.start`, so the steps are its children, the card
    * in its transcript is the `workflow-group` row the client already draws, and
    * nothing here learns a second shape. The one-level rule holds by
    * construction: the runner refuses a parent that is itself a step, and this
@@ -1303,28 +1310,35 @@ export class RoutineEngine {
        there is no prompt of ours to append it to, and a definition that wants
        it says `{{inputs.payload}}` — which is the same opt-in the prompt body's
        preamble asks for, expressed the way a workflow expresses everything. */
-    const started = await host.start(session, body.definition, run.payload ? { payload: run.payload } : {});
+    const args = { ...(body.args ?? {}), ...(run.payload ? { payload: run.payload } : {}) };
+    const started = await host.start(session, {
+      ...(body.ref ? { name: body.ref.name } : { definition: body.definition }),
+      args,
+      trigger: { kind: "routine", routineId: run.routine.id },
+    });
     const seconds = run.routine.autonomy.maxRunSeconds;
     const budget = seconds > 0 ? Math.min(seconds * 1000, WORKFLOW_WAIT_CAP_MS) : WORKFLOW_WAIT_CAP_MS;
     const view = await Promise.race([
       host.wait(started.id, budget),
       new Promise<null>((resolve) => run.abort.signal.addEventListener("abort", () => resolve(null), { once: true })),
     ]);
-    if (!view || view.status === "running") {
+    if (!view || view.status === "running" || view.status === "paused") {
       host.cancel(started.id, "the routine run ended");
       await this.close(run, "failed", run.error ?? "the workflow did not finish in time");
       return;
     }
-    /* The run's answer is the last step to finish — for a phased definition
-       that is a step of the final phase, which is where a pipeline puts its
+    /* The run's answer is the workflow's own `result` when it has one (a
+       script's return value); otherwise the last step to finish — for a phased
+       definition a step of the final phase, where a pipeline puts its
        conclusion. Nothing here tries to be cleverer than that: a run that wants
        a specific shape declares an `output` schema, and the step outputs are all
-       on the workflow run's own row for anyone who wants the rest. */
+       on the workflow run's own journal for anyone who wants the rest. */
     const last = [...view.steps]
       .filter((s) => s.status === "completed")
       .sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0))
       .pop();
-    if (last) run.output = typeof last.output === "string" ? last.output : JSON.stringify(last.output, null, 2);
+    const answer = view.result !== undefined && view.result !== null ? view.result : last?.output;
+    if (answer !== undefined && answer !== null) run.output = typeof answer === "string" ? answer : JSON.stringify(answer, null, 2);
     if (view.status !== "completed") {
       this.close(run, "failed", view.error ?? `the workflow ${view.status}`);
       return;

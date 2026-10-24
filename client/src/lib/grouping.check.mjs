@@ -5,7 +5,7 @@
 */
 import assert from "node:assert"
 
-import { buildRows, rowTailId, shareRows } from "./transcript-rows.ts"
+import { buildRows, proseGapAfter, rowTailId, shareRows, streamingRowIds } from "./transcript-rows.ts"
 
 const tool = (id) => ({ kind: "tool", id, title: id, status: "completed", toolKind: "read", content: [] })
 const thought = (id) => ({ kind: "thought", id, text: "thinking" })
@@ -67,46 +67,41 @@ assert.equal(kinds(buildRows([tool("a"), tool("b")], true)), "run", "two calls f
   assert.deepEqual(out[0].items.map((item) => item.id), ["a", "n1", "b"], "arrival order, notice in the middle")
 }
 
-// A thought ends the run it landed in and stands where it arrived: a fold holds
-// calls, so reasoning is never hidden behind a counting line that only mentions
-// calls.
+// A thought rides inside the run it explains: the reasoning leading a run or
+// sitting between two of its calls is part of the group, in its place. The
+// counting line still counts calls only.
 {
   const out = buildRows([tool("a"), tool("b"), thought("t1"), tool("c"), tool("d")], true)
-  assert.equal(kinds(out), "run,thought,run", `a thought splits the run, got ${kinds(out)}`)
-  assert.deepEqual(out[0].items.map((item) => item.id), ["a", "b"])
-  assert.deepEqual(out[2].items.map((item) => item.id), ["c", "d"])
+  assert.equal(kinds(out), "run", `an interior thought stays inside the run, got ${kinds(out)}`)
+  assert.deepEqual(out[0].items.map((item) => item.id), ["a", "b", "t1", "c", "d"])
 }
 
-// A leading thought and a trailing one are outside the fold too — the group is
-// the calls, not the stretch around them.
+// A leading thought opens the run; a trailing one is the live tail and stands
+// after it.
 {
   const lead = buildRows([thought("t1"), tool("a"), tool("b")], true)
-  assert.equal(kinds(lead), "thought,run", `got ${kinds(lead)}`)
-  assert.deepEqual(lead[1].items.map((item) => item.id), ["a", "b"])
+  assert.equal(kinds(lead), "run", `got ${kinds(lead)}`)
+  assert.deepEqual(lead[0].items.map((item) => item.id), ["t1", "a", "b"])
   const tail = buildRows([tool("a"), tool("b"), thought("t1")], true)
   assert.equal(kinds(tail), "run,thought", `got ${kinds(tail)}`)
   assert.deepEqual(tail[0].items.map((item) => item.id), ["a", "b"])
 }
 
-// A notice still waiting when a thought arrives is trailing, not interior: the
-// run it was in is drawn, then the notice, then the thought that ended it.
+// Held thoughts and notices keep arrival order when a call settles them.
 {
-  const out = buildRows([tool("a"), tool("b"), notice("n1"), thought("t1"), tool("c"), tool("d")], true)
-  assert.equal(kinds(out), "run,notice,thought,run", `got ${kinds(out)}`)
-  assert.deepEqual(out[0].items.map((item) => item.id), ["a", "b"])
-  assert.deepEqual(out[3].items.map((item) => item.id), ["c", "d"])
+  const out = buildRows([tool("a"), notice("n1"), thought("t1"), tool("b")], true)
+  assert.equal(kinds(out), "run", `got ${kinds(out)}`)
+  assert.deepEqual(out[0].items.map((item) => item.id), ["a", "n1", "t1", "b"])
 }
 
-// `call -> think -> notice -> call` is four rows now: thinking settles nothing
-// into the open, and a lone call is not a run for a notice to ride in.
+// A notice and a thought both trailing: the run, then them in order.
 {
-  const out = buildRows([tool("a"), thought("t1"), notice("n1"), tool("b")], true)
-  assert.equal(kinds(out), "tool,thought,notice,tool", `got ${kinds(out)}`)
+  const out = buildRows([tool("a"), tool("b"), notice("n1"), thought("t1")], true)
+  assert.equal(kinds(out), "run,notice,thought", `got ${kinds(out)}`)
 }
 
-// `think -> edit -> think -> 3 edits -> think`: every thought ends the run it
-// lands in, so the three edits between two of them are the only fold
-// (`groupEdits`, which `expandEdits` off arms in the transcript).
+// `think -> edit -> think -> 3 edits -> think` with edits grouped (`groupEdits`):
+// the thinking between them rides in the run, the last thought trails it.
 {
   const out = buildRows(
     [thought("t1"), edit("e1"), thought("t2"), edit("e2"), edit("e3"), edit("e4"), thought("t3")],
@@ -115,12 +110,18 @@ assert.equal(kinds(buildRows([tool("a"), tool("b")], true)), "run", "two calls f
     false,
     true
   )
-  assert.equal(kinds(out), "thought,tool,thought,run,thought", `got ${kinds(out)}`)
-  assert.deepEqual(out[3].items.map((item) => item.id), ["e2", "e3", "e4"])
+  assert.equal(kinds(out), "run,thought", `got ${kinds(out)}`)
+  assert.deepEqual(out[0].items.map((item) => item.id), ["t1", "e1", "t2", "e2", "e3", "e4"])
 }
 
-// One call with the thinking around it is three rows, not a fold: a group needs
-// a second call to count.
+// A thought before prose trails the run it followed, and prose starts a new one.
+{
+  const out = buildRows([tool("a"), tool("b"), thought("t1"), prose("p1"), tool("c"), tool("d")], true)
+  assert.equal(kinds(out), "run,thought,agent,run", `got ${kinds(out)}`)
+}
+
+// One call with the thinking around it is rows, not a fold: a group needs a
+// second call to count.
 {
   const out = buildRows([thought("t1"), tool("a"), thought("t2")], true)
   assert.equal(kinds(out), "thought,tool,thought", `got ${kinds(out)}`)
@@ -142,12 +143,11 @@ assert.equal(kinds(buildRows([tool("a"), tool("b")], true)), "run", "two calls f
 }
 
 // Mixed views under the same stretch: one parent group, its same-view children
-// split — the calls on one side of a thought only, since the thought ended the
-// run before them.
+// split, the thought riding in the group.
 {
   const out = buildRows([tool("a"), thought("t1"), edit("e1"), tool("b")], true, false, false, true)
-  assert.equal(kinds(out), "tool,thought,tool-group", `got ${kinds(out)}`)
-  assert.deepEqual(out[2].items.map((item) => item.id), ["e1", "b"])
+  assert.equal(kinds(out), "tool-group", `got ${kinds(out)}`)
+  assert.deepEqual(out[0].items.map((item) => item.id), ["a", "t1", "e1", "b"])
 }
 
 // A notice BEFORE the first call is a break: the run starts after it.
@@ -194,6 +194,66 @@ assert.equal(kinds(buildRows([tool("a"), tool("b")], true)), "run", "two calls f
   assert.notStrictEqual(shared[2], first[2], "a changed run is new")
   assert.strictEqual(shared[2].items[1], d2, "and carries the new item")
   assert.strictEqual(shared[2].items[0], c, "beside the old one")
+}
+
+// The wait before a reply is measured from the last call, through any reasoning
+// that ended the step: a trailing thought is the live tail, not part of the fold,
+// so it stands between the run and the prose and used to hide the gap entirely.
+{
+  const timed = (id, startedAt, endedAt) => ({ ...tool(id), startedAt, endedAt })
+  const thinking = (id, at) => ({ ...thought(id), at })
+  const said = (id, at) => ({ ...prose(id), at })
+  const out = buildRows([timed("a", 0, 1000), thinking("t", 1000), said("p", 5000)], true)
+  assert.equal(kinds(out), "tool,thought,agent", `the tail thought stays put, got ${kinds(out)}`)
+  assert.equal(proseGapAfter(out, 2), 4000, "the wait runs from the call, across the thought")
+
+  // Anything a person sent in between is a break, not a wait to measure across.
+  const spoken = buildRows([timed("a", 0, 1000), { kind: "user", id: "u", text: "hi", at: 3000 }, said("p", 5000)], true)
+  assert.equal(proseGapAfter(spoken, 2), undefined, "a message between them ends it")
+
+  // And nothing above a reply means nothing to subtract from.
+  assert.equal(proseGapAfter(buildRows([said("p", 5000)], true), 0), undefined)
+}
+
+// What an open turn is still writing: the newest row, and the group under a
+// thought standing at the tail. The trailing thought is outside the fold it
+// explains, so reading "is this the tail" off `rowTailId` alone left the group
+// folding shut the moment the model started thinking and opening again when the
+// call after it landed.
+{
+  const calls = buildRows([tool("a"), tool("b")], true)
+  assert.deepEqual([...streamingRowIds(calls, "b")], ["a"], `a live run is live, got ${kinds(calls)}`)
+
+  const thinking = buildRows([tool("a"), tool("b"), thought("t1")], true)
+  assert.deepEqual([...streamingRowIds(thinking, "t1")].sort(), ["a", "t1"], `the fold under a trailing thought stays live`)
+
+  // A leading thought with no run under it is only itself — there is no fold to
+  // keep open, and a group of one call is a step, not a group.
+  const lead = buildRows([thought("t1"), tool("a")], true)
+  assert.deepEqual([...streamingRowIds(lead, "a")], ["a"])
+
+  // Prose already on screen does not become unfinished because the agent has
+  // started thinking again: only a group is read through a trailing thought.
+  const after = buildRows([tool("a"), tool("b"), thought("t1"), prose("p1"), thought("t2")], true)
+  assert.deepEqual([...streamingRowIds(after, "t2")], ["t2"], `got ${kinds(after)}`)
+
+  // A row that is not the tail at all is never live — including a trailing
+  // thought whose id is not what the rows actually end in.
+  assert.deepEqual([...streamingRowIds(calls, "nope")], [])
+  assert.deepEqual([...streamingRowIds(calls, undefined)], [])
+  assert.deepEqual([...streamingRowIds(thinking, "b")], [])
+}
+
+// Inside an "Answers only" fold the newest item is a level down, and the run a
+// trailing thought belongs to is a child of the fold: asked against the fold's
+// own rows, the same reading answers.
+{
+  const fold = buildRows([tool("a"), tool("b"), tool("c"), thought("t1")], true, true, false, false, true)
+  assert.equal(kinds(fold), "work-fold")
+  const inner = fold[0].rows
+  assert.equal(kinds(inner), "run,thought")
+  assert.deepEqual([...streamingRowIds(inner, "t1")].sort(), ["a", "t1"])
+  assert.deepEqual([...streamingRowIds(fold, "t1")], [fold[0].id])
 }
 
 console.log("grouping.check: ok")

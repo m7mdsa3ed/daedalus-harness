@@ -27,7 +27,7 @@ import {
   SquareIcon,
   WrenchIcon,
 } from "lucide-react"
-import { ChevronRightIcon, ClockIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon, Layers as LayersIcon } from "lucide-react"
+import { ChevronRightIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon, Layers as LayersIcon } from "lucide-react"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu } from "@/components/item-context-menu"
@@ -121,47 +121,58 @@ import {
   fileRangeOf,
   harnessSummary,
   parseTaskNotification,
-  stepIdOf,
   toolHeading,
   toolKindOf,
   toolViewOf,
   workflowAgentItems,
   workflowAgentResult,
 } from "@/lib/tools"
-import { buildRows } from "@/lib/transcript-rows"
-import type { Row, RunItem, SubagentGroup, ToolGroup, ToolRunGroup, WorkFold } from "@/lib/transcript-rows"
+import { buildRows, rowTailId, streamingRowIds } from "@/lib/transcript-rows"
+import type { Row, RunItem, SubagentGroup, ToolGroup, WorkFold } from "@/lib/transcript-rows"
 import { StepTokens, TokenSummary, useStepTokens } from "@/components/token-usage"
 import { Logo } from "@/components/ui/logo"
 import { cn, stagger } from "@/lib/utils"
 import { toolVariantOf, useLayoutOptionsContext } from "@/lib/layout-options"
 import type { SubagentItem, TextItem, ThreadItem, ToolItem } from "@/lib/store"
-import type { SubagentCall } from "@/lib/tools"
+import type { StepLead, SubagentCall } from "@/lib/tools"
 import { threadPath } from "@/lib/router"
 import { Link } from "react-router"
 import { BranchGutter, gutterWidth } from "@/components/thread-items/branch-gutter"
 import { layoutRun } from "@/lib/tool-graph"
-import { burstMs, gapMinMs, layoutBatches, type StepBatch } from "@/lib/tool-batches"
+import { batchSpanOf, burstMs, gapMinMs, layoutBatches, type BatchSpan } from "@/lib/tool-batches"
 import { useRowState } from "@/lib/row-open"
 
+
+/* One empty set for every fold that is not the tail, so its memoised children
+   do not see a new identity per render. */
+const EMPTY_ROWS: ReadonlySet<string> = new Set()
 
 export const ToolRun = React.memo(function ToolRun({
   items,
   nestedRows,
   showTimestamps,
   tail,
+  parallel,
+  nested,
 }: {
   items: RunItem[]
   nestedRows?: ToolGroup["children"]
   showTimestamps?: boolean
+  /** This group is one response's parallel batch (`transcript-rows.ts`
+      `foldStretch`): drawn on the batch wash, with its count in the header. */
+  parallel?: boolean
   /** This group is the transcript's last row and the turn is still open — the
       agent has said nothing since, so the run is not finished being written
       even in the gaps between its calls. */
   tail?: boolean
+  /** This group is drawn inside another run's rail: its header sits in the same
+      title column as the step rows beside it, so it wears one mark. */
+  nested?: boolean
 }) {
-  /* A run's steps are calls and the setting changes between them
-     (`groupToolRuns` — a thought ends a run), and its summary and its status are
-     the calls' own: the counting line says what the group did, which is what a
-     call is for. */
+  /* A run's steps are calls, the thoughts leading or between them and the
+     setting changes between them (`groupToolRuns`), and its summary and its
+     status are the calls' own: the counting line says what the group did, which
+     is what a call is for. */
   const tools = items.filter((item): item is ToolItem => item.kind === "tool")
   const failed = tools.filter((item) => item.status === "failed").length
   const active = tools.some((item) => item.status === "in_progress" || item.status === "pending")
@@ -169,7 +180,7 @@ export const ToolRun = React.memo(function ToolRun({
   /* One direction for the whole run, from its first call: its steps share a
      rail, and a rail cannot sit on both sides. */
   const dir = textDir(tools[0]?.title)
-  const displayItems: Array<RunItem | ToolRunGroup> = nestedRows ?? items
+  const displayItems: ToolGroup["children"] = nestedRows ?? items
   const displayLength = displayItems.length
   const view = useLayoutOptionsContext()
   const systemReducedMotion = useReducedMotion()
@@ -201,7 +212,9 @@ export const ToolRun = React.memo(function ToolRun({
      open through the turn that follows it and a hand-closed one stays closed. */
   /* Remembered across a dormant row's revival (`lib/row-open`), keyed by the
      run's first item — the id the run's row carries. */
-  const [choice, setChoice] = useRowState<boolean | null>(items[0]?.id && `run:${items[0].id}`, null)
+  /* A parallel group shares its first item with the stretch it opens, so it
+     keeps its own key. */
+  const [choice, setChoice] = useRowState<boolean | null>(items[0]?.id && `${parallel ? "batch" : "run"}:${items[0].id}`, null)
   const railRef = React.useRef<HTMLDivElement>(null)
   const isRun = tools.length > 1 || nestedRows !== undefined
   const [showRunHeader] = React.useState(isRun)
@@ -274,30 +287,22 @@ export const ToolRun = React.memo(function ToolRun({
     [branch, showing]
   )
   const gutter = graph ? gutterWidth(Math.max(0, ...graph.map((row) => row.lane)), branchVariant) : 0
-  /* Which calls were one response's parallel batch, and the waits between
-     batches — the runtime's step id where it sends one, the steps' own timing
-     where it does not, so it holds in every layout and every runtime
-     (`lib/tool-batches.ts`). The two options are the reader's. */
+  /* The waits between one batch of calls and the next — the runtime's step id
+     where it sends one, the steps' own timing where it does not, so it holds
+     in every layout and every runtime (`lib/tool-batches.ts`). The batch
+     itself is drawn only as a group (`parallel`, `groupToolRuns`): off, its
+     calls are plain rows. */
   const batches = React.useMemo(
-    () =>
-      layoutBatches(
-        showing.map((item) =>
-          item.kind === "tool"
-            ? {
-                start: item.startedAt,
-                end: item.endedAt ?? (item.status === "in_progress" || item.status === "pending" ? undefined : item.startedAt),
-                step: stepIdOf(item.meta),
-              }
-            : {}
-        ),
-        { burstMs: burstMs(view.batchBurst), gapMinMs: gapMinMs(view.gapMin) }
-      ),
+    () => layoutBatches(showing.map(batchSpanOfRow), { burstMs: burstMs(view.batchBurst), gapMinMs: gapMinMs(view.gapMin) }),
     [showing, view.batchBurst, view.gapMin]
   )
-
   return (
     <StepDirContext.Provider value={dir}>
-    <div dir={dir}>
+    {/* The batch wash sits 4px outside every hover ground it holds: the header
+        and the rows each bleed 4px past their content edge, so the wash takes
+        8px at the sides (the content stays on the column's edge) and 4px above
+        and below — the same inset on all four sides. */}
+    <div dir={dir} className={cn(parallel && "-mx-2 rounded-xl bg-primary/[0.06] px-2 py-1")}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -306,7 +311,7 @@ export const ToolRun = React.memo(function ToolRun({
         {/* The header starts on its marks — the stack is this row's mark column,
             and the rail leaves from under it — and what opens the run rides the
             row's end instead. See below. */}
-        <RunAvatarStack items={items} />
+        <RunAvatarStack items={items} single={nested} />
         {/* English UI words, isolated: in an RTL run "2 files" would otherwise
             reorder into "files 2". */}
         <span
@@ -322,7 +327,20 @@ export const ToolRun = React.memo(function ToolRun({
         {/* The run's own trailing column, on the same group its steps use — a
             count that sits a pixel off the rows it heads reads as a different
             kind of thing than it is. */}
-        <StepMeta parts={[failed > 0 ? <span className="text-destructive">{failed} failed</span> : null]} />
+        <StepMeta
+          parts={[
+            parallel ? (
+              <span
+                title="Calls the agent made in one response, run side by side"
+                className="flex items-center gap-1 font-medium"
+              >
+                <LayersIcon aria-hidden className="size-3 shrink-0" />
+                {tools.length} in parallel
+              </span>
+            ) : null,
+            failed > 0 ? <span className="text-destructive">{failed} failed</span> : null,
+          ]}
+        />
         {/* The disclosure, at the row's end: the line is a sentence about what
             the run did, so the arrow that opens it comes after the sentence
             rather than in front of it. */}
@@ -379,11 +397,9 @@ export const ToolRun = React.memo(function ToolRun({
                 className={cn(
                   branch && !already.has(item.id) && "harness-item-in",
                   branch ? "relative flow-root" : RAIL_ELBOW,
-                  /* A run holds calls and notices (`RunItem`), both of which draw
-                     a mark in the column the rail aims at, so nothing on this
-                     rail is plain: the rows the line breaks for — prose, a
-                     thought, a plan — are drawn outside the run they ended. */
-                  !branch && railPlain(item.kind),
+                  /* A call draws a mark in the column the rail aims at; a thought
+                     does when drawn as a step, and a notice is a plain rule. */
+                  !branch && railPlain(item.kind, item.kind === "thought" && view.thoughtStep),
                   !branch && index < showing.length - 1 && RAIL_TAIL
                 )}
               >
@@ -399,11 +415,10 @@ export const ToolRun = React.memo(function ToolRun({
                 {/* The entrance rides an inner box: the rail is this wrapper's
                     pseudos, and a row sliding in must not take the line with it. */}
                 <div className={cn("relative isolate", !branch && !already.has(item.id) && "harness-item-in")}>
-                  <BatchBand batch={batches[index]} />
                   {/* Nested rows retain their own same-view fold; direct items use
                       the ordinary step renderer and preserve a live thought tail. */}
-                  {item.kind === "run" ? (
-                    <RowView row={item} showTimestamps={showTimestamps} streaming={tail && index === showing.length - 1} />
+                  {item.kind === "run" || item.kind === "tool-group" ? (
+                    <RowView row={item} showTimestamps={showTimestamps} streaming={tail && index === showing.length - 1} nested />
                   ) : item.kind === "tool" ? (
                     <ToolStep item={item} showTimestamp={showTimestamps} />
                   ) : (
@@ -413,9 +428,8 @@ export const ToolRun = React.memo(function ToolRun({
                       streaming={tail && index === showing.length - 1}
                     />
                   )}
-                  <BatchFoot batch={batches[index]} />
                 </div>
-                {batches[index].gapMs !== undefined && <StepGap ms={batches[index].gapMs} />}
+                {batches[index].gapMs !== undefined && <StepGap ms={batches[index].gapMs} lead={batches[index].gapLead} />}
               </div>
             ))}
             </div>
@@ -445,9 +459,12 @@ export const RowView = React.memo(function RowView({
   showTimestamps,
   streaming,
   compactError,
+  nested,
 }: {
   row: Row
   compactError?: boolean
+  /** Drawn inside a run's rail (see `ToolRun`'s `nested`). */
+  nested?: boolean
   onContinue?: () => void
   onRetry?: () => void
   onRetryAsPaths?: () => void
@@ -465,9 +482,11 @@ export const RowView = React.memo(function RowView({
   streaming?: boolean
 }) {
   if (row.kind === "run")
-    return <ToolRun items={row.items} showTimestamps={showTimestamps} tail={streaming} />
+    return <ToolRun items={row.items} parallel={row.parallel} showTimestamps={showTimestamps} tail={streaming} nested={nested} />
   if (row.kind === "tool-group")
-    return <ToolRun items={row.items} nestedRows={row.children} showTimestamps={showTimestamps} tail={streaming} />
+    return (
+      <ToolRun items={row.items} nestedRows={row.children} parallel={row.parallel} showTimestamps={showTimestamps} tail={streaming} nested={nested} />
+    )
   if (row.kind === "shell-run")
     return <ShellRun items={row.items} showTimestamps={showTimestamps} />
   if (row.kind === "work-fold")
@@ -535,6 +554,14 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
   const [open, setOpen] = useRowState(row.id, false)
   const railRef = React.useRef<HTMLDivElement>(null)
   const rows = row.rows
+  /* Which of the fold's own rows are still being written. The fold is handed
+     one boolean for the tail of the whole transcript, and the newest item may
+     sit a level down — the run a trailing thought belongs to is inside this
+     fold, so the question is asked against these rows (`streamingRowIds`). */
+  const liveChildren = React.useMemo(
+    () => (streaming ? streamingRowIds(rows, rowTailId(rows[rows.length - 1])) : EMPTY_ROWS),
+    [rows, streaming]
+  )
   const tools = surfaceTools(rows)
   const failed = tools.filter((tool) => tool.status === "failed").length
   const summary = summarise(tools)
@@ -604,7 +631,7 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
                   <RowView
                     row={inner}
                     showTimestamps={showTimestamps}
-                    streaming={streaming && index === rows.length - 1}
+                    streaming={liveChildren.has(inner.id)}
                   />
                 </div>
               ))}
@@ -724,6 +751,7 @@ export const SubagentStep = React.memo(function SubagentStep({
       firstRow={ask ? <AskAgentChip ask={ask} /> : undefined}
       control={stoppable ? <SubagentStop childId={session.sessionId} /> : undefined}
       mono={false}
+      stackMeta
       startedAt={head.startedAt}
       /* Only a tool head has an ending to hand: the call that launched the
          worker settles when the worker does. A session head's end is the state
@@ -1010,6 +1038,14 @@ function SubagentTranscript({
   const view = useLayoutOptionsContext()
   const rows = limit ? all.slice(-limit) : all
   const hidden = all.length - rows.length
+  /* What this worker is still writing — the same reading the thread's own
+     transcript makes, asked of the rail: a trailing thought stands outside the
+     fold it explains, so "the last row" alone left its run folding shut every
+     time the child started thinking. */
+  const liveRows = React.useMemo(
+    () => (active ? streamingRowIds(rows, rowTailId(rows[rows.length - 1])) : EMPTY_ROWS),
+    [rows, active]
+  )
   const railSlot = useRailSlots([...rows.map((row) => row.id), ...(active ? ["working"] : [])], true, hidden > 0)
   return (
     <div className={RUN_RAIL_CLASS}>
@@ -1025,7 +1061,7 @@ function SubagentTranscript({
             <RowView
               row={row}
               showTimestamps={showTimestamps}
-              streaming={active && i === rows.length - 1}
+              streaming={liveRows.has(row.id)}
             />
           </div>
         </div>
@@ -1373,15 +1409,14 @@ function useThoughtElapsed(
 
   /* After the hooks, never before: a return above them would change what the
      next render calls. The order matters, because an item can have both
-     readings: a socket that reattached mid-run rebuilds the item from the
-     journal (`at`/`endedAt`, the run so far) and then watches the rest of it
-     stream. There the frozen figure covers the whole run and the journal's end
-     is stale by however long it kept going, so the measurement this mount took
-     is the one that stands. */
-  if (!streaming && settled.current !== null) return settled.current
+     readings. `endedAt` is the last chunk's arrival (live chunks move it as
+     they join the run), so it wins: the frozen figure is taken when the row
+     stops being the tail, which is when the tool call after it landed — later
+     than the thinking ended by however long the model spent writing the call. */
   if (!streaming && startedAt !== undefined && endedAt !== undefined) {
     return Math.max(0, endedAt - startedAt)
   }
+  if (!streaming && settled.current !== null) return settled.current
   return elapsed
 }
 
@@ -1423,74 +1458,52 @@ function ThoughtDetail({ text, streaming, label }: { text: string; streaming: bo
 
 // ─── Per-kind layouts ────────────────────────────────────────────────────────
 
-/** The ground behind a parallel batch: a faint `primary` wash, rounded where the
-    batch begins and ends, so the calls that went out in one response read as one
-    object whatever the layout draws on the other side. It paints behind the rows
-    (`-z-10` inside the row wrapper's `isolate`), so nothing is tinted over text,
-    and it bleeds into the 4px the run's clip keeps past the rows — a row's own
-    hover ground bleeds the same 4px, so the two meet. `primary` is the one tint a
-    row leaves for something about the run rather than the call. No edge line: the
-    wash and the foot strip are the whole frame. */
-function BatchBand({ batch }: { batch: StepBatch }) {
-  if (!batch.edge) return null
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "pointer-events-none absolute -inset-x-1 -z-10 bg-primary/[0.06] -top-0.5 -bottom-0.5",
-        batch.edge === "start" && "top-0 rounded-t-xl",
-        batch.edge === "end" && "bottom-0 rounded-b-xl"
-      )}
-    />
-  )
-}
-
-/** The batch's own row, closing it under its last call: a background strip of
-    the same faint `primary` wash, one line box (`h-6`), bleeding the band's 4px so
-    it meets the band's edges. It is what the batch *is* — how many calls went
-    out in one response — and how it stands: "1 of 3 running" while any call is
-    out (the shimmer the rows use for live work), then what they cost together
-    once every one has ended, the time of the slowest and not the sum, because
-    they ran side by side. Never a row of its own on the rail: it sits inside the
-    last call's wrapper, so it takes no mark and no elbow. */
-function BatchFoot({ batch }: { batch: StepBatch }) {
-  if (batch.edge !== "end" || !batch.size) return null
-  const running = batch.running ?? 0
-  return (
-    <div
-      title="Calls the agent made in one response, run side by side"
-      className="-mx-1 mt-0.5 flex h-6 items-center gap-1.5 rounded-b-xl bg-primary/[0.06] ps-8 pe-3 text-xs tabular-nums text-muted-foreground"
-    >
-      <LayersIcon aria-hidden className="size-3 shrink-0" />
-      <span className="shrink-0 font-medium">{batch.size} in parallel</span>
-      <span className="min-w-0 flex-1" />
-      {running > 0 ? (
-        <span className="harness-shimmer shrink-0 text-muted-foreground">
-          {running} of {batch.size} running
-        </span>
-      ) : (
-        batch.spanMs !== undefined && <span className="shrink-0 text-muted-foreground">{formatElapsed(batch.spanMs)}</span>
-      )}
-    </div>
-  )
+/** A row's span for the batch layout: a call's own; a nested group's is its
+    calls together, so the wait after it is still drawn; anything else has none. */
+function batchSpanOfRow(item: ToolGroup["children"][number]): BatchSpan {
+  if (item.kind === "tool") return batchSpanOf(item)
+  if (item.kind !== "run" && item.kind !== "tool-group") return {}
+  const spans = item.items.filter((member): member is ToolItem => member.kind === "tool").map(batchSpanOf)
+  const start = Math.min(...spans.map((span) => span.start ?? Infinity))
+  if (!Number.isFinite(start)) return {}
+  const end = spans.some((span) => span.end === undefined) ? undefined : Math.max(...spans.map((span) => span.end ?? 0))
+  /* The group's request is its earliest call's, which is the one that says it. */
+  return { start, end, lead: spans.find((span) => span.start === start)?.lead }
 }
 
 /** The wait between one batch of calls settling and the next starting: the
     agent's own time (the model answering, mostly), since a reader's approval is
-    already taken out of a call's length. A hairline and a figure under the
-    step it follows, aligned to the title column — never a row of its own, so it
+    already taken out of a call's length. Drawn like a config-change notice — a
+    centered label between two hairlines — but never a row of its own, so it
     cannot take a mark or a rail elbow. */
-function StepGap({ ms }: { ms: number }) {
+export function StepGap({ ms, lead }: { ms: number; lead?: StepLead }) {
   return (
-    <div
-      title="Time between this step finishing and the next one starting"
-      className="flex items-center gap-2 ps-7 pe-1 pt-0.5 pb-1 text-[0.625rem] tabular-nums text-muted-foreground"
-    >
-      <ClockIcon aria-hidden className="size-2.5 shrink-0" />
-      <span className="shrink-0">{formatElapsed(ms)}</span>
+    <div title={gapTitle(ms, lead)} className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+      <span aria-hidden className="h-px min-w-0 flex-1 bg-border" />
+      <span className="shrink-0 tabular-nums">Time between steps · {formatElapsed(ms)}</span>
       <span aria-hidden className="h-px min-w-0 flex-1 bg-border" />
     </div>
   )
+}
+
+/** The gap's tooltip: what it is, and — when the runtime metered the request
+    that ended it — what the wait was made of. The remainder is the tools
+    settling and the harness's own work, said only when it is worth a line. */
+function gapTitle(ms: number, lead?: StepLead): string {
+  const head = "Time between this step finishing and the next one starting"
+  if (!lead) return head
+  const parts: [string, number | undefined][] = [
+    ["Held (paused)", lead.heldMs],
+    ["Compacting the history", lead.compactMs],
+    ["Backing off a failed request", lead.retryMs],
+    ["Model to first output", lead.ttftMs],
+    ["Model writing before the call", lead.writeMs],
+  ]
+  const named = parts.reduce((sum, [, part]) => sum + (part ?? 0), 0)
+  const other = ms - named
+  if (other >= 100) parts.push(["Other (tools settling, harness)", other])
+  const lines = parts.filter(([, part]) => part !== undefined && part >= 50).map(([label, part]) => `${label}  ${formatElapsed(part!)}`)
+  return lines.length > 0 ? `${head}\n${lines.join("\n")}` : head
 }
 
 const ToolStep = React.memo(function ToolStep({

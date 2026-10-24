@@ -19,7 +19,7 @@ import {
 } from "@/components/composer/indicator"
 import { extractSubagent } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
-import { type ThreadState } from "@/lib/store"
+import { type ThreadState, workLive } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
 /** One subagent still at work, whichever way its runtime announced it. */

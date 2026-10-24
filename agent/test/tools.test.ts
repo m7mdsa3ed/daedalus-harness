@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildAgentApp } from "../src/app.js";
 import {
+  connectPair,
   initialize,
   makeClient,
   promptOf,
@@ -26,7 +27,7 @@ function freshCwd(): string {
     makeModel: scriptedModel([toolCallScript("read_file", { path: "hello.txt" }), textScript("Read it. ")]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/prompt", { sessionId, prompt: promptOf("read hello.txt") });
@@ -53,7 +54,7 @@ function freshCwd(): string {
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     harness.answerPermission("allow");
@@ -85,7 +86,7 @@ function freshCwd(): string {
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     harness.answerPermission("reject");
@@ -138,7 +139,7 @@ function freshCwd(): string {
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "acceptEdits" });
@@ -163,7 +164,7 @@ function freshCwd(): string {
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -207,7 +208,7 @@ function freshCwd(): string {
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     harness.answerElicitation({ action: "accept", content: { q1: "A" } });
@@ -234,7 +235,7 @@ function freshCwd(): string {
     makeModel: scriptedModel([toolCallScript("read_file", { path: "peek.txt" }), textScript("Plan: … ")]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "plan" });

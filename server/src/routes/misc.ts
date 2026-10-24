@@ -2,10 +2,12 @@ import type { Hono } from "hono";
 import { z } from "zod";
 import { readWebSearch, saveWebSearch, type loadConfig } from "../config.js";
 import { getWebSearchUsage } from "../websearch-usage.js";
+import { SPEND_GROUPS, spendBy, type SpendGroupBy } from "../model-calls/index.js";
 import { SEARCH_LIMIT, searchEvents } from "../search.js";
 import { KnowledgeInputSchema, addKnowledge, deleteKnowledge, listAllKnowledge, listKnowledge } from "../knowledge.js";
 import { BundleSchema, exportBundle, importBundle } from "../backup.js";
 import { proxyGatewayRequest } from "../gateway-shim.js";
+import { handleOtlp } from "../model-calls/sources/otlp.js";
 import { handlePauseHook } from "../pause-hooks.js";
 import { proxyMcpRequest } from "../mcp-shim.js";
 import { getProfileQuota, getQuota, quotaCwd } from "../quota.js";
@@ -333,6 +335,12 @@ export function miscRoutes(
      404. See gateway-shim.ts for the one repair it makes on the way back. */
   app.all("/gw/*", (c) => proxyGatewayRequest(c.req.raw));
 
+  /* Claude Code's OpenTelemetry export, mounted the same way: the derived key
+     in the path is the credential and the thread must be attached to the
+     `otlp` door (model-calls/sources/otlp.ts). Logs are read; traces and
+     metrics are answered and dropped. */
+  app.all("/otlp/*", (c) => handleOtlp(c.req.raw));
+
   /* A paused thread's step hooks, mounted the same way: the derived key in
      the path is the credential, and the answer is only ever late, never "no"
      (pause-hooks.ts). */
@@ -348,6 +356,19 @@ export function miscRoutes(
   app.get("/api/websearch/usage", async (c) =>
     c.json(await getWebSearchUsage(Number(c.req.query("limit")) || 50)),
   );
+
+  /* Spend: billed sums out of the model-call ledger (`model_calls`), grouped by
+     `?groupBy=profile|model|project|agent|source` over `?from&to` (epoch ms,
+     both optional). Settings › Usage is the one surface that lists spend. */
+  app.get("/api/usage/calls", async (c) => {
+    const groupBy = c.req.query("groupBy") ?? "profile";
+    if (!(SPEND_GROUPS as readonly string[]).includes(groupBy)) {
+      return c.json({ error: `groupBy must be one of ${SPEND_GROUPS.join(", ")}` }, 400);
+    }
+    const from = Number(c.req.query("from"));
+    const to = Number(c.req.query("to"));
+    return c.json({ groupBy, groups: await spendBy(groupBy as SpendGroupBy, from || undefined, to || undefined) });
+  });
 
   /*
    * ---- subscription quota ----

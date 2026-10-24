@@ -19,7 +19,7 @@
 /* The one sanctioned reader of a vendor's `_meta` block, re-exported because
    `_meta` is not only a tool call's: a `usage_update` carries one too, and the
    alternative was `lib/tokens.ts` spelling the namespace a second time. */
-export { stepIdOf, vendorMeta } from "./tools/helpers"
+export { stepIdOf, stepLeadOf, vendorMeta, type StepLead } from "./tools/helpers"
 
 export type { ToolKind } from "./tools/naming"
 export {
@@ -118,6 +118,7 @@ export {
   childToolTitle,
   spawnModelOf,
   workflowInfoOf,
+  readableStep,
 } from "./tools/subagents"
 
 export type { WebResult, WebSearchCall, WebFetchCall } from "./tools/web"

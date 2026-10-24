@@ -90,8 +90,10 @@ import {
 } from "@/components/ui/data-table"
 import type { ColumnDef } from "@/lib/table"
 import { cn } from "@/lib/utils"
-import { INSET, PageHeader, ROW_CONTROL, Section, StatStrip, StatusBadge, type StatusTone } from "./primitives"
+import { INSET, PageHeader, ROW_CONTROL, Section, StatStrip, StatusBadge, TabBar, type StatusTone } from "./primitives"
 import { sectionMeta } from "./sections"
+import { useFeature } from "@/lib/queries/surfaces"
+import { SpendTab } from "./spend"
 
 /** The id of an agent's virtual Default profile — the server mints the same
     string (`DEFAULT_PROFILE_PREFIX + agentId`), and it is what a card asks for
@@ -705,6 +707,10 @@ export function QuotaPage() {
   const agents = useAgents()
   const meta = sectionMeta("usage")
   const { quotas, busy, reload } = useAllQuotaQuery()
+  /* Two readings of one question: what the plans have left, and what the
+     calls added up to (`model_calls`, a server that records them). */
+  const modelCalls = useFeature("modelCalls")
+  const [tab, setTab] = React.useState<"plans" | "spend">("plans")
 
   /* Default first, then the real profiles that name this agent — the same order
      the thread config menus use, and for the same reason: the agent as it ships
@@ -750,52 +756,70 @@ export function QuotaPage() {
       <PageHeader
         meta={meta}
         action={
-          <Button variant="outline" loading={busy} onClick={() => reload(true)}>
-            <RefreshCwIcon data-icon="inline-start" className={cn(busy && "animate-spin")} />
-            Refresh all
-          </Button>
+          tab === "plans" && (
+            <Button variant="outline" loading={busy} onClick={() => reload(true)}>
+              <RefreshCwIcon data-icon="inline-start" className={cn(busy && "animate-spin")} />
+              Refresh all
+            </Button>
+          )
         }
       />
-      {quotas && <UsageOverview quotas={quotas} nameOf={nameOf} />}
-      {providerProfiles.length + probeAgents.length === 0 && quotas !== null ? (
-        /* Nothing to draw, and the list is the only thing that could still name
-           something the catalog has not caught up with — so a wait until it
-           answers, and an empty page after. */
-        <Empty size="lg" icon={GaugeIcon}>
-          Nothing here reports a plan. Claude Code and Codex report the machine's own login; a provider that
-          sells a coding plan reports it when the profile names a usage provider in Settings › Profiles.
-        </Empty>
+      {modelCalls && (
+        <TabBar
+          items={[
+            { id: "plans", label: "Plans", hint: "What each subscription has left" },
+            { id: "spend", label: "Spend", hint: "What the model calls added up to" },
+          ]}
+          value={tab}
+          onChange={(id) => setTab(id as "plans" | "spend")}
+        />
+      )}
+      {tab === "spend" ? (
+        <SpendTab />
       ) : (
-        /* Providers first — somebody configured them on purpose — then the
-           runtime logins. */
         <>
-          {providerProfiles.length + probeAgents.length === 0 && <UsageSkeleton />}
-          {providerProfiles.length > 0 && (
-            <Section label="Providers" hint="Plans read from a profile's own provider account.">
-              {providerProfiles.map((profile) => (
-                <ProfileUsage
-                  key={`profile:${profile.id}`}
-                  profile={profile}
-                  initial={readingFor((quota) => quota.source === "profile" && quota.profileId === profile.id)}
-                />
-              ))}
-            </Section>
-          )}
-          {probeAgents.length > 0 && (
-            <Section label="Runtime logins" hint="What each agent's own subscription has left on this machine.">
-              {probeAgents.map((agent) => (
-                  <AgentUsage
-                    key={`agent:${agent.id}`}
-                    agentId={agent.id}
-                    agentName={agent.name}
-                    /* `source` decides which reading is the agent's, not the shape of
-                       what came back: readings taken before providers existed have
-                       no `source` at all. */
-                    initial={readingFor((quota) => quota.source !== "profile" && quota.agentId === agent.id)}
-                    profiles={profilesFor(agent.id)}
-                  />
-                ))}
-            </Section>
+          {quotas && <UsageOverview quotas={quotas} nameOf={nameOf} />}
+          {providerProfiles.length + probeAgents.length === 0 && quotas !== null ? (
+            /* Nothing to draw, and the list is the only thing that could still name
+               something the catalog has not caught up with — so a wait until it
+               answers, and an empty page after. */
+            <Empty size="lg" icon={GaugeIcon}>
+              Nothing here reports a plan. Claude Code and Codex report the machine's own login; a provider that
+              sells a coding plan reports it when the profile names a usage provider in Settings › Profiles.
+            </Empty>
+          ) : (
+            /* Providers first — somebody configured them on purpose — then the
+               runtime logins. */
+            <>
+              {providerProfiles.length + probeAgents.length === 0 && <UsageSkeleton />}
+              {providerProfiles.length > 0 && (
+                <Section label="Providers" hint="Plans read from a profile's own provider account.">
+                  {providerProfiles.map((profile) => (
+                    <ProfileUsage
+                      key={`profile:${profile.id}`}
+                      profile={profile}
+                      initial={readingFor((quota) => quota.source === "profile" && quota.profileId === profile.id)}
+                    />
+                  ))}
+                </Section>
+              )}
+              {probeAgents.length > 0 && (
+                <Section label="Runtime logins" hint="What each agent's own subscription has left on this machine.">
+                  {probeAgents.map((agent) => (
+                      <AgentUsage
+                        key={`agent:${agent.id}`}
+                        agentId={agent.id}
+                        agentName={agent.name}
+                        /* `source` decides which reading is the agent's, not the shape of
+                           what came back: readings taken before providers existed have
+                           no `source` at all. */
+                        initial={readingFor((quota) => quota.source !== "profile" && quota.agentId === agent.id)}
+                        profiles={profilesFor(agent.id)}
+                      />
+                    ))}
+                </Section>
+              )}
+            </>
           )}
         </>
       )}

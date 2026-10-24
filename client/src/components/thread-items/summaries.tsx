@@ -118,7 +118,7 @@ const RUN_AVATARS = 6
     were six identical wrenches; the question a folded run raises is which
     integrations it talked to, and one logo each answers it. Remaining marks
     collapse into a `+N` avatar. */
-export function RunAvatarStack({ items }: { items: RunItem[] }) {
+export function RunAvatarStack({ items, single }: { items: RunItem[]; single?: boolean }) {
   const servers = useMcpServers()
   /* One mark per call: a run holds calls and setting changes, and a setting
      change is a rule in the list rather than an act to draw a mark for. */
@@ -174,8 +174,12 @@ export function RunAvatarStack({ items }: { items: RunItem[] }) {
       ),
     })
   }
-  const shown = marks.slice(0, RUN_AVATARS)
-  const hidden = marks.length - shown.length
+  /* `single`: a header drawn inside another run's rail sits in the same title
+     column as the one-mark step rows beside it, so it wears one mark (its
+     first call's) and its sentence says the rest; a stack would push its title
+     off that column. */
+  const shown = marks.slice(0, single ? 1 : RUN_AVATARS)
+  const hidden = single ? 0 : marks.length - shown.length
   if (shown.length === 0) return null
   return (
     /* No "N tools" beside it: the summary the header draws next already

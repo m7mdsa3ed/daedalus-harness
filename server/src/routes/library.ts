@@ -29,7 +29,8 @@ import {
 } from "../mcp-oauth.js";
 import { startAuthorization } from "@modelcontextprotocol/sdk/client/auth.js";
 import { getConfig } from "../config.js";
-import { invokeMcp, mcpCatalogFor } from "../mcp-check.js";
+import { threadMcpServers } from "../thread-mcp.js";
+import { completeMcp, invokeMcp, mcpCatalogFor } from "../mcp-check.js";
 import { registryDetail, searchRegistry } from "../mcp-registry.js";
 import { mcpServersFor, threadCwd, type SessionManager } from "../sessions.js";
 import { getProject, listProjects, type Project } from "../projects.js";
@@ -166,20 +167,7 @@ export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): vo
      thread and resolved through `mcpServersFor`, the function its spawn uses,
      so the composer offers exactly the servers the agent was handed (a
      workflow server is not among them: it has no prompts or resources). */
-  async function threadServers(sessionId: string) {
-    const session = deps.sessions.get(sessionId);
-    if (!session) return null;
-    const project: Project | undefined = session.project ?? (await getProject(session.projectId));
-    if (!project) return null;
-    const ids = deps.sessions.effectiveLinks(session).mcpServerIds;
-    const resolved = await Promise.all(
-      ids.map(async (id) => {
-        const { servers } = await mcpServersFor({ mcpServerIds: [id] }, project, getConfig(), null);
-        return servers[0] ? { id, def: servers[0] } : null;
-      }),
-    );
-    return resolved.filter((r) => r !== null);
-  }
+  const threadServers = (sessionId: string) => threadMcpServers(deps.sessions, sessionId);
 
   app.get("/api/sessions/:id/mcp", async (c) => {
     const servers = await threadServers(c.req.param("id"));
@@ -220,6 +208,20 @@ export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         ? (body.args as Record<string, unknown>)
         : {};
     return c.json(await invokeMcp(server.id, server.def, { kind: body.kind, name: body.name, args }));
+  });
+
+  /* Suggestions for one variable of a resource template, for `@mcp:` — the
+     server's own `completion/complete`. Empty is an answer (no completion, or
+     nothing matches), so the composer can still take a hand-typed id. */
+  app.get("/api/sessions/:id/mcp/:serverId/complete", async (c) => {
+    const template = c.req.query("template") ?? "";
+    const argument = c.req.query("argument") ?? "";
+    if (!template || !argument) return c.json({ error: "template and argument are required" }, 400);
+    const servers = await threadServers(c.req.param("id"));
+    if (!servers) return c.json({ error: "no such thread" }, 404);
+    const server = servers.find((s) => s.id === c.req.param("serverId"));
+    if (!server) return c.json({ error: "that server is not linked to this thread" }, 404);
+    return c.json({ values: await completeMcp(server.id, server.def, template, argument, c.req.query("value") ?? "") });
   });
 
   app.post("/api/mcp-servers/builtin/:kind", async (c) => {

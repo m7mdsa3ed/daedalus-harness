@@ -247,6 +247,19 @@ await test("earlierPage pages whole turns and counts what is still behind", asyn
   assert.equal(last.from, 0);
 });
 
+await test("earlierPage takes the page size it is asked for", async () => {
+  const s = await owner();
+  for (let n = 0; n < 6; n += 1) turn(s, n);
+  const before = (await journal.turnStartAt(s.id, 5))!;
+  const page = await journal.earlierPage(s.id, before, 2);
+  assert.equal(page.from, await journal.turnStartAt(s.id, 3), "two whole turns, not the default page");
+  assert.equal(page.earlier, 3, "and the turns behind them are still counted");
+  // A page is never empty: a size below one clamps rather than withholding a
+  // turn the client would then be told about and never offered.
+  const one = await journal.earlierPage(s.id, before, 0);
+  assert.equal(one.from, await journal.turnStartAt(s.id, 4), "zero clamps to one turn");
+});
+
 await test("earlierPage at the head of the log is empty, not an error", async () => {
   const s = await owner();
   turn(s, 0);

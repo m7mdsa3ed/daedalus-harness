@@ -380,10 +380,10 @@ export class SessionSocket {
   /** One page of history, answered without a socket — the HTTP half of
       `load_earlier`, so a thread being read from its archive can page back
       without opening (or reviving) anything. */
-  async earlierPage(id: string, before: number): Promise<EarlierPage | null> {
+  async earlierPage(id: string, before: number, steps?: number): Promise<EarlierPage | null> {
     const session = this.host.getSession(id);
     if (!session || session.deletedAt !== null) return null;
-    return await this.host.journal.earlierPage(session.id, before);
+    return await this.host.journal.earlierPage(session.id, before, steps);
   }
 
   private onCommand(session: Session, peer: Peer, line: string): void {
@@ -415,7 +415,9 @@ export class SessionSocket {
       return;
     }
     if (command.cmd === "load_earlier") {
-      this.run(session, peer, command.id, () => this.host.journal.earlierPage(session.id, command.before));
+      this.run(session, peer, command.id, () =>
+        this.host.journal.earlierPage(session.id, command.before, command.steps),
+      );
       return;
     }
     /* The queue edits, for the same reason: a queue parked on a thread whose

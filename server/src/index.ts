@@ -19,8 +19,8 @@ import { adoptAgents } from "./adopt-boot.js";
 import { mark } from "./boot-timing.js";
 import { durable, sandbox } from "./sandbox/index.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
-import { WorkflowRunner } from "./workflows.js";
-import { workflowRoutes } from "./routes/workflows.js";
+import { WorkflowEngine } from "./workflows/engine.js";
+import { workflowRoutes } from "./workflows/routes.js";
 import { harnessRoutes } from "./routes/harness.js";
 import { sqlRoutes } from "./routes/sql.js";
 import { routineRoutes } from "./routes/routines.js";
@@ -32,6 +32,7 @@ import { attachTerminal, killProjectTerminals } from "./terminals.js";
 import { configureGatewayShim } from "./gateway-shim.js";
 import { configureMcpShim } from "./mcp-shim.js";
 import { configurePauseHooks } from "./pause-hooks.js";
+import { configureOtlp } from "./model-calls/sources/otlp.js";
 import { Push } from "./push.js";
 import { addNotification } from "./notifications.js";
 import { backfillSearchIndex } from "./search.js";
@@ -48,6 +49,7 @@ import { fileRoutes } from "./routes/files.js";
 import { libraryRoutes } from "./routes/library.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { taskRoutes } from "./routes/tasks.js";
+import { mentionRoutes } from "./routes/mentions.js";
 
 mark("modules loaded");
 const config = loadConfig();
@@ -66,6 +68,9 @@ configureMcpShim({ port: config.port });
 /* And for a runtime paused through its own hooks: they call `/ph/<key>/<id>`,
    which answers only while the thread is not paused (pause-hooks.ts). */
 configurePauseHooks({ port: config.port });
+/* And for Claude Code's telemetry: the `otlp` door attaches only once the
+   receiver knows its port, and wipes the bodies a previous run left. */
+configureOtlp({ port: config.port });
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
 await seedAgents();
@@ -111,7 +116,7 @@ const notifyBody = (...parts: (string | null | undefined)[]): string => {
   };
   return parts.filter((part): part is string => Boolean(part)).map(one).join(" — ");
 };
-let workflows: WorkflowRunner | null = null;
+let workflows: WorkflowEngine | null = null;
 let routines: RoutineEngine | null = null;
 let routineGitTriggers: RoutineGitTriggers | null = null;
 const sessions = new SessionManager(
@@ -169,13 +174,16 @@ const sessions = new SessionManager(
    old process never closed (turn-changes.ts, `closeOrphans`). */
 await sessions.turnChanges.closeOrphans();
 mark("turn-changes recovery");
-/* The workflow engine (workflows.ts). Wired both ways after construction: the
+/* The workflow engine (workflows/engine.ts). Wired both ways after construction: the
    manager hands every top-level thread the `workflow` MCP server pointed at
-   the runner's loopback URL, and the runner drives the manager to run steps.
-   Runs the last process left "running" are closed first — nothing survived it. */
-workflows = new WorkflowRunner(sessions, { port: config.port });
+   the engine's loopback URL, and the engine drives the manager to run steps.
+   Runs the last process left "running" are rebuilt from their journal here but
+   NOT resumed (`resume: false`): a step spawns a child thread and a hosted
+   agent that outlived the server must be adopted first, so
+   `resumeRecovered()` runs after `adoptAgents` below. */
+workflows = new WorkflowEngine(sessions, { port: config.port });
 sessions.setWorkflowRunner(workflows);
-await workflows.recoverAtBoot();
+await workflows.recoverAtBoot({ resume: false });
 mark("workflow recovery");
 /* The routine engine (routines.ts) — a saved thread-start that fires on its
    own. After the workflow runner because a workflow-bodied routine hands its
@@ -203,6 +211,9 @@ await sessions.ready;
 mark("session manager ready");
 const adoption = await adoptAgents(sandbox, sessions);
 mark(`agents adopted (${adoption.adopted})`);
+// Adopted hosts have claimed their threads: the recovered workflow runs may spawn now.
+workflows.resumeRecovered();
+mark("workflow runs resumed");
 routineGitTriggers = new RoutineGitTriggers({ engine: routines });
 routineGitTriggers.start();
 // Tails background-task journals (files an agent disclosed in a tool result)
@@ -287,7 +298,8 @@ libraryRoutes(app, { sessions });
 sessionRoutes(app, { sessions });
 voiceRoutes(app, { sessions });
 taskRoutes(app, { sessions, tasks });
-workflowRoutes(app, { runner: workflows, sessions });
+mentionRoutes(app, { sessions });
+workflowRoutes(app, { engine: workflows, sessions });
 harnessRoutes(app, { runner: workflows });
 sqlRoutes(app);
 routineRoutes(app, { engine: routines });

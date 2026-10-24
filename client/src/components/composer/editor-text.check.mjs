@@ -46,6 +46,12 @@ for (const text of [
   "go to https://example.com.",
   "https://a.dev",
   "trailing https://example.com/path,",
+  "look at @thread:abc123 and @git:last-turn now",
+  "@commit:a1b2c3d",
+  "(@branch:feature/x) then @tag:v1.2.0 end",
+  "@thread: drilling and @foo:bar and @C:\\Users\\x and @c:/x",
+  "@kb:some-entry.",
+  "mail me@thread:x and @DAE-12 with @src/a.ts",
 ]) {
   assert.strictEqual(docToText(load(text)), text, JSON.stringify(text))
 }
@@ -62,6 +68,26 @@ for (const text of [
   assert.strictEqual(load("@src/ and @a.ts,").child(0).childCount, 1, "open or punctuated: text")
   assert.strictEqual(load("do @DAE-12 now").child(0).child(1).attrs.path, "DAE-12", "a task key is a chip")
   assert.strictEqual(load("@dae-12 @DAE-x").child(0).childCount, 1, "not a task key: text")
+}
+
+// A finished `@kind:ref` of a known kind is a chip; everything else is text.
+{
+  const refs = (text) => {
+    const out = []
+    load(text).child(0).forEach((n) => n.type.name === "mention" && out.push(n.attrs.path))
+    return out
+  }
+  assert.deepEqual(refs("a @thread:abc b @git:staged"), ["thread:abc", "git:staged"])
+  assert.deepEqual(refs("@commit:a1b2c3d"), ["commit:a1b2c3d"], "at the line's end")
+  assert.deepEqual(refs("@thread: and @thread:"), [], "an empty ref is still being typed")
+  assert.deepEqual(refs("@foo:bar @x:y @Thread:abc"), [], "unknown kinds and capitals stay text")
+  assert.deepEqual(refs("@C:\\Users\\x"), [], "a backslash drive path is text, as before")
+  assert.deepEqual(refs("@C:/x @c:/x"), ["C:/x", "c:/x"], "drive paths stay path chips (they have a slash), never kinds")
+  assert.deepEqual(refs("@thread:abc, and"), [], "a sentence's comma leaves the token text")
+  assert.deepEqual(refs("@DAE-12 @src/a.ts"), ["DAE-12", "src/a.ts"], "tasks and paths unchanged")
+  assert.deepEqual(refs("@branch:feature/x"), ["branch:feature/x"], "a kind whose ref has a slash")
+  assert.deepEqual(refs("@src/a.ts:40-80 and @b.ts:7"), ["src/a.ts:40-80", "b.ts:7"], "a line range is one chip")
+  assert.deepEqual(refs("@src/a.ts:40-80,"), [], "a sentence comma after a range leaves it text")
 }
 
 // A URL is a link chip, with its sentence's punctuation left outside it.

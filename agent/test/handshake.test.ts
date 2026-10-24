@@ -7,6 +7,7 @@ import { join } from "node:path";
 import * as acp from "../src/acp.js";
 import { buildAgentApp } from "../src/app.js";
 import {
+  connectPair,
   FULL_CAPS,
   initialize,
   makeClient,
@@ -24,7 +25,7 @@ const cwd = mkdtempSync(join(tmpdir(), "daedalus-agent-cwd-"));
   const agent = buildAgentApp({ env });
   const { app: client, harness } = makeClient();
 
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     const init = await initialize(ctx);
     assert.equal(init.agentCapabilities?.loadSession, true);
     assert.ok(init.agentCapabilities?.sessionCapabilities?.list, "advertises session/list");
@@ -85,7 +86,7 @@ const cwd = mkdtempSync(join(tmpdir(), "daedalus-agent-cwd-"));
   // A client that claims no boolean capability gets no boolean option.
   const { app: plainClient } = makeClient();
   const agent2 = buildAgentApp({ env: testEnv() });
-  await plainClient.connectWith(agent2, async (ctx) => {
+  await connectPair(agent2, plainClient, async (ctx) => {
     await initialize(ctx, { ...FULL_CAPS, session: { compaction: {} } });
     const created = await ctx.request("session/new", { cwd, mcpServers: [] });
     assert.equal(created.configOptions?.find((o) => o.type === "boolean"), undefined);
@@ -98,7 +99,7 @@ const cwd = mkdtempSync(join(tmpdir(), "daedalus-agent-cwd-"));
   const env = testEnv();
   const agent = buildAgentApp({ env, makeModel: scriptedModel([textScript("Hello there, world. ")]) });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/prompt", { sessionId, prompt: promptOf("hi") });

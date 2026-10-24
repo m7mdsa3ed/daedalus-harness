@@ -21,6 +21,7 @@ export type ThreadPanelKind =
   | "plan"
   | "agents"
   | "details"
+  | "trace"
   | "terminal"
   | "web"
 

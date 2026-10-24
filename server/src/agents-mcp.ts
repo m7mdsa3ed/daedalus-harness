@@ -3,11 +3,11 @@
  * pair — Codex on one provider, Claude Code on another, the Daedalus agent on
  * a third — and reading its answer.
  *
- * A thin client like workflow-mcp.ts, over the same loopback (`AGENTS_URL`,
- * the runner's `/wf/<key>/<sessionId>`): an ask is a one-step workflow run
+ * A thin client like workflows/mcp.ts, over the same loopback (`AGENTS_URL`,
+ * the engine's `/wf/<key>/<sessionId>`): an ask is a one-step workflow run
  * whose step names its own pair, so the child is a real thread mirrored into
  * the caller as a subagent, and waiting and cancelling are the run routes.
- * Every tool answers within its wait budget, for the reason workflow-mcp.ts
+ * Every tool answers within its wait budget, for the reason workflows/mcp.ts
  * gives: an agent runtime's MCP timeout is shorter than a real answer.
  *
  *   node dist/agents-mcp.js
@@ -15,7 +15,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { AGENTS_SERVER_NAME } from "./workflow-schema.js";
+import { AGENTS_SERVER_NAME } from "./workflows/types.js";
 
 const url = process.env.AGENTS_URL;
 if (!url) {

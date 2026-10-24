@@ -182,13 +182,22 @@ function backgroundStatus(thread: ThreadState): ThreadStatus | null {
   if (!thread.background) return null
   const agents = runningAgents(thread)
   const run = agents.find((agent) => agent.name)?.name
+  /* An ask_agent child is no workflow: name it by its pair, and say "agent". */
+  const head = agents.length === 1 ? thread.items.find((item) => item.id === agents[0].id) : undefined
+  const ask = head?.kind === "subagent" ? head.ask : undefined
+  const asked = ask ? ask.agent ?? "The asked agent" : undefined
   return {
     kind: "background",
     tone: "progress",
     headline:
-      agents.length > 1 ? `${agents.length} agents still running` : `${run ?? "A workflow"} is still running`,
-    detail:
-      "This turn is over; the workflow it launched is not. Its steps are in the transcript above, and this line goes when the run ends.",
+      agents.length > 1
+        ? `${agents.length} agents still running`
+        : asked
+          ? `${asked} is still working`
+          : `${run ?? "A workflow"} is still running`,
+    detail: asked
+      ? "This turn is over; the agent it asked is not. Its work is in the transcript above, and its answer comes back as a new turn."
+      : "This turn is over; the workflow it launched is not. Its steps are in the transcript above, and this line goes when the run ends.",
   }
 }
 

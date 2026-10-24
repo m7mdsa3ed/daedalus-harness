@@ -1,7 +1,8 @@
 /* ── Layout options ──
     How the app is *displayed* — not what it contains, and not anything the
     agent needs to know. Two scopes share the one store: the transcript's, and
-    the sidebar's (every `sidebar*` key — `isSidebarOption`). They were three
+    the interface's (the sidebar and the dock's tabs; which key is whose is
+    `layout-settings.tsx`'s groups, not a prefix). They were three
     stores (this one, `ui.sidebarLayout`, `ui.sidebarView`) and the sidebar's
     sort and filter were the only reading preference that could not be searched,
     reset or found next to its siblings. The storage key is still
@@ -20,11 +21,14 @@
          interface is what types `layout-settings.tsx`, so a typo is a build
          error rather than a switch that does nothing. A choice of more than two
          also lists its values in `CHOICES`, which is what `pick` validates by;
-      2. add a row to the right group in `GROUPS` in `layout-settings.tsx`
+      2. add an item to the right group in `GROUPS` in `layout-settings.tsx`
          (declarative — the page renders itself; a group's `scope` says which
-         tab of Settings › Appearance draws it). Which group is the design
-         decision: Layout, Detail, Code and diffs, Motion. An option that fits
-         none of them is probably not a layout option;
+         tab of Settings › Appearance draws it). A switch and a choice are the
+         same kind of item, in one ordered list, and an option that only
+         modifies another goes in that one's `children` — dimmed under a switch
+         that is off. Which group is the design decision (the file's header
+         lists them, one question each); an option that fits none of them is
+         probably not a layout option;
       3. read it where the transcript renders, through `LayoutOptionsContext`
          (`useLayoutOptionsContext`), not by threading props. Deep components —
          diffs, tool panes — are the reason the context exists.
@@ -94,16 +98,40 @@ export const SIDEBAR_VARIANTS = ["sidebar", "inset"] as const
 export type SidebarVariant = (typeof SIDEBAR_VARIANTS)[number]
 export const SIDEBAR_SORTS = ["recent", "created", "title", "project"] as const
 export type SidebarSort = (typeof SIDEBAR_SORTS)[number]
-export const SIDEBAR_FILTERS = ["all", "running", "waiting", "unread"] as const
+export const SIDEBAR_FILTERS = ["all", "running", "waiting", "unread", "hidden"] as const
 export type SidebarFilter = (typeof SIDEBAR_FILTERS)[number]
 /** Only threads with a turn inside the window. "Any" is no filter. */
 export const SIDEBAR_WITHIN = ["any", "day", "week", "month"] as const
 export type SidebarWithin = (typeof SIDEBAR_WITHIN)[number]
+/** Which of a thread's sub threads (asks, workflow steps) are drawn under it.
+    `active` keeps the ones that are running, waiting on you or failed — and the
+    one you are looking at — so a finished fan-out stops taking rows. */
+export const SIDEBAR_SUBS = ["all", "active", "off"] as const
+export type SidebarSubs = (typeof SIDEBAR_SUBS)[number]
 export const WITHIN_MS: Record<Exclude<SidebarWithin, "any">, number> = {
   day: 864e5,
   week: 7 * 864e5,
   month: 30 * 864e5,
 }
+
+/* ── How much of a long thread is loaded ──
+   A thread opens with its tail and pages the rest back one page at a time
+   (`load_earlier`). Both sizes were constants — ten turns at attach, twenty
+   per page — and both are reading preferences: an archive being skimmed wants
+   a long window and big pages, a phone on a slow line wants neither. They are
+   options of the *reader*, not of a thread, so they live here beside density
+   and streaming speed and follow the device.
+
+   Values are strings because a stored choice is validated against `CHOICES`;
+   `replayWindowSteps` and `earlierPageSteps` turn them back into the counts the
+   socket sends. `all` is the absence of a window rather than a very large
+   number — the server is asked for no window at all, which is how a log comes
+   back whole. */
+export const HISTORY_WINDOWS = ["5", "10", "20", "50", "all"] as const
+export type HistoryWindow = (typeof HISTORY_WINDOWS)[number]
+
+export const EARLIER_PAGES = ["10", "20", "50", "100"] as const
+export type EarlierPageSize = (typeof EARLIER_PAGES)[number]
 
 export interface LayoutOptions {
   /** Wall-clock time beside each message and step. */
@@ -116,8 +144,16 @@ export interface LayoutOptions {
   /** Keep the group the agent is still working in open. Off, it folds like a
    *  finished one and peeks its last few steps under the counting line. */
   openRunningGroup: boolean
+  /** Fold the calls one model response sent together — the ones that ran side
+   *  by side — into a marked group of their own inside the run, its mixed kinds
+   *  folded by kind inside it (`groupToolRuns`). Off, the calls are plain rows
+   *  of the run and nothing marks them. */
+  parallelGroups: boolean
   /** Fold a run of consecutive `!` commands into one line you can open. */
   groupShellCommands: boolean
+  /** Open every `!` command's output by default. Off, the row folds like a
+   *  Bash step and a click opens it. */
+  expandShellCommands: boolean
   /** The `!` commands you ran, and what they printed. Off, the rows are hidden —
       the command still ran and the journal still holds it, only the row is
       silent. This is the switch `answersOnly` deliberately does not cover: a
@@ -216,6 +252,14 @@ export interface LayoutOptions {
    *  dropped: open the line and the whole transcript is there, every fold it
    *  already had intact. */
   answersOnly: boolean
+  /** Turns that arrive when a thread opens; anything older waits behind the
+   *  "Load earlier steps" button. `all` reads the whole log at once. Read at
+   *  attach through `replayWindowSteps`, so a change lands on the next thread
+   *  or reload rather than rebuilding what is open. */
+  historyWindow: HistoryWindow
+  /** Turns one press of that button brings (`earlierPageSteps`). Read at the
+   *  click, so a change lands on the next page. */
+  earlierPage: EarlierPageSize
 
   /* ── Sidebar ── every key here begins `sidebar` (`isSidebarOption`). */
   /** `sidebar` is a flush rail beside the content; `inset` floats the content
@@ -230,6 +274,12 @@ export interface LayoutOptions {
   sidebarWithin: SidebarWithin
   /** Shorter rows, so more threads fit. */
   sidebarCompact: boolean
+  /** Which sub threads are listed under their parent. */
+  sidebarSubThreads: SidebarSubs
+  /** The agent's mark on a sub thread's row. */
+  sidebarSubAgentIcon: boolean
+  /** How long ago a sub thread last spoke, at its row's end. */
+  sidebarSubAge: boolean
   /** The agent's mark at the start of each thread row. */
   sidebarAgentIcon: boolean
   /** How long ago the thread last spoke, at the row's end. */
@@ -250,7 +300,9 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   showTimestamps: true,
   groupTools: false,
   openRunningGroup: true,
+  parallelGroups: true,
   groupShellCommands: false,
+  expandShellCommands: false,
   showShellCommands: true,
   compactDensity: false,
   autoScroll: true,
@@ -280,12 +332,17 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   calmMotion: false,
   steerRingGradient: false,
   answersOnly: false,
+  historyWindow: "10",
+  earlierPage: "20",
   streamSpeed: "natural",
   sidebarVariant: "sidebar",
   sidebarSort: "recent",
   sidebarFilter: "all",
   sidebarWithin: "any",
   sidebarCompact: false,
+  sidebarSubThreads: "all",
+  sidebarSubAgentIcon: true,
+  sidebarSubAge: true,
   sidebarAgentIcon: true,
   sidebarShowAge: true,
   sidebarShowProject: false,
@@ -314,15 +371,15 @@ const STORAGE_KEY = "ui.viewOptions"
 
 const KEYS = Object.keys(LAYOUT_DEFAULTS) as (keyof LayoutOptions)[]
 
-/** Which options belong to the sidebar's scope, and so to its Reset. */
-export const isSidebarOption = (key: keyof LayoutOptions): boolean => key.startsWith("sidebar")
-
 /** The values a plain choice may hold; anything else in storage is dropped. */
 const CHOICES: Partial<Record<keyof LayoutOptions, readonly string[]>> = {
   sidebarVariant: SIDEBAR_VARIANTS,
   sidebarSort: SIDEBAR_SORTS,
   sidebarFilter: SIDEBAR_FILTERS,
   sidebarWithin: SIDEBAR_WITHIN,
+  sidebarSubThreads: SIDEBAR_SUBS,
+  historyWindow: HISTORY_WINDOWS,
+  earlierPage: EARLIER_PAGES,
 }
 
 /** Keep only known fields *of the right shape*: the stored blob is
@@ -413,22 +470,42 @@ export function setLayoutOption<K extends keyof LayoutOptions>(key: K, value: La
   store.set({ ...store.get(), [key]: value })
 }
 
-/** Back to the defaults — all of them, or one scope's. A scope's Reset must not
-    take the other's picks with it: the Transcript tab and the Sidebar group
-    each count only their own changes. */
-export function resetLayoutOptions(scope?: "transcript" | "sidebar"): void {
-  if (!scope) return store.set({})
-  const kept: Partial<LayoutOptions> = {}
-  for (const key of KEYS) {
-    if (key in store.get() && isSidebarOption(key) !== (scope === "sidebar")) {
-      ;(kept as Record<string, unknown>)[key] = store.get()[key]
-    }
-  }
-  store.set(kept)
+/** Back to the defaults — all of them, or the named keys'. Which keys make a
+    page is the page's (`layout-settings.tsx` draws one scope's groups and
+    resets what they hold), so the Transcript and Interface tabs each count
+    only their own changes without the store knowing a scope exists. It used to
+    be a `sidebar` key prefix, which could not put the dock's tab switches on
+    the Interface tab. */
+export function resetLayoutOptions(keys?: Iterable<keyof LayoutOptions>): void {
+  if (!keys) return store.set({})
+  const next = { ...store.get() }
+  for (const key of keys) delete next[key]
+  store.set(next)
 }
 
 export function useLayoutOptions(): LayoutOptions {
   return useSyncExternalStore(store.subscribe, resolvedNow, resolvedNow)
+}
+
+/** The resolved options outside React. A `ThreadSocket` is opened by an action
+    rather than a render — on create, on revive, on an attach — so the window it
+    asks for and the page size it pages with are read through this instead of
+    being threaded down as props. It is the same memoised snapshot the hook
+    returns, so a pick and the socket can never disagree about what was picked. */
+export function layoutOptionsNow(): LayoutOptions {
+  return resolvedNow()
+}
+
+/** The replay window a fresh attach asks for, in turns. `0` is "no window":
+    the socket sends no `window` parameter and the whole log comes back, which
+    is also how a server too old to window reads it. */
+export function replayWindowSteps(options: LayoutOptions = layoutOptionsNow()): number {
+  return options.historyWindow === "all" ? 0 : Number(options.historyWindow)
+}
+
+/** How many turns one "Load earlier steps" page asks the server for. */
+export function earlierPageSteps(options: LayoutOptions = layoutOptionsNow()): number {
+  return Number(options.earlierPage)
 }
 
 /* ── Sidebar picks made before they lived here ──

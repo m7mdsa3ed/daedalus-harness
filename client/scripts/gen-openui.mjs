@@ -99,6 +99,12 @@ const PROMPT_OPTIONS = {
     /* No component names: a thread may switch groups off (`uiGroups`), and a rule that
        names one would teach it to a model that was told it does not exist. */
     "The view may be read on a phone. Prefer shapes that survive a narrow column, rather than a wide custom layout. Keep every label and title short.",
+    /* Composition, again without a component name. These are the habits the
+       recent threads showed: a conclusion buried under the evidence, a pipe
+       table for every shape, and a view that is three tables stacked. */
+    "Lead with the conclusion: the first thing in the view answers the question, and the evidence follows it. Do not open with a title that only restates the request.",
+    "Pick the most specific component whose note matches the content before reaching for a generic table or list: a review, a set of results, a changed-file list, a ranking and a yes/no grid each have one. A generic table is for values that have none.",
+    "One view says one thing. Two unrelated answers are two short views or prose between them, not one tall stack; three tables in a row is a sign the content wanted a different component.",
     "Keep the program to roughly a dozen statements. A long fence is harder to follow and likelier to be cut off before `root` — and a program with no `root` draws nothing at all.",
   ],
   /* Layout-only: the example is shown whatever groups are on, and `layout` is the one

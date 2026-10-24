@@ -1,5 +1,6 @@
 import type * as acp from "@daedalus/acp"
 import type {
+  CallsVia,
   QueuedMessage,
   QuotaSnapshot,
   StagedConfig,
@@ -13,6 +14,7 @@ import type {
 import { IDLE_PHASE, isOpening, type ConnPhase } from "../thread/phase"
 import type { SessionMeta } from "../settings"
 import type { PendingElicitation, PendingPermission, ThreadItem } from "./items"
+import type { ThreadCall } from "../trace"
 
 export interface ThreadState {
   items: ThreadItem[]
@@ -115,6 +117,14 @@ export interface ThreadState {
   turnGeneration: Record<string, TurnGeneration>
   /** Context window occupancy from usage_update. */
   context: acp.UsageUpdate | null
+  /** One record per model call (`_daedalus/model_call`), in arrival order,
+      each filed under the turn that was open when it landed. Journaled, so it
+      replays; the Trace panel's cold read of the route fills in the turns the
+      window withheld (`lib/trace.ts`). */
+  calls: ThreadCall[]
+  /** Which door this process's records come through (`session_config.callsVia`).
+      Null until a session has said — a draft, or a journal older than the door. */
+  callsVia: CallsVia | null
   /** Persistent min/max and weighted average inputs for measured output speed. */
   tps: TpsStats | null
   /** What the model request that produced a step cost, keyed by item id — the
@@ -202,6 +212,14 @@ export interface State {
   threads: Record<string, ThreadState>
 }
 
+/** Whether work may still be in flight for the subagent readings (rows, the
+    agents count, the inspector): a turn open, or background work the server
+    says outlived it — an `ask_agent` or workflow run keeps streaming its
+    child's events after the turn that launched it ended. Not `turnActive`'s
+    replacement: Stop, the queue and the turn footers stay the turn's. */
+export const workLive = (thread: Pick<ThreadState, "turnActive" | "background">): boolean =>
+  thread.turnActive || thread.background
+
 export const emptyThread: ThreadState = {
   items: [],
   phase: IDLE_PHASE,
@@ -227,6 +245,8 @@ export const emptyThread: ThreadState = {
   turnToolDuration: {},
   turnGeneration: {},
   context: null,
+  calls: [],
+  callsVia: null,
   tps: null,
   stepUsage: {},
   stepAt: {},

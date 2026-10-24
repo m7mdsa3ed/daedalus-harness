@@ -17,6 +17,7 @@ import type {
   AttachmentRef,
   AutoAnswer,
   AutonomyAnswer,
+  CallsVia,
   CompactReply,
   HistoryLost,
   QueuedMessage,
@@ -32,7 +33,7 @@ import type {
 import { optionFor, stanceFor, type AutonomyPolicy } from "./autonomy.js";
 import type { Peer } from "./sessions.js";
 import { WEB_SEARCH_SERVER_NAME } from "./websearch.js";
-import { WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
+import { WORKFLOW_SERVER_NAME } from "./workflows/types.js";
 import type { BuiltinToolOverrides } from "./db/schema.js";
 import type { AcpConnection, ConnectionRoute } from "./acp-connection.js";
 import type { OrphanPrompt, WireLedger } from "./adopt-state.js";
@@ -330,6 +331,10 @@ const SUBAGENT_UPDATE_KINDS: ReadonlySet<string> = new Set([
   "async_task_spawned",
   "async_task_progress",
   "async_task_state_update",
+  /* One record per model call (protocol.ts `ModelCallUpdate`): our runtime
+     sends it itself (`agent/src/trace.ts`), and the server-built ones take the
+     same path through `emit`, so nothing downstream can tell who built one. */
+  "_daedalus/model_call",
 ]);
 
 /** The structural check the rerouted frames are parsed with: the shape the
@@ -687,6 +692,9 @@ export interface BridgeOptions {
       presence is what makes such a runtime pausable; absent, only a runtime
       that advertises its own pause is. */
   pauseHookUrl?: string;
+  /** Which door this process's model calls come through (`model-calls/index.ts`
+      `chooseDoor`), said on `session_config` so the panel can name it. */
+  callsVia?: CallsVia;
 }
 
 export class AcpBridge implements ConnectionRoute {
@@ -792,6 +800,17 @@ export class AcpBridge implements ConnectionRoute {
   /** Id of the logical turn in flight, null between turns. Steering joins it. */
   currentTurnId: string | null = null;
   private currentTurnPrompt: string | null = null;
+  /** Model calls filed in the open turn — the `step` the door fills when a
+      record arrives without one (`fileCall`). Reset where the turn opens. */
+  private callSteps = 0;
+  nextCallStep(): number {
+    return ++this.callSteps;
+  }
+  /** The turn that ended last, and when. A door that reports after the fact
+      (OTLP's export interval, a session file's debounce) files a request that
+      began before that end under it, not under "no turn". */
+  lastTurn: { id: string; endedAt: number } | null = null;
+  private readonly callsVia: CallsVia | undefined;
   /** The `messageId` of the last content chunk seen so far in the turn
       currently in flight — reset to null at `prompt()`'s `currentTurnId`
       assignment and read at `settleTurn` for `turn_ended.lastMessageId`. A
@@ -829,6 +848,7 @@ export class AcpBridge implements ConnectionRoute {
     this.mcpServers = opts.mcpServers;
     this.suppressModelMetadataWarning = opts.suppressModelMetadataWarning === true;
     this.pauseViaHooks = !!opts.pauseHookUrl;
+    this.callsVia = opts.callsVia;
     this.conn = conn;
     this.connection = conn.rpc;
     conn.attach(this);
@@ -1541,9 +1561,13 @@ export class AcpBridge implements ConnectionRoute {
     kind: "permission" | "elicitation",
     request: acp.RequestPermissionRequest | acp.CreateElicitationRequest,
     toolCallId: string | undefined,
+    /** `humanOnly`: a question that is a person's to answer (a workflow's `approve`) — the
+        thread's autonomy policy neither answers it nor times it out; only a person (or the
+        caller's own deadline) settles it. Everything else about the park is unchanged. */
+    opts: { humanOnly?: boolean } = {},
   ): Promise<R> {
     const requestId = `r${this.nextRequestId++}`;
-    const policy = this.host.autonomy();
+    const policy = opts.humanOnly ? null : this.host.autonomy();
     const decided = policy ? this.decide(policy, kind, request) : null;
     return new Promise<R>((resolve) => {
       const entry: PendingRequest = {
@@ -1717,6 +1741,7 @@ export class AcpBridge implements ConnectionRoute {
     if (this.inflight === 0) {
       this.currentTurnId = turnId;
       this.currentTurnPrompt = text;
+      this.callSteps = 0;
       this.lastSeenMessageId = null;
       this.turnFailure = undefined;
       this.host.markTurnStderr();
@@ -1844,6 +1869,7 @@ export class AcpBridge implements ConnectionRoute {
     if (this.inflight === 0) {
       this.currentTurnId = turnId;
       this.currentTurnPrompt = text;
+      this.callSteps = 0;
       this.lastSeenMessageId = null;
       this.turnFailure = undefined;
       /* Wall clock from the original start, downtime included: the old server's
@@ -1940,6 +1966,7 @@ export class AcpBridge implements ConnectionRoute {
        what makes the session findable is that it recorded anything at all. */
     if (this.acpSessionId) this.host.onSessionDurable();
     const turnId = this.currentTurnId;
+    if (turnId) this.lastTurn = { id: turnId, endedAt: Date.now() };
     const promptText = this.currentTurnPrompt ?? text;
     this.currentTurnId = null;
     this.currentTurnPrompt = null;
@@ -2621,6 +2648,7 @@ export class AcpBridge implements ConnectionRoute {
         ...(this.canPause ? { canPause: true } : {}),
         ...(this.canCompact ? { canCompact: true } : {}),
         ...(this.canFork ? { canRewind: true } : {}),
+        ...(this.callsVia ? { callsVia: this.callsVia } : {}),
       },
       except,
     );

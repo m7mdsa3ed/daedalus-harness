@@ -297,8 +297,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the save path's probe decides.
 - **Workflows are the harness's, except where the runtime says it has its own**
   (`AgentDef.workflowsVia === "native"` — Claude Code: linking ours disallows its better one,
-  so ours is not offered). A definition is **declarative JSON**, never a script. **Every step is a real thread** on the parent's own profile, agent, model,
-  effort, persona and links. One level, never a tree. Nothing survives a restart.
+  so ours is not offered). A definition is **declarative JSON compiled to a script** (`workflows/graph.ts`): there is one program model and one scheduler, and the journal (`wf_events`) is the run's state. **Every step is a real thread** on the parent's own profile, agent, model,
+  effort, persona and links. One level, never a tree. **A restart resumes a run, it does not end it**: the script replays from the journal, a completed step is never re-run, an unresolved gate resumes, and a step in flight follows its `onRestart` (`resume` by default). Downtime is not run time (`run_recovered`). Anything hashed or handed back to a script crosses `canon()` first, because `jsonb` reorders keys. Design: `docs/workflow-engine-v2.md`.
 - **A run outlives the turn that launched it, so a turn ending is not the thread being
   done.** A native workflow answers its prompt at "launched" and works on, so `turnActive`
   stays false and the thread is not finished: the bridge keeps that fact (`background` — its
@@ -308,7 +308,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A run pauses as a state, never as a cancel-and-restart**, and its clocks stand still. A
   restart ends a paused run as it ends a running one.
 - **Asking another agent is the one door to another pair** (`builtin:agents`, `agents-mcp.ts`,
-  `WorkflowRunner.ask`): a **one-step run** whose step names its own profile and agent, so
+  `WorkflowEngine.ask`): a **one-step run** whose step names its own profile and agent, so
   the child, the mirroring, the cost and the cancel are the workflow's. Drawn as a plain
   subagent — no workflow `_meta`, a `_meta.daedalus.ask` pair instead, so its row is named by
   the `description` the caller gave it (else `agent · profile`) and wears the asked agent's
@@ -575,7 +575,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A slash command is either the agent's or the harness's and the composer draws one list**;
   the agent's shadows the harness's, and a draft is offered no harness commands. An `@`
   mention is text *and* a `resource_link`, added server-side for any `~`/absolute/relative
-  path that exists — the scope is the person's, never only the cwd.
+  path that exists — the scope is the person's, never only the cwd. A typed `@kind:ref` (`thread`, `commit`, `branch`, `tag`, `git`, `run`, `kb`, `term`, `mcp`, and `@path:40-80` for lines) is expanded at send into a `<context>` block by `POST /api/mentions/context`; sources are one file each on both halves (`client/src/lib/mentions/`, `server/src/mentions/`) and the kind list is copied in both, `test:mentions` failing on drift. → `docs/mention-sources.md`.
   A `!` line is a **shell command and the composer's third completer**: the project's helpers
   **and the scripts its `package.json` files declare** (root and one directory deep,
   `GET /api/projects/:id/scripts`, read off the disk and never stored — helpers first, a row

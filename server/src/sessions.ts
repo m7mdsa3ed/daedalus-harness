@@ -46,12 +46,13 @@ import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js"
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
 import { AcpBridge, resolveAgentSpawn, spawnProcess, toWireError, type BridgeHost, type ConfigNoticeLabel } from "./acp-bridge.js";
 import { AcpPool, detachAllConnections, flushAllProcessStates, pool, type AcpConnection } from "./acp-connection.js";
-import { makeBridgeHost } from "./bridge-host.js";
+import { makeBridgeHost, makeCallThread } from "./bridge-host.js";
+import { chooseDoor, fileCall, recordCall, usageFallback, type ChosenDoor } from "./model-calls/index.js";
 import { enrichError, pushStderr, resetStderr, spliceStderr } from "./stderr-ring.js";
 import { checkInstalled } from "./agent-status.js";
 import { SessionQueue } from "./session-queue.js";
 import type { AutonomyPolicy } from "./autonomy.js";
-import { AGENTS_SERVER_NAME, HARNESS_SERVER_NAME, WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
+import { AGENTS_SERVER_NAME, HARNESS_SERVER_NAME, WORKFLOW_SERVER_NAME } from "./workflows/types.js";
 import { deleteSearchIndex } from "./search.js";
 import { getQuota, invalidateQuota, planReadable, setRuntimeLiveCheck } from "./quota.js";
 import { profileUsage } from "./usage-api.js";
@@ -308,6 +309,9 @@ export interface Session {
   /** Epoch ms this thread was pinned; null = not pinned. Server-side, so a pin
       made on one device is a pin on every device. */
   pinnedAt: number | null;
+  /** Epoch ms this thread was hidden from the sidebar's default list; null =
+      shown. Server-side, so it follows the thread to every device. */
+  hiddenAt: number | null;
   /** The profile `ask_agent` uses per agent id; an agent not in it is asked about. */
   askProfiles: AskProfiles;
   exited: boolean;
@@ -357,6 +361,11 @@ export interface Session {
       child never pushes, is never idle-retired, is hidden from the sidebar and
       is never handed the workflow server itself. Persisted. */
   parentSessionId: string | null;
+  /** What kind of child this is (`"ask"` or `"workflow"`), else null. Persisted. */
+  childKind: string | null;
+  /** The workflow run a step belongs to and its name, else null. Persisted. */
+  childRunId: string | null;
+  childRunName: string | null;
   /** Where this thread was forked from (`SessionManager.fork`), else null both.
       Provenance only — drawn as a chip, never followed by a query. A branch is
       its own thread in every other respect: sidebar-visible, push-enabled,
@@ -419,6 +428,11 @@ export interface Session {
       any *other* tool never touches the usage ledger. Owned by the process —
       reset with it. */
   websearchCalls: Set<string>;
+  /** Which door this process's model calls come through (`model-calls/index.ts`
+      `chooseDoor`), or null with no process. Chosen at spawn, for the life of
+      the process — the double-count guard: a `usage_update` rows only here when
+      `kind` is `"usage"`. */
+  calls: ChosenDoor | null;
 }
 
 /** How long to wait after 'exit' for the agent's stdio to close before telling
@@ -546,7 +560,10 @@ export function websearchServer(config: ReturnType<typeof loadConfig>): StdioMcp
  * beside this module — `dist/` when built, `src/` under tsx (`pnpm dev`,
  * `pnpm start`, the tests) — and under tsx it is a `.ts` file with no `.js`
  * next to it, so node must be handed tsx's CLI to run it, exactly as pnpm runs
- * the server itself. Blindly appending `.js` pointed every dev server at a
+ * the server itself. `script` is a path relative to this module's directory, so a
+ * file in a subfolder (`workflows/mcp`) resolves the same way in both modes:
+ * `tsconfig.build.json` emits `src/**` to `dist/**` with `rootDir: src`, so no
+ * build list needs the entry. Blindly appending `.js` pointed every dev server at a
  * file that did not exist, and the agent reported it as the MCP server
  * closing the connection before `initialize` answered.
  */
@@ -578,7 +595,7 @@ export function knowledgeServer(project: Pick<Project, "id">): StdioMcpServer {
     HTTP, and the key in that path is what lets the route act for exactly this
     thread and no other. */
 export function workflowServer(session: Pick<Session, "id">, runner: WorkflowUrlSource): StdioMcpServer {
-  return harnessMcpServer(WORKFLOW_SERVER_NAME, "workflow-mcp", [
+  return harnessMcpServer(WORKFLOW_SERVER_NAME, "workflows/mcp", [
     { name: "WORKFLOW_URL", value: runner.urlFor(session) },
   ]);
 }
@@ -618,6 +635,9 @@ export interface SessionEvents {
     other — the runner is injected at boot (`setWorkflowRunner`). */
 export interface WorkflowUrlSource {
   urlFor(session: Pick<Session, "id">): string;
+  /** Whether the thread still has an ask or workflow run going. Consulted whenever a bridge is
+      created, because `setRunsActive` lives on the bridge and a new one starts with it false. */
+  hasLive?(sessionId: string): boolean;
   /** The (profile, agent) pairs an ask can reach — the agents suggestion's list. */
   pairs(parent: Session): Promise<{ profileId: string; profile: string; agentId: string; agent: string; installed: boolean; models: string[]; current: boolean }[]>;
 }
@@ -702,7 +722,7 @@ export class SessionManager {
          ask or workflow run, or a runtime's own background task) — retiring
          it cancels them all (`onProcessGone`), and the answer they owe it
          would have nobody to wake. */
-      if (s.parentSessionId || bridge?.promptActive || bridge?.background) continue;
+      if (s.parentSessionId || bridge?.promptActive || bridge?.background || this.workflowRunner?.hasLive?.(s.id)) continue;
       if (!s.exited && s.peers.size === 0 && s.detachedAt && now - s.detachedAt > this.idleMinutes * 60_000) {
         this.retire(
           s,
@@ -866,6 +886,7 @@ export class SessionManager {
         viaGateway: false,
         websearchViaMcp: false,
         websearchCalls: new Set(),
+        calls: null,
       };
       this.sessions.set(row.id, session);
       if (row.lastActivityAt !== lastActivityAt) backfilled.push(session);
@@ -1305,6 +1326,22 @@ export class SessionManager {
         console.error("[websearch] usage write failed", error),
       );
     }
+    /* Model calls (model-calls/index.ts). A record on the wire — the runtime's
+       own, or one `recordCall` just emitted — is filed here whoever built it,
+       before the journal writes it so the replay carries the step the ledger
+       does; a `usage_update` is a record only on a thread whose door is
+       `usage`. Not on a mirrored event, for the reason the web-search ledger
+       skips one. */
+    if (!mirrored && session.calls && event.ev === "update" && !event.historyReplay) {
+      if (event.update.sessionUpdate === "_daedalus/model_call") {
+        fileCall(this.callThreadOf(session), event.update.call).catch((error) =>
+          console.error("[model-calls] ledger write failed", error),
+        );
+      } else if (!event.sessionId) {
+        const draft = usageFallback(session.calls, session.model, event.update);
+        if (draft) void recordCall(this.callThreadOf(session), draft);
+      }
+    }
     /* How full the agent says its context window is. Kept on the session
        because it is current state rather than history — see `Session.context`:
        the replay a client folds may carry no reading (a short window) or an
@@ -1463,6 +1500,8 @@ export class SessionManager {
       close itself ended is reported as that turn's error, not as this. */
   private processGone(session: Session, reason: string): void {
     this.events.onProcessGone?.(session);
+    session.calls?.attached?.stop();
+    session.calls = null;
     setImmediate(() => this.turnChanges.processGone(session.id));
     setImmediate(() => {
       const list = this.turnWaiters.get(session.id);
@@ -1542,6 +1581,13 @@ export class SessionManager {
 
   /** The bridge-callback adapter lives in bridge-host.ts, beside the bridge it
       serves, behind a port of exactly the manager methods it needs. */
+  /** The reading port a model-call source sees (`CallThread`), over this
+      manager's own `emit` so a server-built record is journaled and filed like
+      the runtime's own. */
+  private callThreadOf(session: Session) {
+    return makeCallThread(session, (event) => this.emit(session, event));
+  }
+
   private hostFor(session: Session): BridgeHost {
     return makeBridgeHost(session, {
       emit: (s, event, except) => this.emit(s, event, except),
@@ -1658,6 +1704,10 @@ export class SessionManager {
     opts: {
       /** Make this a workflow step of that thread. */
       parentSessionId?: string;
+      /** Whether that child is an ask or a workflow step, for its sidebar icon. */
+      childKind?: "ask" | "workflow";
+      /** The run a workflow step belongs to, which the sidebar folds steps by. */
+      childRun?: { id: string; name: string };
       /** A title set before the first prompt, which the title sniff then leaves alone. */
       title?: string;
       /** Settings to put in place once the session exists — a step inheriting
@@ -1733,6 +1783,8 @@ export class SessionManager {
         helperModels: opts.helperModels,
         title: opts.title,
         parentSessionId: opts.parentSessionId,
+        childKind: opts.childKind,
+        childRun: opts.childRun,
         autonomy: opts.autonomy,
         taskId: opts.taskId,
         ...(opts.aside ? { forkedFrom: { sessionId: opts.aside.of, turnId: null }, asideQuote: opts.aside.quote } : {}),
@@ -1850,6 +1902,8 @@ export class SessionManager {
       helperModels?: { role: string; model: string }[];
       title?: string;
       parentSessionId?: string;
+      childKind?: "ask" | "workflow";
+      childRun?: { id: string; name: string };
       autonomy?: AutonomyPolicy;
       /** Where a forked thread was branched from — the parent's id and the
           turn the branch carries through. Provenance only; see `Session`. */
@@ -1910,6 +1964,7 @@ export class SessionManager {
       detachedAt: now,
       deletedAt: null,
       pinnedAt: null,
+      hiddenAt: null,
       askProfiles: opts.askProfiles ?? {},
       exited: false,
       respawnChain: null,
@@ -1919,6 +1974,9 @@ export class SessionManager {
       stagedConfig: null,
       queueChain: null,
       parentSessionId: opts.parentSessionId ?? null,
+      childKind: opts.childKind ?? null,
+      childRunId: opts.childRun?.id ?? null,
+      childRunName: opts.childRun?.name ?? null,
       forkedFromSessionId: opts.forkedFrom?.sessionId ?? null,
       forkedFromTurnId: opts.forkedFrom?.turnId ?? null,
       asideQuote: opts.asideQuote ?? null,
@@ -1932,6 +1990,7 @@ export class SessionManager {
       viaGateway: false,
       websearchViaMcp: false,
       websearchCalls: new Set(),
+      calls: null,
     };
   }
 
@@ -2084,6 +2143,13 @@ export class SessionManager {
        spawned with none of the thread's: all of it — gateway URL, key, model
        vars — rides this session's `_meta` instead, so every thread in this cwd
        keys the same process and a warm one is simply handed over. */
+    /* Which door this process's model calls come through (model-calls/index.ts).
+       Chosen here, before the env is final, because the `otlp` door's switches
+       ARE env — merged over the resolved template like `{gatewayUrl}` is placed
+       in it. The old process's door goes with the old process. */
+    session.calls?.attached?.stop();
+    session.calls = await chooseDoor(this.callThreadOf(session), agent?.callsVia ?? []);
+    if (session.calls.attached?.spawnEnv) Object.assign(spec.env, session.calls.attached.spawnEnv);
     const shared = agent?.sharedProcess === "acp-meta";
     const sessionEnv = shared ? spec.env : undefined;
     if (shared) spec.env = {};
@@ -2116,6 +2182,7 @@ export class SessionManager {
          its row names the door; the URL names the thread, not the process, so
          a shared process's sessions are held one at a time. */
       pauseHookUrl: agent?.pauseVia === "acp-meta" ? pauseHookUrlFor(session.id) || undefined : undefined,
+      callsVia: session.calls.kind,
       /* The profile may opt out of Codex's fallback-metadata notice; the
          bridge is where it is dropped, so this is where the flag lands (see
          acp-bridge.ts). */
@@ -2124,6 +2191,10 @@ export class SessionManager {
     session.proc = proc;
     session.bridge = bridge; // flips the generation guard
     session.exited = false;
+    /* `runsActive` is the bridge's, and this bridge starts with it false: a respawn, a revive
+       or a boot adoption would otherwise read idle with an ask or run still going, and the
+       idle sweep would retire the thread that is owed their answer. */
+    if (!session.parentSessionId && this.workflowRunner?.hasLive?.(session.id)) bridge.setRunsActive(true);
     adoptedBy?.made();
     /* A failed handshake is collapsed HERE, for every caller — create, respawn,
        fork. Only respawn and fork used to, so a `session/new` that errored or
@@ -3841,6 +3912,7 @@ export class SessionManager {
       lastTurnError: s.lastTurnError,
       deletedAt: s.deletedAt,
       pinnedAt: s.pinnedAt,
+      hiddenAt: s.hiddenAt,
       askProfiles: s.askProfiles,
       attached: s.peers.size > 0,
       peerCount: s.peers.size,
@@ -3863,6 +3935,9 @@ export class SessionManager {
       context: s.context ? { used: s.context.used, size: s.context.size } : null,
       cursor: s.eventCount,
       parentSessionId: s.parentSessionId,
+      childKind: s.childKind,
+      childRunId: s.childRunId,
+      childRunName: s.childRunName,
       forkedFromSessionId: s.forkedFromSessionId,
       forkedFromTurnId: s.forkedFromTurnId,
       asideQuote: s.asideQuote,
@@ -3916,6 +3991,15 @@ export class SessionManager {
     session.pinnedAt = pinned ? Date.now() : null;
     this.persist(session);
     return session.pinnedAt;
+  }
+
+  /** Hide a thread from the sidebar's default list, or show it again. */
+  setHidden(id: string, hidden: boolean): number | null | undefined {
+    const session = this.sessions.get(id);
+    if (!session) return undefined;
+    session.hiddenAt = hidden ? Date.now() : null;
+    this.persist(session);
+    return session.hiddenAt;
   }
 
   /**
@@ -3972,26 +4056,30 @@ export class SessionManager {
   }
 
   /**
-   * Move every thread off a profile that is being deleted, onto its agent's
-   * virtual Default — profile, model and effort, all back to the agent's own.
+   * Move every thread off a profile that is being deleted, onto a replacement
+   * profile the user chose — or, with none chosen, onto each thread's agent's
+   * virtual Default. Model and effort go back to the replacement's own (empty
+   * here, so it resolves to its `defaultModel`).
    *
    * The confirmed half of profile deletion (`DELETE …?force=1`): the plain
    * delete names the threads, the user confirms, and this is what the
    * confirmation runs. Transcripts stay — the journal is untouched and
    * `acpSessionId` still names the agent's own record — so the next send
-   * revives the thread on Default exactly like any retired thread. A staged
-   * change dies with the profile it was staged for, and helper models (profile
-   * catalog ids) are cleared with the model they belonged to; the agent's own
-   * selectors (`modeId`, `configChoices`) survive, because on a Default
-   * profile those are the agent's and were never the profile's.
+   * revives the thread on its new profile exactly like any retired thread. A
+   * staged change dies with the profile it was staged for, and helper models
+   * (profile catalog ids) are cleared with the model they belonged to; the
+   * agent's own selectors (`modeId`, `configChoices`) survive, because they
+   * are the agent's and were never the profile's. The caller has already
+   * checked that `replacement` serves every target's agent.
    *
    * All or nothing across running turns: a thread mid-turn cannot be moved
    * without killing the turn under it, so one busy thread refuses the whole
-   * reset and names who is busy. Trashed threads are already on their way out
+   * move and names who is busy. Trashed threads are already on their way out
    * and are left alone.
    */
-  async resetThreadsFromProfile(
+  async moveThreadsOffProfile(
     profileId: string,
+    replacement: Profile | null,
   ): Promise<{ moved: string[]; busy: { id: string; title: string }[] }> {
     const targets = [...this.sessions.values()].filter((s) => s.profileId === profileId && s.deletedAt === null);
     const busy = targets
@@ -4002,13 +4090,13 @@ export class SessionManager {
     const moved: string[] = [];
     for (const session of targets) {
       /* A pick waiting for the next spawn names the profile being left — it
-         dies with it rather than landing on Default. */
+         dies with it rather than landing on the replacement. */
       this.clearStaged(session);
-      const profile = defaultProfileFor(session.agentId);
+      const profile = replacement ?? defaultProfileFor(session.agentId);
       if (!session.exited) {
         this.retire(
           session,
-          `The “${former?.name ?? "profile"}” profile was deleted, so its agent process was stopped. The conversation is kept — sending a message starts the agent again on its Default profile.`,
+          `The “${former?.name ?? "profile"}” profile was deleted, so its agent process was stopped. The conversation is kept — sending a message starts the agent again on the “${profile.name}” profile.`,
         );
       }
       session.profileId = profile.id;
@@ -4128,8 +4216,8 @@ export class SessionManager {
   }
 
   /** One page of history, without a socket. See `SessionSocket.earlierPage`. */
-  earlierPage(id: string, before: number) {
-    return this.socket.earlierPage(id, before);
+  earlierPage(id: string, before: number, steps?: number) {
+    return this.socket.earlierPage(id, before, steps);
   }
 }
 
@@ -4234,8 +4322,12 @@ function rowValues(s: Session) {
     tps: s.tps,
     deletedAt: s.deletedAt,
     pinnedAt: s.pinnedAt,
+    hiddenAt: s.hiddenAt,
     askProfiles: s.askProfiles,
     parentSessionId: s.parentSessionId,
+    childKind: s.childKind,
+    childRunId: s.childRunId,
+    childRunName: s.childRunName,
     forkedFromSessionId: s.forkedFromSessionId,
     forkedFromTurnId: s.forkedFromTurnId,
     asideQuote: s.asideQuote,

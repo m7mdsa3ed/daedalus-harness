@@ -250,6 +250,46 @@ export async function invokeMcp(id: string, def: acp.McpServer, call: McpInvocat
   }
 }
 
+/**
+ * Values a server suggests for one variable of a resource template
+ * (`completion/complete`, `ref/resource`) — what `@mcp:` offers as the person
+ * types the id. A server that does not implement completion answers an error,
+ * which is "no suggestions" here and never a failure: the caller can still type
+ * the id by hand.
+ */
+export async function completeMcp(
+  id: string,
+  def: acp.McpServer,
+  template: string,
+  argument: string,
+  value: string,
+): Promise<string[]> {
+  try {
+    const client = await pooledClient(id, def);
+    const answer = await withTimeout(
+      client.complete({ ref: { type: "ref/resource", uri: template }, argument: { name: argument, value } }),
+      CONNECT_TIMEOUT_MS,
+      `complete ${argument}`,
+    );
+    return answer.completion.values.slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+/** A resource as text, for a mention: the text parts of what `resources/read`
+    answers, joined. Binary parts are named, not inlined. Null when the read
+    never happened or the server holds nothing there. */
+export async function readMcpText(id: string, def: acp.McpServer, uri: string): Promise<string | null> {
+  const out = await invokeMcp(id, def, { kind: "resource", name: uri });
+  if (!out.ok) return null;
+  const contents = (out.result as { contents?: { text?: string; blob?: string; mimeType?: string; uri?: string }[] } | undefined)?.contents;
+  if (!contents?.length) return null;
+  return contents
+    .map((c) => (typeof c.text === "string" ? c.text : `(binary ${c.mimeType ?? "content"} not inlined: ${c.uri ?? uri})`))
+    .join("\n\n");
+}
+
 /* ── The pool ──
 
    One live client per server row, for everything that is not the Check

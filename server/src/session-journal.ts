@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, inArray, lt, or, sql, type SQL } from "drizzle
 import { db as defaultDb, scrubJson, sessionEvents as eventsTable } from "./db/index.js";
 import { deleteSearchIndex, indexEventRow } from "./search.js";
 import {
-  EARLIER_PAGE_STEPS,
+  earlierPageSteps,
   REPLAY_CHUNK_BYTES,
   REPLAY_CHUNK_SIZE,
   TURN_TICK_REPLY,
@@ -839,6 +839,9 @@ export class SessionJournal {
 
   /** The page of whole turns immediately before `before`, plus how many turns
       are still behind it. Empty when `before` is already the head of the log.
+      `steps` is how many turns the page should hold — the reader's pick, read
+      at the click and clamped by `earlierPageSteps`; absent is
+      `EARLIER_PAGE_STEPS`, the size it was when it was the server's alone.
    *
    * A log need not begin with a `turn_started`: a revive clears the journal and
    * refills it from the `session/load` replay, which is the prior conversation
@@ -846,9 +849,9 @@ export class SessionJournal {
    * a page of its own — the page that reaches the oldest turn takes it, which
    * is also the only way it is ever reachable. `earlier` is turns, so it is 0
    * either way and the client stops asking at the same point. */
-  async earlierPage(sessionId: string, before: number): Promise<EarlierPage> {
+  async earlierPage(sessionId: string, before: number, steps?: number): Promise<EarlierPage> {
     if (before <= 0) return { events: [], from: 0, earlier: 0 };
-    const starts = (await this.turnStartsBefore(sessionId, before, EARLIER_PAGE_STEPS)).reverse();
+    const starts = (await this.turnStartsBefore(sessionId, before, earlierPageSteps(steps))).reverse();
     const earlier = starts.length === 0 ? 0 : await this.countTurnsBefore(sessionId, starts[0]);
     // No turns left behind this page: whatever precedes it is that head, and
     // it belongs to the oldest turn shown rather than being stranded below it.

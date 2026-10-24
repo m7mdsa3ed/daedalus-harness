@@ -336,7 +336,7 @@ export function createCore(deps: CoreDeps) {
    */
   const fetchSessionPage = async (offset: number, limit: number, reset: boolean): Promise<SessionMeta[]> => {
     const page = await api<SessionPage>(settings, `/api/sessions/page?limit=${limit}&offset=${offset}`)
-    const rows = dedupeById([...page.sessions, ...page.trashed, ...page.pinned, ...(page.children ?? [])])
+    const rows = dedupeById([...page.sessions, ...page.trashed, ...page.pinned, ...(page.hidden ?? []), ...(page.children ?? [])])
     dispatch({
       type: "session-page",
       sessions: rows,

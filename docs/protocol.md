@@ -131,7 +131,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   the end of itself a second time (`ThreadSocket.cursor`, raised in `handle` and not in
   `fold`, since a `load_earlier` re-fold runs events this cursor is long past); and
   a *windowed* attach starts wherever the server chose, because the thread was longer than
-  `REPLAY_WINDOW_STEPS` **or heavier than `REPLAY_WINDOW_BYTES`** — two budgets, whichever
+  the window the client asked for — the reader's pick (Settings › Appearance › Transcript ›
+  History; ten turns by default, and "All" sends no `window` parameter at all) — **or
+  heavier than `REPLAY_WINDOW_BYTES`** — two budgets, whichever
   binds first (`SessionJournal.windowStart`), because a step is a turn and a turn is not a
     size: one is a sentence, the next is a build log streamed through
     `_meta.terminal_output_delta`, so a handful of them is a screenful on one thread and megabytes
@@ -145,7 +147,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   (`SessionManager.turnStartAt`/`earlierPage`), so `attached.from` is always a turn's
   opening event and a page is whole turns — an event-counted cut landed mid-turn and the
   re-fold opened a half turn the reducer had never seen begin. `earlier` counts withheld
-  turns. **The turn rail never pages for its ticks**: `attached` also carries `turns`, the
+  turns, and a page holds as many of them as the reader asked for: `steps` on the
+  `load_earlier` command and on `GET …/earlier`, taken from their `earlierPage` pick, read at
+  the click, and clamped by `earlierPageSteps` — absent, the 20 the server used when the
+  page size was its own alone, so an older client is answered exactly as before.
+  **The turn rail never pages for its ticks**: `attached` also carries `turns`, the
   journal's whole turn list (one `turn_started` + excerpt per turn, oldest first, including
   the turns withheld behind `earlier` — `SessionJournal.turnTicks`), so the rail draws
   every tick up front and a jump to a withheld turn pages back to its seq first. Omitted
@@ -975,6 +981,14 @@ bridge's `DecodeClock` (`decode-clock.ts`) is the fallback for a runtime that se
 answers **only for a turn that made no tool call** — it sees prose, while the usage it divides into
 also counts the arguments of every tool call, so a tool turn would be a rate over tokens it never
 timed. It counts only the thread's own updates — a subagent's decode is not the parent's.
+**The wait between requests rides the same record** (`TurnGeneration.waits`, `Meter.waits()`): the
+clock no root-loop request was in flight on, between the first starting and the last ending, with
+the parts the runtime could name (held, compacting, retry backoff) — the rest is tools and the
+harness. A turn with waits and no measurable speed sends a **zero-token generation**, not `null`:
+`null` is "I timed nothing", and a zero record still stops the decode clock from timing it.
+**Per request, the same split rides the request's first tool call** (`_meta.daedalus.lead`: the
+causes booked since the request before it, `ttftMs`, `writeMs`) — it is what the transcript's gap row
+explains itself with (`gapLead`); the gap itself stays the client's own arithmetic.
 **Time to first token is the model's first output** (`isModelOutput`: prose, thought or the opening
 of a tool call, on the thread's own stream) — never the first update, because the runtime sends the
 session title and mode before it has called the model. A turn that throws still reports what it
@@ -986,11 +1000,206 @@ labelled fallback for a turn with no generation, and `TpsStats` switches a threa
 generation on its first measured turn rather than mixing the two quantities. Every average is
 token-weighted.
 
-There is no span store: the harness records no OpenTelemetry, `session/prompt` carries no
-`traceparent`, and a runtime's own `_daedalus/trace` notification is not listened for. The
-`trace_spans` table and the agents' `prompt_files`/`telemetry_via` columns are dropped at boot
-(`db/index.ts`), and seed 35 takes Claude Code's `OTEL_*` env keys back where they still hold the
-seeded template.
+## Model calls
+
+**One record per provider request, whoever observed it, and no spans.** A turn's timeline is
+already in the journal (`turn_started`/`turn_ended`, every tool call with its `at` and terminal
+status); `ModelCall`s fill the gaps between. The harness records no OpenTelemetry of its own,
+`session/prompt` carries no `traceparent`, and nothing is propagated or de-duplicated across
+processes. The removed design (`git show 032f5c36^`) had four producers — the agent's OTel
+spans, Claude Code's OTLP logs, the shim counting every request, the runtimes' session files —
+each landing in a different place with a different shape, and the client reconciled them.
+What survived is the dialect knowledge in each reader; what did not is the span store and the
+four shapes.
+
+### The record
+
+`ModelCall` (`server/src/protocol.ts`, mirrored field for field in `agent/src/trace.ts`):
+`callId`, `at` (epoch ms sent), `ms` (wall time to the parsed response, when the door saw both
+ends), `who` (`turn` | `subagent` + `childId` | `compaction` | `title`), `step` (1-based within
+the turn), `model`, `finishReason`, `source` (`acp` | `otlp` | `proxy` | `files` | `usage` —
+which door built it), and three readings:
+
+- **`billed`** — exact, the provider's own counters as `acp.Usage` (`inputTokens` is the
+  *fresh* part, `cachedReadTokens`/`cachedWriteTokens` beside it — the convention
+  `lib/tokens.ts` draws from). `costUsd` only when the runtime said it (Claude Code's
+  `cost_usd`); `timing.ttftMs`/`decodeMs` when the door timed them.
+- **`prompt`** (`PromptParts`) — ~ where the prompt went: `system`, `tools`, `mcp`, `user`,
+  `assistant`, `results`, plus `unknown`. **Anchored, not simulated**: the present parts plus
+  `unknown` sum exactly to `billed.inputTokens + cachedReadTokens + cachedWriteTokens`
+  (`billedPrompt`). A part the door could not see is `null`, its share is in `unknown`, and
+  **`missing`** says why in the door's own words (`"the system prompt"`, `"tool schemas"`,
+  `"the conversation"`). The panel draws a null part as "not available", never a smaller
+  prompt and never "overhead" as if measured.
+- **`output`** — ~ `text` / `reasoning` / `toolCalls`; `reasoning` exact when reported.
+
+**`items`** (`PrefixItems`: named `PrefixItem { name, tokens }` lists for `system`, `tools`,
+`mcp`) says which system section and which tool definition is the big one, as raw local counts
+— proportions only. It rides the first record and any record after the prefix changed (the
+agent keys on sha1 of instructions text + tool names; the server doors on the name list), never
+every step: the prefix is byte-identical between the steps of a turn, and a turn is the
+smallest window a reader ever loads.
+
+**`toolUse`** (`ToolUse { name, calls, args, results }[]`) is ~ each tool's footprint in the
+request's conversation: how many of its calls the history held, their arguments (inside
+`assistant`) and their results (inside `results`), scaled by the factor each part was anchored
+with (`anchorToolUse`, repeated in the agent's `trace.ts`) — so they are billed tokens and never
+exceed their part. A message is attributed by the tool it names, a result by its call's id.
+Every step carries it, because the history is the thing that grows; a reader takes the **newest**
+call's, never a sum (one result is re-sent on every later step). **`called`** is the tools the
+*response* asked to run, one entry per call: the agent reads its own content, the proxy reads
+the reply's tool-call events (`calledOf`, per dialect), the Claude files door the message's
+`tool_use` blocks. Both are absent where the door could not see that half, and both are ledger
+columns (`tool_use`, `called`), read back whole.
+
+### The event
+
+One wire event, **`sessionUpdate: "_daedalus/model_call"`** with the record under **`call`**
+(`ModelCallUpdate`), a journaled `update` on the session it belongs to — a subagent's on the
+child's session id. It is listed in `SUBAGENT_UPDATE_KINDS` (`acp-bridge.ts`), the door for
+every name the SDK's closed union would otherwise reject as "Invalid params". A record the
+runtime sent itself and one the server built take the same path, so the bridge, the journal
+and the client cannot tell who built it — decision 1 of the plan: **`source` and `missing` are
+drawn, never branched on.** The feature gate is `FEATURES` `modelCalls` (`compat.ts`, no API
+bump; the client reads it with `useFeature("modelCalls")`).
+
+The client files each one under the open turn (`ThreadState.calls`, `lib/trace.ts`), merges a
+cold read of `GET /api/sessions/:id/calls` (newest first, paged by `?before=<at>&limit=`;
+answers for a retired thread too, because the ledger is the install's and not the process's)
+with the socket's records by `callId`, and draws them in the **Trace** panel
+(`components/thread-view/trace-panel.tsx`): a `ThreadSectionKind`/`InspectorTab`/
+`ThreadPanelKind` `"trace"` in the thread dock's side slot and the inspector sheet, reached
+also from the context ring's popover ("Open Trace panel"). One `Notice` names the door
+(`DOOR_WORDS`, keyed by `session_config.callsVia`) and the `missing` words; a `StatStrip`, a
+stacked prompt bar with null parts hatched, and one `DataTable` of calls whose fold is the
+parts, the billed facts and the prefix items. A pre-door journal with no records at all draws
+billed-only rows off `usage_update` (`rowsFromStepUsage`).
+
+### The doors
+
+**Which door a runtime has is a column on its row — `AgentDef.callsVia: CallDoor[]`, ordered,
+data not code**, seeded and backfilled like `quotaProbe` (seed 36, `CALLS_VIA` in
+`registry.ts`; a user's row keeps its own value):
+
+```ts
+type CallDoor =
+  | { kind: "acp" }                                                        // the runtime sends the record itself
+  | { kind: "otlp"; dialect: "claude-otlp"; env: Record<string, string> }  // templated OTEL_* switches
+  | { kind: "proxy"; dialect: "anthropic-messages" | "openai-chat" | "openai-responses" }
+  | { kind: "files"; format: "claude-jsonl" | "codex-rollout" | "opencode-sqlite" };
+type CallsVia = CallDoor["kind"] | "usage";
+```
+
+Seeds: `daedalus: [acp]`; `claude-code: [otlp, proxy(anthropic-messages), files(claude-jsonl)]`;
+`codex: [proxy(openai-responses), files(codex-rollout)]`; `opencode: [proxy(openai-chat),
+files(opencode-sqlite)]`. **The implicit last door is `usage`** — every runtime's own
+`usage_update`, billed only, never listed. A fifth door is a union member in `protocol.ts`, an
+entry in `sources` (`model-calls/index.ts`) and a seed — nothing else.
+
+**One door per thread, chosen by what can attach — once per process.** `SessionManager.start`
+calls `chooseDoor(thread, agent.callsVia)` right after `resolveAgentSpawn`, before the env is
+final, because the `otlp` door's switches *are* env (`Attached.spawnEnv`, merged over the
+resolved template the way `{gatewayUrl}` is placed in it). The first source whose
+`attach(thread, door)` answers is the thread's (`Session.calls: ChosenDoor`), the rest are not
+tried, a source that throws is one that did not attach, and the choice is said on
+`session_config.callsVia`. A respawn stops the old door (`attached.stop()`) and chooses again;
+`processGone` nulls it. **The double-count guard is this choice**: `usageFallback(door, model,
+update)` answers a draft only when `door.kind === "usage"` and the update is a `usage_update`
+with a bill (our runtime's exact per-step `_meta.daedalus.step`, else `used` as one undivided
+number) — so an `acp`/`otlp`/`proxy`/`files` thread never rows its `usage_update`s.
+
+What each source sees is a **`CallThread`** (`makeCallThread` in `bridge-host.ts`): readings
+only — `id`, `agentId`, `profileId`, `projectId`, `cwd`, `viaGateway`, `acpSessionId()` (the
+*proven* id or null), `turn()` (the bridge's `currentTurnId` and `nextCallStep()`), `names()`
+(the ledger's snapshot names) and `emit()`. **A source never touches the bridge, the journal
+or the database.**
+
+- **`acp`** (`sources/acp.ts`) — the degenerate door: the runtime sends `_daedalus/model_call`
+  itself. Always attaches; nothing to watch. Our agent's `Tracer` (`agent/src/trace.ts`) joins
+  the SDK's `onLanguageModelCallStart` (the request exactly as sent) to `onLanguageModelCallEnd`
+  (the bill) by `callId`, counts with gpt-tokenizer and anchors with the same `anchor` formula —
+  the one duplicated piece, because the agent cannot import the server. `traced` in
+  `agent/src/turn.ts` composes it with the meter at the four `streamText` sites and returns
+  the emit's promise so the SDK awaits it: the record is journaled before the step's tools run.
+  → `agent/docs/managing.md` "What a turn reports about each model call".
+- **`otlp`** (`sources/otlp.ts`, Claude Code, logs only) — `configureOtlp({port})` at boot
+  makes the receiver and wipes `DATA_DIR/otlp-bodies`; until it ran the door does not attach.
+  `attach` makes the thread's own `0o700` body directory and resolves the door's templated
+  `env` (`resolveEnvValue` with `{otlpUrl}` = `/otlp/<derive("otlp")>/<threadId>` and
+  `{otlpBodies}`) into `spawnEnv` — every value resolves empty when there is no receiver, so
+  the keys prune and the exporter is never turned on blind. `handleOtlp` (mounted `/otlp/*`
+  in `routes/misc.ts`) pairs `api_request` (billed, `cost_usd`, `duration_ms`, `ttft_ms`,
+  `model`) with `api_request_body` (the file, shaped by `fromAnthropicMessages`, deleted) by
+  request id — the body event's `request_id`, else Claude Code's own `index.jsonl`; after
+  `PAIR_WAIT_MS` (3 s) a lone request files without `prompt` and a lone body billed-less.
+  `/v1/traces` and `/v1/metrics` are 200-and-drop.
+- **`proxy`** (`sources/proxy.ts`, any runtime behind the shim) — attaches only when
+  `door.kind === "proxy" && thread.viaGateway`. The shim (`gateway-shim.ts`) has one
+  `GatewayTap`, registered at the door's module load (`setGatewayTap`); `wants(sessionId)` is
+  the per-thread switch, and for a wanted thread the forward reads the JSON body and `tee()`s
+  the reply — one branch piped to the child byte for byte, the other drained and handed to
+  `ended(sessionId, requestBody, {contentType, body}, {at, ms, ttftMs})` only after the stream
+  ended. **The shim spells no dialect**: the door's `dialect` picks the prompt-parts adapter
+  and the bill reader (`message_start`+`message_delta` merged number-wise for Messages SSE, the
+  last `usage` chunk for chat, `response.usage` for Responses, or the JSON body). A reply with
+  no bill (a listing, an error) is not a record.
+- **`files`** (`sources/files.ts`, a runtime's own store, read-only) — attaches when the
+  format's store root is on this machine (`CLAUDE_CONFIG_DIR`/`~/.claude/projects`,
+  `CODEX_HOME`/`~/.codex/sessions`, `XDG_DATA_HOME`/`opencode/opencode.db`), polls
+  `thread.acpSessionId()` every `filesTiming.pollMs` until the id is earned and the file found,
+  reads from where it stopped, then hands off to a debounced `fs.watch` (falling back to the
+  poll if the watch refuses). Reads are serialised so steps land in file order; a bill stamped
+  before attach is a previous life's and is folded into state but not re-rowed. Three readers,
+  one draft: `claude-jsonl` (the latest `prompt_snapshot` plus the instructions / environment /
+  skills / agent-listing / MCP-instruction attachments, a bill per `requestId` off the assistant
+  lines' `message.usage`, `who: "subagent"` for `isSidechain`), `codex-rollout` (a draft per
+  `token_count` with a non-zero `last_token_usage`, the conversation and `session_meta`),
+  `opencode-sqlite` (`node:sqlite` opened read-only per read, a draft per completed assistant
+  `message` row, `instruction_state` + `instruction_blob`). A locked or unknown store is
+  logged once and treated as nothing, tried again next tick.
+
+### One filing path
+
+Every door hands a **draft** (`ModelCallDraft`: the record less `step`, `prompt`, `missing`,
+`items`, plus an optional `shape` and an `items: boolean`) to **`recordCall(thread, draft)`**,
+which counts `shape`, anchors to `billedPrompt(billed)` and emits `_daedalus/model_call` onto
+the thread. The thread's `emit` is `SessionManager.emit`, and that is where **`fileCall`** runs
+for every live, non-mirrored, non-replay `_daedalus/model_call` — whoever built it: it fills
+`step` where the source left it 0 (`turn().nextStep()`, the bridge's per-turn `callSteps`
+counter, reset where `currentTurnId` is set), **mutating the record before the journal writes
+it** so the replay carries the step the ledger does, and writes the `model_calls` row with the
+open `turnId` and the snapshot names. One entry for a runtime-sent record and a server-built
+one; a `recordCall` that also wrote the row would have double-written on its own emit. **Two
+stores, one source**: the journal is the thread's (replay, the panel), `model_calls` is the
+install's (Spend) — → `docs/ops.md` "The model-call ledger".
+
+### Counting
+
+**One counting path for every server-built record** (`model-calls/prompt-parts.ts`), and it is
+never on a request's path. A door reduces what it saw to a `RequestShape` — `system[]` and
+`tools[]` *named*, `messages[]` by role (`user` | `assistant` | `results`), `unseen` (the parts
+this door could not see) and `missing` (the same in words) — through one of six pure adapters:
+`fromAnthropicMessages`, `fromOpenAiChat`, `fromOpenAiResponses`, `fromClaudeSnapshot`,
+`fromCodexRollout`, `fromOpencodeInstructions`. `countShape` counts with gpt-tokenizer
+(`o200k_base`, so only exactly right when OpenAI's model is serving — hence the anchor),
+remembers every text of 256 characters or more by sha1 so a step pays for what is new, and yields the loop
+every ~4 ms (`tick`); a tool is MCP when its name matches `/(^|[._])mcp__/`. `partsOf(total,
+counts)` applies **`anchor`**: seen parts are scaled by one factor to the billed total (always
+when all are seen or the local count overshoots; a blind part keeps the seen ones at face value
+and the rest is `unknown`), the last seen part takes the rounding remainder when nothing is
+blind, so all-seen parts sum exactly up or down; a null part stays null. The same fifteen lines
+are in `agent/src/trace.ts`, tested in both halves.
+
+### Trust
+
+A door trusts nothing it is handed. The `otlp` key in the path is the credential
+(`derive("otlp")` on `data/loopback-secret`, as `/gw/`): a wrong key or an unattached thread is
+a 404, protobuf 415, bad JSON 400; a body path is resolved against the thread's own directory
+under `DATA_DIR` before it is read or unlinked, and only the named fields are read off an event,
+so identity attributes (`user.email`, `organization.id`, `session.id`) land nowhere. The
+`proxy` door reads the body the shim is already forwarding and stores none of it. The `files`
+door opens read-only and never writes to a runtime's store. Counting is after the reply ended
+in every door — the shim's only cost on a tapped thread is a body read and a tee.
 
 ## Durable agent processes (`DAEDALUS_SANDBOX=hosted`)
 

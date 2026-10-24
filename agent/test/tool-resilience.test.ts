@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { buildAgentApp } from "../src/app.js";
 import { makeRepairToolCall, resolveToolName } from "../src/tools/repair.js";
 import {
+  connectPair,
   initialize,
   makeClient,
   promptOf,
@@ -33,7 +34,7 @@ async function runTool(cwd: string, name: string, input: Record<string, unknown>
   });
   const { app: client, harness } = makeClient();
   let text = "";
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     harness.answerPermission("allow");

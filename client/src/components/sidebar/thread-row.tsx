@@ -1,6 +1,6 @@
 /* ── One thread, one line ── the row, its actions, and its menus. */
 import * as React from "react"
-import { ChevronRight, MoreVertical, X } from "lucide-react"
+import { ChevronRight, MoreVertical, UsersIcon, WorkflowIcon, X } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge"
 import { ThreadInfoCard } from "./thread-info-card"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { threadMenuItems, trashMenuItems } from "@/components/thread-menu"
-import { activityAt, type SessionMeta } from "@/lib/settings"
+import { activityAt, childKindOf, type SessionMeta } from "@/lib/settings"
 import { threadPath } from "@/lib/router"
 import { startRouteDrag } from "@/lib/workspace/route-drag"
 import { shortAge } from "@/lib/time"
@@ -55,6 +55,7 @@ export interface ThreadRowHandlers {
   onRestore: (session: SessionMeta) => void
   onPurge: (session: SessionMeta) => void
   onPin: (session: SessionMeta) => void
+  onHide: (session: SessionMeta) => void
   onRemoveWorktree?: (session: SessionMeta) => void
   onClose?: (session: SessionMeta) => void
 }
@@ -108,7 +109,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   setSize?: number
   measure?: (el: Element | null) => void
 }) {
-  const { onOpen, onRename, onDelete, onRestore, onPurge, onPin, onRemoveWorktree, onClose } = handlers
+  const { onOpen, onRename, onDelete, onRestore, onPurge, onPin, onHide, onRemoveWorktree, onClose } = handlers
   /* One list feeds both the ⋯ menu and the right-click menu. */
   /* Delete is Trash, and Trash stops the agent: a turn in motion (or one
      waiting on an answer) is not something to throw away from a menu row —
@@ -128,6 +129,7 @@ export const ThreadRow = React.memo(function ThreadRow({
               onRename,
               onDelete,
               onPin,
+              onHide,
               onRemoveWorktree,
             },
             /* A phone folds every split back into one strip, so the row that
@@ -138,7 +140,7 @@ export const ThreadRow = React.memo(function ThreadRow({
               ? { ...item, disabled: true, hint: "Stop the turn first" }
               : item
           ),
-    [session, trash, pinned, busy, isMobile, onRename, onDelete, onRestore, onPurge, onPin, onRemoveWorktree]
+    [session, trash, pinned, busy, isMobile, onRename, onDelete, onRestore, onPurge, onPin, onHide, onRemoveWorktree]
   )
   /* ── One line ──
      The agent's mark, the title, and at the trailing edge the status (a spinner,
@@ -146,9 +148,23 @@ export const ThreadRow = React.memo(function ThreadRow({
      Model, project and the rest are one hover away (the row's card) and in the ⋯ card —
      a second line per row halved how many threads fit. */
   const age = shortAge(activityAt(session))
+  const childKind = childKindOf(session)
   const row = (
     <span className="flex min-w-0 flex-1 items-center gap-2">
       {agentIcon && <AgentIcon agentId={session.agentId} className="size-4 shrink-0" />}
+      {/* A sub thread says what it is: the same marks the harness's own MCP
+          rows wear (`BUILTIN_MCP_MARKS`) — people for an ask of another agent,
+          the workflow glyph for a step. The words are for a screen reader. */}
+      {childKind && (
+        <>
+          {childKind === "ask" ? (
+            <UsersIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <WorkflowIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span className="sr-only">{childKind === "ask" ? "Ask: " : "Workflow step: "}</span>
+        </>
+      )}
       <span
         className={cn(
           "min-w-0 flex-1 truncate",
@@ -223,6 +239,10 @@ export const ThreadRow = React.memo(function ThreadRow({
         /* A parent's chevron always holds the trailing slot (a button cannot
            sit inside the row's own button), so the age stops short of it. */
         fold && "pr-7!",
+        /* A phone has no hover, so the ⋯ (and the close and fold buttons
+           beside it) are always drawn: the age stops short of all of them
+           instead of sitting under the ⋯. */
+        isMobile && (fold && onClose ? "pr-19!" : fold || onClose ? "pr-12!" : "pr-7!"),
         /* A faint wash over the whole row for the two states addressed to
            the reader, a step stronger on hover. */
         !trash && state === "waiting" && "bg-warning/10 hover:bg-warning/15",

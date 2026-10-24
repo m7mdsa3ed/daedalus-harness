@@ -28,6 +28,7 @@ import type {
 } from "./items"
 import type { ThreadState } from "./thread"
 import { addUsage } from "./messages"
+import { fileCall, openTurnId } from "../trace"
 
 // ---- update application (shared by live updates and journal rebuild) ----
 
@@ -207,7 +208,11 @@ export function applySessionUpdate(
      honest length either. */
   const now = stamp ?? Date.now()
   const at = allowUserChunks ? undefined : now
-  const endedAt = allowUserChunks ? undefined : endStamp
+  /* A live chunk is its own end: each one that joins a run moves `endedAt` to
+     its arrival, so a thought stops its clock at the last word it wrote and
+     not at the tool call that follows it (the call lands only after the model
+     has also written its arguments, which can take longer than the thinking). */
+  const endedAt = allowUserChunks ? undefined : (endStamp ?? now)
   /* Whose item this is. The vendor `_meta` naming a parent tool call (Claude
      Code's Task, or the child session OpenCode projects) wins over an update
      that arrived on a subagent's session (the RFD: `sessionId` names the
@@ -810,6 +815,11 @@ export function applyMetaUpdate(
     update.sessionUpdate === "available_commands_update" ||
     update.sessionUpdate === "session_info_update"
   if (sessionId && sessionLevel) return thread
+  /* A model call is the thread's wherever it was observed: a child's record
+     (filed on the child's session id) is kept with the thread's, named by its
+     child, so the Trace panel reads one list. Filed under the open turn. */
+  if (update.sessionUpdate === "_daedalus/model_call")
+    return { ...thread, calls: fileCall(thread.calls, update.call, openTurnId(thread.items), sessionId) }
   /* The one session-level update a child still has somewhere to go: its
      context occupancy is not the thread's, but it IS the step's, and the step
      is an item. Everything else about a child's session dies here. */

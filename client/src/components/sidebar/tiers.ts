@@ -54,6 +54,9 @@ export function deriveTiers({
     .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
   const live = scoped.filter((session) => {
     if (session.deletedAt) return false
+    /* A hidden thread is out of every list but its own: "Hidden" shows exactly
+       those, every other reading shows none of them. */
+    if (!!session.hiddenAt !== (filter === "hidden")) return false
     if (needle && !matches(session, needle, projectNames)) return false
     if (within !== "any" && activityAt(session) < now - WITHIN_MS[within]) return false
     if (filter === "unread") return unread?.has(session.id) ?? false

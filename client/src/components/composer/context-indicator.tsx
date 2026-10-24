@@ -12,6 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import { Notice } from "@/components/notice"
 import {
+  OpenInInspector,
   READING_MARK,
   READING_TRIGGER,
   ReadingBubble,
@@ -33,6 +34,7 @@ import {
 import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
+import { useFeature } from "@/lib/queries/surfaces"
 import { addUsage, type ThreadState } from "@/lib/store"
 import { spendTime, subagentSpend } from "@/lib/subagent-spend"
 import {
@@ -69,7 +71,7 @@ function Row({
   )
 }
 
-/** Children listed by name before the rest fold into "N more"; the Tokens
+/** Children listed by name before the rest fold into "N more"; the Agents
     panel has the whole list. */
 const SUBAGENT_ROWS = 4
 
@@ -340,6 +342,9 @@ export function ContextIndicator({
   triggerClassName?: string
 }) {
   const [open, setOpen] = useState(false)
+  /* Where the prompt went is the Trace panel's to say — on a server that
+     records model calls. */
+  const modelCalls = useFeature("modelCalls")
   const { context, ttftMs } = thread
   /* The finished turns plus the running one's steps so far, so every figure
      below moves per step rather than jumping once at `turn_ended`. */
@@ -385,6 +390,18 @@ export function ContextIndicator({
         : cacheRate >= 20
           ? "text-warning"
           : "text-destructive"
+  /* The gaps between the model's requests, and what the agent could tell apart
+     in them; the rest of the total is the tools (approvals too) and the
+     harness's own work. */
+  const waits = thread.tps?.waits
+  const waitRows = waits
+    ? ([
+        ["Tools & other", waits.totalMs - (waits.heldMs ?? 0) - (waits.compactMs ?? 0) - (waits.retryMs ?? 0)],
+        ["Held", waits.heldMs ?? 0],
+        ["Compacting", waits.compactMs ?? 0],
+        ["Retry backoff", waits.retryMs ?? 0],
+      ] as const).filter(([, ms]) => ms > 0)
+    : []
   const spend = subagentSpend(thread.items)
   const spendTotal = spend.reduce((n, child) => n + child.tokens, 0)
   /* `turnUsage` is filled in turn order, so its last entry is the newest turn. */
@@ -429,10 +446,11 @@ export function ContextIndicator({
         heading="Context window"
         meta={estimated ? "Size estimated" : undefined}
         className="gap-3"
+        action={modelCalls && <OpenInInspector tab="trace" label="Open Trace panel" onOpen={() => setOpen(false)} />}
       >
         {/* The window, first and largest: the dial the footer wears, at a size
             that can hold its own figure, beside what is held and what is left.
-            What the prompt is made of is the Tokens panel's to say. */}
+            What the prompt is made of is the Trace panel's to say. */}
         <div className="flex items-center gap-3">
           <div className="relative grid size-14 shrink-0 place-items-center">
             <Ring percent={percent} className="absolute inset-0 size-14 text-foreground" />
@@ -508,6 +526,16 @@ export function ContextIndicator({
               )}
               {toolDurationMs > 0 && <Tile label="In tools" value={formatDuration(toolDurationMs)} />}
             </div>
+          </Section>
+        )}
+
+        {waits && (
+          <Section title="Between requests" meta={formatDuration(waits.totalMs)}>
+            <dl className="space-y-1">
+              {waitRows.map(([label, ms]) => (
+                <Row key={label} label={label} value={formatDuration(ms)} />
+              ))}
+            </dl>
           </Section>
         )}
 

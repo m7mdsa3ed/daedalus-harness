@@ -28,7 +28,7 @@ import { holdOf } from "@/lib/thread/hold"
 import { isOpening } from "@/lib/thread/phase"
 import { currentThreadId, navigateTo, threadPath } from "@/lib/router"
 import { openInNewTab } from "@/lib/workspace/open-threads"
-import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem, type ToolItem } from "@/lib/store"
+import { useDispatch, useSessionMeta, useThread, threadIsEmpty, workLive, type ThreadItem, type ToolItem } from "@/lib/store"
 import { FilePreviewContext, type FilePreviewValue } from "@/lib/file-preview"
 import { DockContext, useIsFrontPanel } from "@/components/workspace/dock-context"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
@@ -39,6 +39,7 @@ import { Link, useLocation } from "react-router"
 import { useLayoutOptions, LayoutOptionsContext } from "@/lib/layout-options"
 import { useFollowStream } from "@/hooks/use-follow-stream"
 import { cn, stagger } from "@/lib/utils"
+import { burstMs, gapMinMs } from "@/lib/tool-batches"
 import { ThreadIdContext } from "@/lib/thread-id-context"
 import { OpenuiActionsContext } from "@/lib/openui/actions"
 import { StepTokensProvider, createStepTokensStore } from "@/components/token-usage"
@@ -49,9 +50,9 @@ import { InlineHeldTurn } from "@/components/held-turn"
 import { ThreadStatus } from "@/components/thread-view/thread-status"
 import { PendingSettings } from "@/components/thread-view/pending-settings"
 import { useThreadStatus } from "@/lib/thread/status"
-import { RowView } from "@/components/thread-items/rows"
+import { RowView, StepGap } from "@/components/thread-items/rows"
 import type { TurnSources } from "@/lib/sources"
-import { buildRows, rowTailId, separatorAfterRun, shareRows, type Row } from "@/lib/transcript-rows"
+import { buildRows, proseGapAfter, rowTailId, separatorAfterRun, shareRows, streamingRowIds, type Row } from "@/lib/transcript-rows"
 import { Composer, type ComposerHandle } from "@/components/composer/composer"
 import { ThreadRail } from "@/components/thread-rail"
 import { RewindDialog, type RewindScope } from "@/components/rewind-dialog"
@@ -111,6 +112,9 @@ const DORMANT_KEEP_TURNS = 2
 /* One empty list, so a thread with no scripts does not hand `definedCommands`
    — and the suggestion cache keyed on it — a new set every render. */
 const NO_SCRIPTS: readonly never[] = []
+/* The same, for the rows a closed turn is still writing: none. Kept at one
+   identity so the memo below does not hand every row a new set per render. */
+const EMPTY_ROWS: ReadonlySet<string> = new Set()
 
 /** Whether an item is drawn inside this row — the row itself, or a group any
     level down (a subagent, tool group, workflow, or batch). */
@@ -323,6 +327,9 @@ export function ThreadView({
      run and fold re-rendered on every streamed token. The ref is written in
      render, which is safe because what it holds is always equal to the build. */
   const prevRows = React.useRef<Row[]>([])
+  /* A subagent row reads as working while a turn is open OR while an ask or
+     workflow run it launched is still going after the turn ended. */
+  const working = workLive(thread)
   const rows = React.useMemo(
     () =>
       (prevRows.current = shareRows(
@@ -333,14 +340,17 @@ export function ThreadView({
           thread.turnActive,
           options.groupShellCommands,
           !options.expandEdits,
-          options.answersOnly
+          options.answersOnly,
+          options.parallelGroups ? burstMs(options.batchBurst) : undefined
         )
       )),
     [
       options.answersOnly,
+      options.batchBurst,
       options.expandEdits,
       options.groupTools,
       options.groupShellCommands,
+      options.parallelGroups,
       visible,
       thread.turnActive,
     ]
@@ -472,6 +482,15 @@ export function ThreadView({
      is drawn — under `answersOnly` the newest is the tail of the fold that holds
      it — and `rowTailId` recurses through a fold, so exactly one row answers. */
   const last = thread.items[thread.items.length - 1]
+  /* The rows still being written, by this reading — the newest one, and the
+     group under a thought that is standing at the tail (`streamingRowIds`).
+     Asked against the rows rather than `rowTailId` alone, because a trailing
+     thought is outside the fold it explains and left the group above it
+     folding shut every time the model started thinking. */
+  const streamingRows = React.useMemo(
+    () => (thread.turnActive ? streamingRowIds(rows, last?.id) : EMPTY_ROWS),
+    [rows, last?.id, thread.turnActive]
+  )
   /* A turn the agent's process ended under is resumable the same way: its row
      is the last thing that happened, and sending "Continue." revives the agent
      first (`ready`). Unlike an interrupt it stays offered beside a `failed`
@@ -969,6 +988,15 @@ export function ThreadView({
                       child, so that hid every one. `firstUserIndex` already
                       skips the first turn. */}
                   {divider && <div aria-hidden className="my-2 h-px bg-border" />}
+                  {/* The wait between the last tool settling and the reply
+                      starting to be written: prose ends its run, so the run's
+                      own step gaps (`layoutBatches`) never reach it. */}
+                  {(() => {
+                    const floor = gapMinMs(options.gapMin)
+                    if (floor === null) return null
+                    const wait = proseGapAfter(rows, i)
+                    return wait !== undefined && wait > 0 && wait >= floor ? <StepGap ms={wait} /> : null
+                  })()}
                   {/* The entrance wrapper (index.css): one per row, so the
                       divider and the Sources strip sit beside it — each mounts
                       at its own moment and rises in on its own.
@@ -1009,7 +1037,7 @@ export function ThreadView({
                          older ones are history and stay whole rows. */
                       compactError={status?.kind === "turn-failed" && status.itemId === row.id}
                       showTimestamps={options.showTimestamps && !runContinues}
-                      streaming={thread.turnActive && last !== undefined && rowTailId(row) === last.id}
+                      streaming={streamingRows.has(row.id)}
                     />
                   </Entrance>
                   <TurnFooter

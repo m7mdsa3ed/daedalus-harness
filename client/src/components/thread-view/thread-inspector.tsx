@@ -51,7 +51,7 @@ import {
 import { SubagentStep } from "@/components/thread-items/rows"
 import { useLayoutOptions, LayoutOptionsContext } from "@/lib/layout-options"
 import type { SessionMeta } from "@/lib/settings"
-import type { ThreadItem, ThreadState } from "@/lib/store"
+import { workLive, type ThreadItem, type ThreadState } from "@/lib/store"
 import { formatDuration, formatTokens, formatTps, promptTokens, sumUsage } from "@/lib/tokens"
 import { tpsAverage } from "@daedalus/tps"
 import { INSPECTOR_TILE, InspectorCard } from "./inspector-card"
@@ -62,6 +62,7 @@ export { InspectorCard }
 import { buildRows, type Row, type SubagentGroup, type WorkflowGroup } from "@/lib/transcript-rows"
 import { extractSubagent, formatMcpName, loadedTools, parseMcpToolName, toolHeading, type LoadedTool } from "@/lib/tools"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useFeature } from "@/lib/queries/surfaces"
 
 function workflowProgress(workflow: WorkflowGroup) {
   const total = workflow.plan?.reduce((sum, phase) => sum + phase.steps.length, 0) ?? workflow.steps.length
@@ -170,11 +171,11 @@ function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: Su
       buildRows(
         thread.items,
         options.groupTools,
-        thread.turnActive,
+        workLive(thread),
         false,
         !options.expandEdits
       ).filter(isAgentRow),
-    [thread.items, thread.turnActive, options.groupTools, options.expandEdits]
+    [thread.items, thread.turnActive, thread.background, options.groupTools, options.expandEdits]
   )
   const entries = React.useMemo(
     () =>
@@ -213,7 +214,7 @@ function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: Su
       <AgentJumpContext.Provider value={onJump}>
         <div className="flex min-h-0 flex-1 flex-col">
           <PanelToolbar className="flex-col items-stretch gap-2">
-            <RunViewTabs views={RUN_VIEWS} value={view} onChange={(next) => setInspectorPref("agentsView", next)} label="Agents layout" />
+            <RunViewTabs views={RUN_VIEWS} value={view} onChange={(next) => setInspectorPref("agentsView", next)} label="Agents layout" iconOnly />
             <div className="flex flex-wrap items-center gap-1 text-xs tabular-nums">
               {(Object.keys(AGENT_FILTERS) as AgentFilter[]).map((key) => {
                 const count = steps.filter(AGENT_FILTERS[key]).length
@@ -495,6 +496,7 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
 /* Source control and the Monaco diff are a chunk of their own: a reader who
    never opens Changes never downloads either. */
 const SourceControl = React.lazy(() => import("@/components/thread-view/source-control"))
+const TracePanel = React.lazy(() => import("@/components/thread-view/trace-panel"))
 
 /**
  * The thread inspector — the column beside the transcript that reads the thread
@@ -532,6 +534,7 @@ export function ThreadInspector({
   maxWidth: number
 }) {
   const prefs = inspectorPrefs.use()
+  const modelCalls = useFeature("modelCalls")
   /* Rendered inside `ThreadView`'s scroller provider, so a jump is the rail's
      own gesture; a sheet gets out of the way of what it jumped to. */
   const scrollToMessage = useTranscriptJump()
@@ -542,8 +545,8 @@ export function ThreadInspector({
     if (mode === "sheet") onClose()
   }
   const rows = React.useMemo(
-    () => buildRows(thread.items, false, thread.turnActive),
-    [thread.items, thread.turnActive]
+    () => buildRows(thread.items, false, workLive(thread)),
+    [thread.items, thread.turnActive, thread.background]
   )
   const groups = React.useMemo(() => activityGroups(rows), [rows])
   // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
@@ -635,6 +638,7 @@ export function ThreadInspector({
             <TabsTrigger value="details">
               Details
             </TabsTrigger>
+            {modelCalls && <TabsTrigger value="trace">Trace</TabsTrigger>}
           </TabsList>
           <Button
             variant="ghost"
@@ -647,7 +651,7 @@ export function ThreadInspector({
           </Button>
         </header>
 
-        {(["changes", "plan", "agents", "details"] as const).map((section) => (
+        {(["changes", "plan", "agents", "details", "trace"] as const).map((section) => (
           <TabsContent key={section} value={section} className="flex min-h-0 flex-1 flex-col">
             <ThreadSection section={section} thread={thread} meta={meta} onJump={onJump} />
           </TabsContent>
@@ -660,7 +664,7 @@ export function ThreadInspector({
 /** One of the inspector's readings on its own — a tab of the sheet here, a
     panel of its own in the thread dock (`workspace/thread-dock.tsx`), where
     each can be moved and resized beside the transcript. */
-export type ThreadSectionKind = "changes" | "plan" | "agents" | "details"
+export type ThreadSectionKind = "changes" | "plan" | "agents" | "details" | "trace"
 
 export function ThreadSection({
   section,
@@ -675,8 +679,8 @@ export function ThreadSection({
   onJump: (id: string) => void
 }) {
   const rows = React.useMemo(
-    () => buildRows(thread.items, false, thread.turnActive),
-    [thread.items, thread.turnActive]
+    () => buildRows(thread.items, false, workLive(thread)),
+    [thread.items, thread.turnActive, thread.background]
   )
   const groups = React.useMemo(() => activityGroups(rows), [rows])
   // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
@@ -702,5 +706,11 @@ export function ThreadSection({
       </div>
     )
   if (section === "agents") return <AgentsTab thread={thread} groups={groups} onJump={onJump} />
+  if (section === "trace")
+    return (
+      <React.Suspense fallback={<PanelRowsSkeleton rows={5} className="py-1" />}>
+        <TracePanel thread={thread} meta={meta} />
+      </React.Suspense>
+    )
   return <DetailsTab thread={thread} meta={meta} rows={rows} />
 }

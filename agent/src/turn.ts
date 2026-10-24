@@ -19,7 +19,7 @@ import type { AgentEnv } from "./env.js";
 import { findInstructionFiles, readInstructions } from "./instructions.js";
 import { loadModelPrompts, modelPromptLayer } from "./model-prompts.js";
 import type { SessionStore } from "./persistence.js";
-import { cacheAffinity, type ModelFactory } from "./provider.js";
+import { stepOptions, type ModelFactory } from "./provider.js";
 import {
   PAUSED_NOTIFICATION,
   RETRY_NOTIFICATION,
@@ -33,7 +33,8 @@ import { buildTools, metaFor, type ToolMeta, type ToolRuntime } from "./tools/in
 import { deferMcpTools } from "./tools/tool-search.js";
 import { generateTitle } from "./title.js";
 import { Emitter } from "./updates.js";
-import { Meter, normalizeUsage, toAcpUsage, totalOf, type CallMetering } from "./metering.js";
+import { Meter, normalizeUsage, toAcpUsage, totalOf, type CallMetering, type StepLead, type WaitCause } from "./metering.js";
+import { Tracer, type CallHooks, type ModelCall } from "./trace.js";
 
 export interface TurnDeps {
   env: AgentEnv;
@@ -107,6 +108,9 @@ export async function handlePrompt(
      summarizer and the title call alike. Not read off a stream's `finish`,
      which a cancelled turn never reaches. */
   const meter = new Meter();
+  /* And every one of them traced: the request the SDK sent joined to the
+     response it got, as one `_daedalus/model_call` record (`trace.ts`). */
+  const tracer = new Tracer();
 
   /* Only a session's very first message is named: a reloaded session has no
      `title` either, but it has messages. */
@@ -125,7 +129,7 @@ export async function handlePrompt(
   deps.store.touch(session.id, session.title ?? undefined);
   if (naming) {
     const fallback = session.title;
-    void generateTitle(deps.env, deps.makeModel, session.modelId, text, abort.signal, meter.record).then((title) => {
+    void generateTitle(deps.env, deps.makeModel, session.modelId, text, abort.signal, traced(tracer, emit, "title", meter.record)).then((title) => {
       const next = title ?? fallback;
       if (!next) return;
       session.title = next;
@@ -141,7 +145,9 @@ export async function handlePrompt(
   const compactOnce = async (): Promise<boolean> => {
     const announce = Boolean(deps.clientCaps()?.session?.compaction);
     try {
-      await compact(session, deps.env, deps.makeModel, emit, announce, abort.signal, meter.record);
+      await meter.during("compactMs", () =>
+        compact(session, deps.env, deps.makeModel, emit, announce, abort.signal, traced(tracer, emit, "compaction", meter.record)),
+      );
       return true;
     } catch (err) {
       if (abort.signal.aborted) throw err;
@@ -285,11 +291,11 @@ export async function handlePrompt(
                `session.lastTokens` (they measure the child's own window), so
                the only place its tokens can land is the turn's meter, the one
                every call of the root adds to. */
-            runSubagent(deps, session, ctx, emit, toolCallId ?? "unknown", name, prompt, meter.record, undefined, modelId, role),
+            runSubagent(deps, session, ctx, emit, toolCallId ?? "unknown", name, prompt, tracer, meter.record, undefined, modelId, role),
           listSubagents: () =>
             deps.store.listSubagents(session.id).map(({ id, name, task, status }) => ({ id, name, task, status })),
           sendMessage: (agent, message) =>
-            runSubagent(deps, session, ctx, emit, `message-${randomUUID()}`, agent, message, meter.record, agent),
+            runSubagent(deps, session, ctx, emit, `message-${randomUUID()}`, agent, message, tracer, meter.record, agent),
         };
         const { tools, meta } = buildTools(rt);
         const deferral = deferMcpTools(tools, session.messages);
@@ -322,8 +328,11 @@ export async function handlePrompt(
             onRepair: (note) => process.stderr.write(`${note}\n`),
             readFiles: session.readFiles,
           }),
-          providerOptions: cacheAffinity(deps.env, session.id),
-          onLanguageModelCallEnd: meter.record,
+          providerOptions: stepOptions(deps.env, session.id, session.modelId, session.effort),
+          ...traced(tracer, emit, "turn", (call) => {
+            meter.record(call);
+            meter.span(call);
+          }, { sections }),
           onError: () => {
             /* Surfaced through the fullStream 'error' part below; without this
                handler streamText also logs the error, which is fine on stderr. */
@@ -335,7 +344,7 @@ export async function handlePrompt(
                while it waited. Both reasons a session holds are one wait: the
                user's pause, and a turn that failed and is waiting to be told
                what to try instead. */
-            await session.gate(abort.signal);
+            await meter.during("heldMs", () => session.gate(abort.signal));
             /* The window is crossed *inside* a turn — every step's tool results
                join the prompt, and the between-turns check only ever saw what
                the last turn left behind. The threshold's 20% headroom is what
@@ -373,6 +382,7 @@ export async function handlePrompt(
           session,
           subagentsNegotiated(deps),
           { cwd: session.cwd, model: session.modelId },
+          meter.take,
         );
 
         /* `result.response` is the *last step's* metadata — its `messages` are
@@ -507,7 +517,7 @@ export async function handlePrompt(
         });
         /* Abortable: a Stop pressed during a 30s backoff must not wait it
            out. The loop head rethrows on the aborted signal. */
-        await sleep(delayMs, undefined, { signal: abort.signal }).catch(() => {});
+        await meter.during("retryMs", () => sleep(delayMs, undefined, { signal: abort.signal }).catch(() => {}));
         /* The backoff is over and the next attempt is about to run — the
            silence the notice explains is behind us. Left up until the attempt
            *finishes*, it sat over a turn that was streaming normally, for as
@@ -700,6 +710,9 @@ async function pumpStream(
      decides if `announcesOwnSession` has anything to defer to. */
   subagentsRfd = false,
   callContext?: { cwd: string; model: string },
+  /* The root loop's meter reading of the waits booked since the last request,
+     for the lead on a step's first call. A subagent passes none. */
+  takeWaits?: () => Partial<Record<WaitCause, number>>,
 ): Promise<StreamOutcome> {
   const outcome: StreamOutcome = {
     finishReason: "stop",
@@ -715,6 +728,25 @@ async function pumpStream(
      else, and it is never compared across turns. */
   let stepId = randomUUID();
   const stepMeta = () => ({ daedalus: { stepId } });
+  /* Where the step's wait went, said once on its first visible call: the
+     causes booked before it, the model's time to first output, and how long it
+     wrote (prose, thinking) before the call opened. */
+  let stepStartedAt = performance.now();
+  let firstOutputAt: number | null = null;
+  let waited: Partial<Record<WaitCause, number>> = {};
+  let leadSent = false;
+  const output = () => (firstOutputAt ??= performance.now());
+  const leadMeta = () => {
+    if (leadSent) return stepMeta();
+    leadSent = true;
+    const first = firstOutputAt ?? performance.now();
+    const lead: StepLead = {
+      ...waited,
+      ttftMs: Math.round(first - stepStartedAt),
+      writeMs: Math.round(performance.now() - first),
+    };
+    return { daedalus: { stepId, lead } };
+  };
   /* Calls whose row was withheld, by id, so the result can be dropped and a
      failure can be sent whole. Keyed on the id `tool-input-start` carries,
      which is the `toolCallId` the later parts use. */
@@ -738,11 +770,15 @@ async function pumpStream(
     for await (const part of result.fullStream) {
       switch (part.type) {
         case "text-start":
+          output();
           flushBlock();
           messageId = randomUUID();
           block = { kind: "text", buffer: "" };
           break;
+        /* An empty delta says nothing, and forwarding one is what drew an
+           empty thought for a model that sends its thinking text-less. */
         case "text-delta":
+          if (!part.text) break;
           block.buffer += part.text;
           outcome.text += part.text;
           await emit.transient({
@@ -752,11 +788,13 @@ async function pumpStream(
           });
           break;
         case "reasoning-start":
+          output();
           flushBlock();
           messageId = randomUUID();
           block = { kind: "reasoning", buffer: "" };
           break;
         case "reasoning-delta":
+          if (!part.text) break;
           block.buffer += part.text;
           await emit.transient({
             sessionUpdate: "agent_thought_chunk",
@@ -770,8 +808,13 @@ async function pumpStream(
           break;
         case "start-step":
           stepId = randomUUID();
+          stepStartedAt = performance.now();
+          firstOutputAt = null;
+          waited = takeWaits?.() ?? {};
+          leadSent = false;
           break;
         case "tool-input-start": {
+          output();
           flushBlock();
           const m = metaFor(meta, part.toolName);
           if (silent(m)) {
@@ -785,7 +828,7 @@ async function pumpStream(
             name: part.toolName,
             kind: m.kind,
             status: "pending",
-            _meta: stepMeta(),
+            _meta: leadMeta(),
           });
           break;
         }
@@ -938,6 +981,28 @@ function subagentsNegotiated(deps: TurnDeps): boolean {
   return Boolean((deps.clientCaps() as { subagents?: unknown } | null)?.subagents);
 }
 
+/* The two callbacks every model-call site passes: `record` is the site's own
+   metering (the turn's meter and whatever it adds — a span, a child's attempt
+   meter), and the tracer turns the same call into a `_daedalus/model_call` on
+   `emit` — the child's emitter for a subagent, so the record lands on the
+   child's session. Returned to the SDK, which awaits it: the record is in the
+   journal before the step's tools run, so it can never land after its turn. */
+function traced(
+  tracer: Tracer,
+  emit: Emitter,
+  who: ModelCall["who"],
+  record: (call: CallMetering) => void,
+  opts: { childId?: string; sections?: SystemSection[] } = {},
+): CallHooks {
+  return {
+    onLanguageModelCallStart: tracer.start,
+    onLanguageModelCallEnd: (call) => {
+      record(call);
+      return emit.update({ sessionUpdate: "_daedalus/model_call", call: tracer.end(call, who, opts) });
+    },
+  };
+}
+
 /* A subagent is a nested loop in the same process: same cwd, same model, same
    permission memory (its asks carry the parent session id, which is the one
    the harness is holding). With the RFD negotiated its work streams as a
@@ -951,6 +1016,9 @@ async function runSubagent(
   toolCallId: string,
   name: string,
   prompt: string,
+  /** The turn's tracer: the child's calls are its records too, on the child's
+      session id. */
+  tracer: Tracer,
   /** Every model call the child makes, as it answers, whatever becomes of the
       attempt — the parent turn's answer is the one figure a reader sees, and a
       turn that spent most of its budget in three children reported only the
@@ -1053,11 +1121,11 @@ async function runSubagent(
         reasoning: session.effort ?? undefined,
         maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
         repairToolCall: makeRepairToolCall({ readFiles: session.readFiles }),
-        providerOptions: cacheAffinity(deps.env, session.id),
-        onLanguageModelCallEnd: (call) => {
+        providerOptions: stepOptions(deps.env, session.id, childModel, session.effort),
+        ...traced(tracer, childEmit, "subagent", (call) => {
           attemptMeter.record(call);
           reportCall(call);
-        },
+        }, { childId, sections }),
         onError: () => {},
         onStepEnd: async (step) => {
           const candidate = [...settled, ...(step.response.messages as ModelMessage[])];
@@ -1650,7 +1718,8 @@ function mapFinishReason(reason: string): acp.StopReason {
 function withSpend(err: unknown, meter: Meter): unknown {
   const usage = toAcpUsage(meter.usage);
   if (!usage) return err;
-  const spend = { daedalus: { usage, ...(meter.generation ? { generation: meter.generation } : {}) } };
+  const generation = meter.reading();
+  const spend = { daedalus: { usage, ...(generation ? { generation } : {}) } };
   if (err instanceof acp.RequestError) {
     err.data = { ...(err.data && typeof err.data === "object" ? err.data : {}), ...spend };
     return err;

@@ -1,10 +1,11 @@
 import type { BridgeHost } from "./acp-bridge.js";
+import type { CallThread } from "./model-calls/index.js";
 import type { ThreadEvent } from "./protocol.js";
 import { listQueue } from "./queue.js";
 import { getProfile } from "./profiles.js";
 import { bareModelId } from "./registry.js";
 import { enrichError, markTurnStderr } from "./stderr-ring.js";
-import { watchers, type Peer, type Session, type SessionEvents, type TurnOutcome } from "./sessions.js";
+import { threadCwd, watchers, type Peer, type Session, type SessionEvents, type TurnOutcome } from "./sessions.js";
 
 /**
  * What the bridge-callback adapter needs from the SessionManager — a port,
@@ -186,5 +187,37 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
       if (next.configChoices !== undefined) session.configChoices = next.configChoices;
       owner.persist(session);
     },
+  };
+}
+
+/**
+ * The port a model-call source sees (`model-calls/index.ts` `CallThread`):
+ * the row's facts, the bridge's open turn and step counter as *readings*, and
+ * the manager's own `emit` — never the bridge, the journal or the database.
+ * Built per use, like the host above is bound once: every field is read off the
+ * session when asked, because the bridge, the project and the proven session
+ * id all move under a long-lived thread.
+ */
+export function makeCallThread(session: Session, emit: (event: Extract<ThreadEvent, { ev: "update" }>) => void): CallThread {
+  return {
+    id: session.id,
+    agentId: session.agentId,
+    profileId: session.profileId,
+    projectId: session.projectId,
+    cwd: session.project ? threadCwd(session, session.project) : "",
+    viaGateway: session.viaGateway,
+    acpSessionId: () => (session.acpSessionId && !session.acpSessionProvisional ? session.acpSessionId : null),
+    turn: (at) => ({
+      turnId:
+        session.bridge?.currentTurnId ??
+        (session.bridge?.lastTurn && at <= session.bridge.lastTurn.endedAt ? session.bridge.lastTurn.id : null),
+      nextStep: () => session.bridge?.nextCallStep() ?? 0,
+    }),
+    names: () => ({
+      threadTitle: session.title,
+      profileName: session.profile?.name ?? session.profileId,
+      projectName: session.project?.name ?? session.projectId,
+    }),
+    emit: (update) => emit({ ev: "update", seq: 0, historyReplay: false, update }),
   };
 }

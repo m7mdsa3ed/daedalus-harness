@@ -357,8 +357,14 @@ export interface WorkflowStepInfo {
   paused?: boolean
   /** The workflow's name — the run's heading, repeated on every step. */
   name: string
-  /** This step's name within the definition. */
+  /** This step's name within the definition. It is the identity the plan and
+      the REST view join on — draw `title`, never this. */
   step: string
+  /** The words the step reads by, when the server says (`titles.ts`). */
+  title?: string
+  /** Every registered step's title by step name, so a plan entry that has not
+      spawned yet reads in words too. */
+  titles?: Record<string, string>
   /** Position in the definition, 0-based, when the server says. */
   index?: number
   total?: number
@@ -390,6 +396,8 @@ export function workflowInfoOf(meta: unknown): WorkflowStepInfo | undefined {
     ...(sessionId ? { sessionId } : {}),
     name,
     step,
+    title: str(wf?.title) ?? undefined,
+    titles: parseTitles(wf?.titles),
     index: typeof wf?.index === "number" ? wf.index : undefined,
     total: typeof wf?.total === "number" ? wf.total : undefined,
     phase:
@@ -428,6 +436,24 @@ export function askInfoOf(meta: unknown): AskInfo | undefined {
     profileId: str(ask.profileId) ?? undefined,
   }
   return info.agent || info.profile || info.agentId ? info : undefined
+}
+
+/** A step's slug in words — `audit-render` reads "Audit render". For a server
+    that predates `title`, and for the plan's steps that have not spawned (the
+    plan names them by slug). Anything that is not a plain slug was written to
+    be read already and is left as it is. */
+export function readableStep(slug: string): string {
+  if (!/^[a-z0-9]+([_-][a-z0-9]+)*$/.test(slug)) return slug
+  const text = slug.replace(/[_-]+/g, " ")
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+function parseTitles(raw: unknown): Record<string, string> | undefined {
+  const rec = asRecord(raw)
+  if (!rec) return undefined
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(rec)) if (typeof value === "string" && value) out[key] = value
+  return Object.keys(out).length ? out : undefined
 }
 
 /** The outline, defensively: an older server sends none, and a step drawn from

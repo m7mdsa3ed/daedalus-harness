@@ -57,6 +57,22 @@ export function lifecycleActions(core: ActionsCore) {
       dispatch({ type: "pin-session", id: sessionId, pinnedAt })
     },
 
+    /** Hide a thread from the sidebar's default list, or show it again.
+     *
+     * Server-owned like a pin (`sessions.hidden_at`) and moved in the store with
+     * the answer. Hiding is not deleting: the thread keeps running and the
+     * sidebar's "Hidden" filter lists it. */
+    async toggleHidden(sessionId: string) {
+      const session = getState().sessions.find((s) => s.id === sessionId)
+      if (!session || session.draft) return
+      const { hiddenAt } = await api<{ hiddenAt: number | null }>(
+        settings,
+        `/api/sessions/${sessionId}`,
+        { method: "PATCH", body: JSON.stringify({ hidden: !session.hiddenAt }) }
+      )
+      dispatch({ type: "hide-session", id: sessionId, hiddenAt })
+    },
+
     /** Choose which profile and model this thread's `ask_agent` uses per
      * agent. Read by the server at ask time, so it is not a spawn input and
      * never stages: the answer moves the store, the way a pin does. */

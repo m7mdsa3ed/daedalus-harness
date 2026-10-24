@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -15,6 +16,7 @@ import type { AuthorizationServerMetadata } from "@modelcontextprotocol/sdk/shar
 
 import type * as acp from "../acp.js";
 import type { AutonomyPolicy } from "../autonomy.js";
+import type { CallDoor, ToolUse } from "../protocol.js";
 
 /*
  * The harness's own data. Everything that used to be a `data/*.json` file lives
@@ -264,6 +266,11 @@ export const agents = pgTable("agents", {
       .settings` (`pause-hooks.ts`). Null = the runtime's own advertised pause,
       or none, and the UI offers no control. */
   pauseVia: text("pause_via").$type<"acp-meta">(),
+  /** The doors this runtime's model calls can come through, in order
+      (`AgentDef.callsVia`, `model-calls/index.ts`). The first that attaches at
+      spawn is the thread's for its life. Null/empty = the implicit `usage`
+      door alone. */
+  callsVia: jsonb("calls_via").$type<CallDoor[]>(),
   /** Where this runtime reads harness-projected skills, commands and the model
       allowlist from, inside the project's cwd. Null = nothing is projected. */
   workspaceLayout: jsonb("workspace_layout").$type<WorkspaceLayout>(),
@@ -304,6 +311,9 @@ export interface ProfileAgentLink {
   /** Overrides the profile's shared baseUrl for this agent only. Empty/absent
       means "use the shared one". */
   baseUrl?: string;
+  /** The wire protocol this agent speaks to the endpoint, for runtimes that
+      choose one (the Daedalus agent). Absent means OpenAI-compatible. */
+  protocol?: "openai" | "anthropic";
 }
 
 /**
@@ -1044,7 +1054,7 @@ export const sessions = pgTable(
         memory until then. */
     context: jsonb("context").$type<acp.UsageUpdate>(),
     /** Min/max measured turn rate, weighted-average inputs, and summed tool-call time. */
-    tps: jsonb("tps").$type<{ min: number; max: number; outputTokens: number; durationMs: number; toolDurationMs?: number; generatedTokens?: number; decodeMs?: number }>(),
+    tps: jsonb("tps").$type<{ min: number; max: number; outputTokens: number; durationMs: number; toolDurationMs?: number; generatedTokens?: number; decodeMs?: number; waits?: { totalMs: number; heldMs?: number; compactMs?: number; retryMs?: number } }>(),
     /** Epoch ms this thread was deleted; null = live. Deleted threads keep
         their row (and their acpSessionId) so a delete stays undoable. */
     deletedAt: bigint("deleted_at", { mode: "number" }),
@@ -1053,6 +1063,11 @@ export const sessions = pgTable(
         pinned on the phone. The timestamp is also the order — oldest pin
         first, so the group you built by hand stays where you put it. */
     pinnedAt: bigint("pinned_at", { mode: "number" }),
+    /** Epoch ms this thread was hidden; null = shown. Hiding is tidying, not
+        deleting: the thread keeps running and stays reachable (a tab, a link,
+        the sidebar's "Hidden" filter), it just leaves the default list. Like a
+        pin it is the server's, so it follows the thread to every device. */
+    hiddenAt: bigint("hidden_at", { mode: "number" }),
     /** Which profile this thread's `ask_agent` uses for each agent, by agent
         id: chosen up front (the project's default, the draft's menu, the
         thread's settings) or by answering the picker an ask raised and ticking
@@ -1068,6 +1083,19 @@ export const sessions = pgTable(
         one transaction. `SessionManager.purge`/`softDelete`/`restore` cascade
         to children by hand. */
     parentSessionId: text("parent_session_id"),
+    /* What kind of child a `parent_session_id` thread is: `"ask"` (an
+       `ask_agent` run) or `"workflow"` (a workflow step). Null on a top-level
+       thread and on a child written before the column existed, which the
+       sidebar reads off the `Ask · ` title prefix. Descriptive only — nothing
+       branches on it but the row's icon. */
+    childKind: text("child_kind"),
+    /* The workflow run a `"workflow"` child belongs to (`wf_runs.id`) and that
+       run's name, so the sidebar can fold a run's steps into one row. Not a
+       foreign key, for the reason `parent_session_id` is not; null on an ask,
+       a top-level thread and a step written before the columns existed (those
+       draw flat, as they always did). */
+    childRunId: text("child_run_id"),
+    childRunName: text("child_run_name"),
     /* Where this thread was forked from (`SessionManager.fork`): the parent
        thread and the turn the branch carries through, else null both. Not
        foreign keys and not indexed — provenance is drawn, never queried; a
@@ -1103,66 +1131,75 @@ export const sessions = pgTable(
   ],
 );
 
-/**
- * One run of a harness workflow (`workflows.ts`): the definition the agent
- * handed `run_workflow`, its inputs, and where every step got to. Steps live in
- * one JSON column rather than a table of their own: the only queries are "runs
- * of this thread" and "what was running when the server last stopped", and a
- * step's identity is its name inside the definition. Cascades with the parent
- * row (the run is meaningless without the thread that asked for it), which only
- * a purge deletes — and `purge` retires the children first, so nothing live
- * points at a deleted run. Step threads themselves are ordinary `sessions`
- * rows carrying `parent_session_id`.
+/*
+ * Workflow engine v2 (server/src/workflows/, docs/workflow-engine-v2.md).
+ *
+ * `wf_runs` is the header only; the steps are a fold over `wf_events`, an
+ * append-only journal keyed (run, seq). A resumed run replays its script and
+ * answers every keyed call from the journal. Step threads themselves are
+ * ordinary `sessions` rows carrying `parent_session_id`.
  */
-export const workflowRuns = pgTable(
-  "workflow_runs",
+export const wfRuns = pgTable(
+  "wf_runs",
   {
     id: text("id").primaryKey(),
     parentSessionId: text("parent_session_id")
       .notNull()
       .references(() => sessions.id, { onDelete: "cascade" }),
+    projectId: text("project_id"),
     name: text("name").notNull(),
-    definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
-    inputs: jsonb("inputs").$type<Record<string, unknown>>().notNull(),
-    status: text("status", { enum: ["running", "paused", "completed", "failed", "cancelled"] })
-      .$type<WorkflowRunStatus>()
-      .notNull(),
+    /** RunSpec (workflows/types.ts): source, meta, args, budgets, flow, trigger, onRestart. */
+    spec: jsonb("spec").$type<Record<string, unknown>>().notNull(),
+    status: text("status", {
+      enum: ["running", "paused", "completed", "failed", "cancelled", "budget_exceeded"],
+    }).notNull(),
     error: text("error"),
-    steps: jsonb("steps").$type<WorkflowStepRecord[]>().notNull(),
+    /** The script's return value, once finished. */
+    result: jsonb("result").$type<unknown>(),
+    notify: boolean("notify").notNull().default(false),
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
     endedAt: bigint("ended_at", { mode: "number" }),
   },
-  (t) => [index("workflow_runs_parent").on(t.parentSessionId, t.createdAt)],
+  (t) => [index("wf_runs_parent").on(t.parentSessionId, t.createdAt), index("wf_runs_status").on(t.status)],
 );
 
-/** `paused` is a live state like `running`: the run is held (no step starts,
-    pausable steps hold at their step boundary) and comes back with `resume`.
-    A restart ends it exactly as it ends a running one. */
-export type WorkflowRunStatus = "running" | "paused" | "completed" | "failed" | "cancelled";
-export type WorkflowStepStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "skipped";
+export const wfEvents = pgTable(
+  "wf_events",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => wfRuns.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    at: bigint("at", { mode: "number" }).notNull(),
+    /** The call this event belongs to: a step key, `gate:<n>`, `timer:<n>`, `signal:<name>`. */
+    key: text("key"),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.seq] }), index("wf_events_key").on(t.runId, t.key)],
+);
 
-/** One step's progress inside `workflow_runs.steps`. */
-export interface WorkflowStepRecord {
-  name: string;
-  /** The phase the step was written under, when the definition had any. */
-  phase?: string | null;
-  status: WorkflowStepStatus;
-  /** The step's thread, once spawned. */
-  sessionId: string | null;
-  /** Prompts sent so far: 1 after the step's prompt, 2 after the JSON repair turn. */
-  attempt: number;
-  /** The child's final prose (text steps) or its parsed, validated JSON. */
-  output: unknown;
-  error: string | null;
-  startedAt: number | null;
-  endedAt: number | null;
-  /** A script agent's call (prompt and options, hashed): what a relaunch with
-      `resumeFromRunId` matches to reuse this step's output. */
-  key?: string;
-  /** What the step's child spent, for the report its parent is sent. */
-  tokens?: number;
-  toolUses?: number;
-}
+/** Saved workflows: the library. Mirrored to/from `.claude/workflows/` files by saved.ts. */
+export const wfSaved = pgTable(
+  "wf_saved",
+  {
+    id: text("id").primaryKey(),
+    /** `meta.name`; unique per scope. */
+    name: text("name").notNull(),
+    scope: text("scope", { enum: ["project", "personal"] }).notNull(),
+    projectId: text("project_id"),
+    description: text("description").notNull().default(""),
+    whenToUse: text("when_to_use"),
+    source: text("source").notNull(),
+    /** Hash of `source`: the version. */
+    version: text("version").notNull(),
+    /** `meta.inputs`, denormalised for the Run form. */
+    inputs: jsonb("inputs").$type<Record<string, unknown> | null>(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (t) => [uniqueIndex("wf_saved_name_scope").on(t.name, t.scope, t.projectId)],
+);
 
 /**
  * Routines — a saved thread-start that fires on its own.
@@ -1175,13 +1212,21 @@ export interface WorkflowStepRecord {
  */
 
 /** What a routine's fire actually runs. A prompt, or a whole declarative
-    workflow (`workflow-schema.ts`, verbatim) — the second costs almost nothing
+    workflow (`workflows/graph.ts`, verbatim) — the second costs almost nothing
     and is most of the point: the engine that runs phased pipelines against a
     real thread already exists, and a routine that could only ask one question
     nightly would be the weaker half of a machine already built. */
 export type RoutineBody =
   | { kind: "prompt"; text: string }
-  | { kind: "workflow"; definition: Record<string, unknown> };
+  | {
+      kind: "workflow";
+      /** An inline declarative definition. Exactly one of `definition` / `ref` is set. */
+      definition?: Record<string, unknown>;
+      /** A saved workflow, by name (`workflows/saved.ts`), resolved in the run thread's project. */
+      ref?: { name: string };
+      /** Inputs handed to the workflow; the fire payload is added as `payload`. */
+      args?: Record<string, unknown>;
+    };
 
 /** What happens to a run's answer. Every one is built out of something that
     already exists, and every one is optional and plural. A failed action is
@@ -1665,6 +1710,62 @@ export const webSearchUsage = pgTable(
     uniqueIndex("web_search_usage_call").on(t.sessionId, t.toolCallId),
     index("web_search_usage_started").on(t.startedAt),
   ],
+);
+
+/**
+ * The install's ledger of model calls — one row per `ModelCall`
+ * (protocol.ts), written by `recordCall` beside the journaled update, so neither
+ * store is a second reading of the other. The journal is the thread's (replay,
+ * the panel); this is the cross-thread Spend tab's. Snapshot columns as
+ * `web_search_usage` has them, for the same reason; no FK, and not exported by
+ * backup. Billed figures are the `acp.Usage` counters; the six part columns are
+ * the anchored estimate, null where the door could not see the part.
+ */
+export const modelCalls = pgTable(
+  "model_calls",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull(),
+    /** The turn open on the bridge when the record was filed; null for a call
+        outside one (a title after the turn ended). */
+    turnId: text("turn_id"),
+    callId: text("call_id").notNull(),
+    at: bigint("at", { mode: "number" }).notNull(),
+    ms: integer("ms"),
+    who: text("who").notNull(),
+    childId: text("child_id"),
+    step: integer("step").notNull(),
+    agentId: text("agent_id").notNull(),
+    model: text("model").notNull(),
+    finishReason: text("finish_reason"),
+    source: text("source").notNull(),
+    inputTokens: integer("input_tokens").notNull(),
+    outputTokens: integer("output_tokens").notNull(),
+    cacheReadTokens: integer("cache_read_tokens"),
+    cacheWriteTokens: integer("cache_write_tokens"),
+    thoughtTokens: integer("thought_tokens"),
+    costUsd: doublePrecision("cost_usd"),
+    promptSystem: integer("prompt_system"),
+    promptTools: integer("prompt_tools"),
+    promptMcp: integer("prompt_mcp"),
+    promptUser: integer("prompt_user"),
+    promptAssistant: integer("prompt_assistant"),
+    promptResults: integer("prompt_results"),
+    promptUnknown: integer("prompt_unknown"),
+    missing: jsonb("missing").$type<string[]>(),
+    outputText: integer("output_text"),
+    outputReasoning: integer("output_reasoning"),
+    outputToolCalls: integer("output_tool_calls"),
+    /** `ModelCall.toolUse` / `.called` as sent — read back whole, never queried into. */
+    toolUse: jsonb("tool_use").$type<ToolUse[]>(),
+    called: jsonb("called").$type<string[]>(),
+    threadTitle: text("thread_title").notNull(),
+    profileId: text("profile_id").notNull(),
+    profileName: text("profile_name").notNull(),
+    projectId: text("project_id").notNull(),
+    projectName: text("project_name").notNull(),
+  },
+  (t) => [index("model_calls_session_at").on(t.sessionId, t.at), index("model_calls_at").on(t.at)],
 );
 
 /* The `history_checkpoints` / `history_branches` tables lived here until the

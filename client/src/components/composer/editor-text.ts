@@ -14,6 +14,7 @@
    back, the quote rides at the start of the line that follows it. */
 import type { Editor, JSONContent } from "@tiptap/react"
 import { pasteToken } from "@/lib/pastes"
+import { MENTION_KINDS } from "@/lib/mentions/grammar"
 
 type Doc = Editor["state"]["doc"]
 type PMNode = ReturnType<Doc["child"]>
@@ -21,12 +22,15 @@ type PMNode = ReturnType<Doc["child"]>
 const QUOTE_LINE = /^>(?: (.*))?$/
 /* A paste token, a finished mention, or a link. A mention is `@` at a word
    boundary, a path-looking run (a `/`, `.` or `~` in it — `@channel` in prose
-   stays text) or a task key (`@DAE-12`, see `file-mentions.tsx`), then a space
-   or the line's end. A token still ending in `/` is a directory being drilled
+   stays text), a task key (`@DAE-12`, see `file-mentions.tsx`) or a typed
+   reference of a known kind (`@thread:abc`, `lib/mentions/grammar.ts` — an
+   unknown `@foo:bar` stays text), then a space or the line's end. A token still ending in `/` is a directory being drilled
    into by the completer, and one ending in punctuation is a sentence's. A link
    is an http(s) run; trailing sentence punctuation is trimmed below. */
-const INLINE =
-  /\[pasted text #(\d+)\]|(?<=^|[\s(])@([^\s@]*[/.~][^\s@]*|[A-Z][A-Z0-9]{1,5}-\d+)(?=\s|$)|https?:\/\/[^\s<>()]+/g
+const INLINE = new RegExp(
+  String.raw`\[pasted text #(\d+)\]|(?<=^|[\s(])@([^\s@]*[/.~][^\s@]*|[A-Z][A-Z0-9]{1,5}-\d+|(?:${MENTION_KINDS.join("|")}):[^\s@]+)(?=\s|$)|https?:\/\/[^\s<>()]+`,
+  "g",
+)
 const NOT_A_MENTION_END = /[/.,;:!?)\]}'"]$/
 /* A trailing `.`/`,`/`)` is almost always the sentence's, not the URL's. */
 const NOT_A_LINK_END = /[.,;:!?)\]}'"]+$/

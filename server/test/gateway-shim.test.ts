@@ -25,6 +25,9 @@ import {
   setGatewaySessionResolver,
   type GatewaySession,
 } from "../src/gateway-shim.js";
+import { billedPrompt, type CallThread } from "../src/model-calls/index.js";
+import { proxySource } from "../src/model-calls/sources/proxy.js";
+import type { ModelCall } from "../src/protocol.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -374,6 +377,16 @@ await test("no shim, or no gateway, hands out nothing", () => {
     forced-streaming provider: streaming as Anthropic SSE, non-streaming as an
     OpenAI chat completion. Records what it was sent. */
 const seen: { path: string; headers: Record<string, string>; body: string }[] = [];
+/** A streamed Messages reply as Anthropic sends it: the bill opens on
+    `message_start` (input and cache counts, the model) and closes on
+    `message_delta` (output count, stop reason), with deltas between. */
+const STREAMED_MESSAGE =
+  'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-x","content":[],"stop_reason":null,"usage":{"input_tokens":120,"cache_read_input_tokens":80,"cache_creation_input_tokens":0,"output_tokens":1}}}\n\n' +
+  'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n' +
+  'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}\n\n' +
+  'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n' +
+  'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":9,"cache_read_input_tokens":null}}\n\n' +
+  'event: message_stop\ndata: {"type":"message_stop"}\n\n';
 const fake = createServer((req, res) => {
   let body = "";
   req.on("data", (chunk) => (body += chunk));
@@ -383,8 +396,8 @@ const fake = createServer((req, res) => {
       const wantsStream = /"stream"\s*:\s*true/.test(body);
       if (wantsStream) {
         res.writeHead(200, { "content-type": "text/event-stream" });
-        res.write('event: message_start\ndata: {"type":"message_start"}\n\n');
-        res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+        res.write(STREAMED_MESSAGE.slice(0, 40));
+        res.end(STREAMED_MESSAGE.slice(40));
         return;
       }
       res.writeHead(200, { "content-type": "application/json" });
@@ -628,6 +641,98 @@ await test("the credential travels as the thread's profile, not as the child's",
   // Claude Code's side-job and alias models, pinned into its env at spawn,
   // would otherwise keep naming the previous provider's ids.
   assert.equal((JSON.parse(seen.at(-1)!.body) as { model: string }).model, "gateway/model-b");
+});
+
+/* ── the model-call tap: the proxy door ── */
+
+const until = async (ok: () => boolean) => {
+  for (let i = 0; i < 200 && !ok(); i++) await new Promise((r) => setTimeout(r, 10));
+};
+const emitted: ModelCall[] = [];
+const callThread: CallThread = {
+  id: "sess-1",
+  agentId: "codex",
+  profileId: "gw-test",
+  projectId: "w1",
+  cwd: "",
+  viaGateway: true,
+  acpSessionId: () => null,
+  turn: () => ({ turnId: "turn-1", nextStep: () => 1 }),
+  names: () => ({ threadTitle: "t", profileName: "gw", projectName: "w" }),
+  emit: (update) => void emitted.push(update.call),
+};
+const messagesDoor = { kind: "proxy", dialect: "anthropic-messages" } as const;
+
+await test("a streamed Messages reply on a tapped thread is one record whose parts sum to the billed prompt, bytes untouched", async () => {
+  const attached = await proxySource.attach(callThread, messagesDoor);
+  assert.ok(attached, "a thread behind the shim attaches");
+  const res = await fetch(`${sessionBase}/v1/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": "sk" },
+    body: JSON.stringify({
+      model: "spawned-model",
+      stream: true,
+      max_tokens: 64,
+      system: [{ type: "text", text: "You are terse. Answer in one line." }],
+      tools: [
+        { name: "read_file", description: "Read a file off the disk", input_schema: { type: "object", properties: { path: { type: "string" } } } },
+        { name: "mcp__docs__search", description: "Search the docs", input_schema: { type: "object", properties: { q: { type: "string" } } } },
+      ],
+      messages: [
+        { role: "user", content: "Where is the config read?" },
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "read_file", input: { path: "src/index.ts" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "import { loadConfig } from './config.js';" }] },
+      ],
+    }),
+  });
+  // What the child reads is exactly what the gateway sent — the tee copies, it does not edit.
+  assert.equal(res.headers.get("content-type"), "text/event-stream");
+  assert.equal(await res.text(), STREAMED_MESSAGE);
+  await until(() => emitted.length === 1);
+  assert.equal(emitted.length, 1, "one record per reply");
+  const call = emitted[0]!;
+  assert.equal(call.source, "proxy");
+  assert.equal(call.who, "turn");
+  // The reply's own model and stop reason, not the request's.
+  assert.equal(call.model, "claude-x");
+  assert.equal(call.finishReason, "end_turn");
+  // The bill as Anthropic counts it: fresh input, cache read beside it, the
+  // output from `message_delta`; the delta's null did not erase the start's read count.
+  assert.equal(call.billed.inputTokens, 120);
+  assert.equal(call.billed.cachedReadTokens, 80);
+  assert.equal(call.billed.outputTokens, 9);
+  assert.equal(billedPrompt(call.billed), 200);
+  // Every part was seen, so they sum to the invoice exactly and `unknown` is 0.
+  const p = call.prompt!;
+  assert.ok(p, "the request was shaped and counted");
+  assert.equal(p.unknown, 0);
+  assert.equal(p.system! + p.tools! + p.mcp! + p.user! + p.assistant! + p.results! + p.unknown, 200);
+  for (const part of ["system", "tools", "mcp", "user", "assistant", "results"] as const) assert.ok(p[part]! > 0, `${part} > 0`);
+  assert.equal(call.missing, undefined);
+  assert.equal(typeof call.ms, "number");
+  assert.equal(typeof call.timing?.ttftMs, "number");
+  attached.stop();
+});
+
+await test("a thread not behind the shim does not attach, and a stopped one is no longer tapped", async () => {
+  assert.equal(await proxySource.attach({ ...callThread, viaGateway: false }, messagesDoor), null);
+  assert.equal(await proxySource.attach(callThread, { kind: "acp" }), null);
+  await fetch(`${sessionBase}/v1/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "spawned-model", stream: true, messages: [] }),
+  }).then((r) => r.text());
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(emitted.length, 1, "nothing recorded once the door is stopped");
+});
+
+await test("a reply with no bill — a listing, an error — is not a record", async () => {
+  const attached = (await proxySource.attach(callThread, messagesDoor))!;
+  await fetch(`${sessionBase}/v1/models?limit=1`).then((r) => r.text());
+  await fetch(`${sessionBase}/v1/broken`, { method: "POST" }).then((r) => r.text());
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(emitted.length, 1);
+  attached.stop();
 });
 
 server.close();

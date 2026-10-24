@@ -669,7 +669,12 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
                 {profileName}
               </MetaFact>
               {grants > 0 && (
-                <button type="button" title="Open Access" onClick={() => void go("access")}>
+                <button
+                  type="button"
+                  title="Open Access"
+                  className="inline-flex items-center pointer-coarse:min-h-11"
+                  onClick={() => void go("access")}
+                >
                   <StatusBadge tone="warn">Acts alone on {grants}</StatusBadge>
                 </button>
               )}

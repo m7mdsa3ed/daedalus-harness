@@ -16,6 +16,8 @@ import Markdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { splitBlocks } from "@/lib/markdown-blocks"
 import { rehypeHighlight } from "@/lib/highlight"
+import { fencedBlock } from "@/lib/pretty"
+import { PrettyButton, usePretty } from "@/components/ui/pretty-button"
 import { TAIL_WORDS, needsTail, rehypeStreamWords, type StreamEffect } from "@/lib/stream-words"
 import { CheckIcon, CopyIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -77,6 +79,14 @@ const MarkdownLink = ({
         </a>
       )
 
+/* The fence's declared language, read off the <code> react-markdown nests in
+   the <pre> (`language-x`, the same class `lib/highlight` reads). */
+function fenceLanguage(children: React.ReactNode): string | undefined {
+  const code = React.Children.toArray(children)[0]
+  if (!React.isValidElement<{ className?: string }>(code)) return undefined
+  return /(?:^|\s)(?:language|lang)-([\w+-]+)/.exec(code.props.className ?? "")?.[1]
+}
+
 /* A fenced code block floats a copy affordance over its corner. The text is
    read off the rendered <pre> at click time — rehype-highlight has already
    split it into spans, and a streaming tail keeps rewriting them, so a
@@ -90,10 +100,12 @@ const MarkdownPre = ({
   const coarse = useCoarsePointer()
   const [copied, setCopied] = React.useState(false)
   const ref = React.useRef<HTMLPreElement>(null)
+  const language = fenceLanguage(props.children)
+  const pretty = usePretty(language)
 
   const copy = async () => {
     try {
-      await writeClipboard(ref.current?.textContent ?? "")
+      await writeClipboard(pretty.text ?? ref.current?.textContent ?? "")
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -103,7 +115,19 @@ const MarkdownPre = ({
 
   return (
     <div className="group/code relative">
-      <pre ref={ref} {...props} />
+      {pretty.text !== null && language ? (
+        /* The laid-out text goes back through the same highlighter, in a plain
+           <pre> so the copy and pretty buttons are not drawn a second time. */
+        <Markdown rehypePlugins={REHYPE}>{fencedBlock(pretty.text, language)}</Markdown>
+      ) : (
+        <pre ref={ref} {...props} />
+      )}
+      <PrettyButton
+        language={language}
+        pretty={pretty}
+        source={() => ref.current?.textContent ?? ""}
+        className="right-8"
+      />
       <Button
         type="button"
         variant="outline"

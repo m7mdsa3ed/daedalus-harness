@@ -22,19 +22,21 @@
  * is still required is that the path **exists**: prose is full of at-signs (an
  * email address, a handle, a decorator), and a token that names nothing real is
  * not a link, so the agent is never sent after a path nobody named.
+ *
+ * `@kind:ref` (`mentions/grammar.ts`) is the other shape a token takes: a typed
+ * reference the composer expands into a `<context>` block at send. It is never
+ * linked as a path.
  */
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type * as acp from "./acp.js";
+import { MENTION_RE, TRAILING, parseKindToken, parseRangeToken } from "./mentions/grammar.js";
 
-/** A token after a whitespace boundary: `@` then a run of non-space. The
-    boundary is what keeps `user@example.com` from reading as a mention. */
-export const MENTION_RE = /(?:^|[\s(])@([^\s@]+)/g;
-
-/** Punctuation a sentence puts after a path but which is never part of one. */
-export const TRAILING = /[.,;:!?)\]}'"]+$/;
+/* The token grammar lives in `mentions/grammar.ts` beside the `@kind:ref`
+   half; these two stay exported from here for the callers that had them. */
+export { MENTION_RE, TRAILING };
 
 /** Past this a prompt is not mentioning files, it is pasting a list of them. */
 const MAX_LINKS = 20;
@@ -51,7 +53,7 @@ export function mentionPaths(text: string): string[] {
 
 /** The absolute path a mention names: `~/x` is home-relative, `/x` (or a Windows
     drive) is absolute, and anything else is relative to the session's cwd. */
-function mentionedPath(raw: string, cwd: string): string {
+export function mentionedPath(raw: string, cwd: string): string {
   if (raw === "~") return homedir();
   if (raw.startsWith("~/")) return resolve(homedir(), raw.slice(2));
   if (isAbsolute(raw) || /^[a-zA-Z]:[\\/]/.test(raw)) return normalize(raw);
@@ -66,7 +68,7 @@ function mentionedPath(raw: string, cwd: string): string {
  * that does not exist simply is not a link; the text still says what the user
  * typed.
  */
-export function mentionLinks(cwd: string, text: string): acp.ContentBlock[] {
+export function mentionLinks(cwd: string, text: string, claimed?: ReadonlySet<string>): acp.ContentBlock[] {
   let root: string;
   try {
     root = realpathSync(cwd);
@@ -76,11 +78,24 @@ export function mentionLinks(cwd: string, text: string): acp.ContentBlock[] {
   const links: acp.ContentBlock[] = [];
   for (const path of mentionPaths(text)) {
     if (links.length >= MAX_LINKS) break;
-    const absolute = mentionedPath(path, root);
+    /* `@kind:ref` is a typed reference, never a path — whether or not a
+       resolver took it (`claimed`, from `expandMentions`). */
+    if (claimed?.has(path) || parseKindToken(path)) continue;
+    let absolute = mentionedPath(path, root);
     try {
       realpathSync(absolute);
     } catch {
-      continue; // does not exist — nothing to link
+      /* `path:40-80` names lines of a file, and a link cannot carry lines: it
+         points at the file, and the lines themselves are in the `<context>`
+         block. A file that really is called `a.ts:40` was found above. */
+      const range = parseRangeToken(path);
+      if (!range) continue; // does not exist — nothing to link
+      absolute = mentionedPath(range.path, root);
+      try {
+        realpathSync(absolute);
+      } catch {
+        continue;
+      }
     }
     links.push({
       type: "resource_link",

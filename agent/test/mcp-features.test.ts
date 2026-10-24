@@ -6,7 +6,7 @@ import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
 import { buildAgentApp } from "../src/app.js";
 import type { AgentEnv } from "../src/env.js";
 import { connectMcpServers, type McpHooks } from "../src/mcp.js";
-import { initialize, makeClient, promptOf, testEnv, textScript, toolCallScript } from "./helpers/scripted.js";
+import { connectPair, initialize, makeClient, promptOf, testEnv, textScript, toolCallScript } from "./helpers/scripted.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "helpers", "mcp-full-server.mjs");
 
@@ -97,7 +97,7 @@ async function nextStepParts(env: Partial<AgentEnv>): Promise<string[]> {
   const agent = buildAgentApp({ env: testEnv(env), makeModel: () => model });
   const { app: client } = makeClient();
   let parts: string[] = [];
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", {
       cwd: process.cwd(),

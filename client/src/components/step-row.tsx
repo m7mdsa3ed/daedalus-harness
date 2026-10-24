@@ -77,11 +77,11 @@ export const finishedOpening = (definition: unknown) =>
    a row that grew a caption keeps its meta on the title's line rather than
    drifting to the middle of two, and `items-center` makes the parts agree
    whatever padding they carry. */
-export function StepMeta({ parts }: { parts: React.ReactNode[] }) {
+export function StepMeta({ parts, className }: { parts: React.ReactNode[]; className?: string }) {
   const shown = parts.filter((part) => part !== null && part !== undefined && part !== false && part !== "")
   if (shown.length === 0) return null
   return (
-    <span className="flex h-6 shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground">
+    <span className={cn("flex h-6 shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground", className)}>
       {shown.map((part, i) => (
         <React.Fragment key={i}>
           {i > 0 && (
@@ -120,6 +120,27 @@ export function formatElapsed(ms: number): string {
   return `${Math.floor(whole / 60_000)}m ${Math.floor((whole % 60_000) / 1000)}s`
 }
 
+/* A step's clock in the width it has: the millisecond figure on a wide panel,
+   a tenth of a second on a narrow one ("3s 120ms" → "3.1s"), where the
+   readings share one line with the title and every character comes out of it. */
+function ElapsedFigure({ ms }: { ms: number }) {
+  const full = formatElapsed(ms)
+  const whole = Math.max(0, Math.round(ms))
+  const short =
+    whole < 1000 || whole >= 60_000
+      ? full
+      : whole < 10_000
+        ? `${(Math.floor(whole / 100) / 10).toFixed(1)}s`
+        : `${Math.floor(whole / 1000)}s`
+  if (short === full) return full
+  return (
+    <>
+      <span className="@panel-sm:hidden">{short}</span>
+      <span className="hidden @panel-sm:inline">{full}</span>
+    </>
+  )
+}
+
 /* Memoized: one per transcript row, and a streaming turn re-renders the whole
    list if nothing stops it. The reducer leaves untouched items referentially
    stable, so memo lets a chunk re-render only the tail. `target`, `label` and
@@ -143,6 +164,7 @@ export const StepRow = React.memo(function StepRow({
   plainBody,
   below,
   firstRow,
+  stackMeta = false,
   belowFlush = false,
   startedAt,
   endedAt,
@@ -211,6 +233,11 @@ export const StepRow = React.memo(function StepRow({
   plainBody?: (open: boolean) => React.ReactNode
   /** Content beside the title, on its first row rather than underneath. */
   firstRow?: React.ReactNode
+  /** Below `@panel-sm` the readings (clock, tokens, outcome) take a line of
+      their own under the title, indented to it, instead of sharing its line
+      and leaving it two letters. For a row whose title is a name worth
+      reading whole — a subagent or a workflow step. */
+  stackMeta?: boolean
   /** A strip under the header that stays whether or not the row is open —
       the step's outcome in chips (the pages a web search returned, the page
       a fetch read). The detail is what you open to read; this is what you
@@ -385,6 +412,7 @@ export const StepRow = React.memo(function StepRow({
           // box only shifts left under a negative start margin, which left the
           // row's content edge 8px shy of the right edge messages run to.
           "group/step -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-start gap-2 rounded-xl px-1 py-0.5 transition-colors duration-150",
+          stackMeta && "flex-wrap @panel-sm:flex-nowrap",
           plain && "mx-0 w-full px-0 py-0 hover:bg-transparent",
           expandable && !plain && "hover:bg-muted",
           compact && "py-0",
@@ -397,7 +425,7 @@ export const StepRow = React.memo(function StepRow({
           disabled={!expandable}
           onClick={() => setOpen((o) => !o)}
           aria-expanded={expandable ? open : undefined}
-          className={cn("flex min-w-0 flex-1 items-start gap-2 text-start", plain && "gap-0")}
+          className={cn("flex min-w-0 flex-1 items-start gap-2 text-start", plain && "gap-0", stackMeta && "basis-full @panel-sm:basis-0")}
         >
           {!plain && Icon && (
             <span
@@ -503,11 +531,12 @@ export const StepRow = React.memo(function StepRow({
             outcome word ends the line — a failure still claims the column, in
             its own colour, but at the group's size and not its own. */}
         <StepMeta
+          className={stackMeta ? "ps-7 @panel-sm:ps-0" : undefined}
           parts={[
             /* A live clock waits two seconds before it ticks (a quick call
                should not flash a counter); a settled step always says how
                long it took, the quick ones included. */
-            elapsedMs !== null ? (elapsedMs >= 2000 ? formatElapsed(elapsedMs) : null) : settledMs !== null ? formatElapsed(settledMs) : null,
+            elapsedMs !== null ? (elapsedMs >= 2000 ? <ElapsedFigure ms={elapsedMs} /> : null) : settledMs !== null ? <ElapsedFigure ms={settledMs} /> : null,
             ...(metric ?? []),
             failed ? <span className="text-destructive">failed</span> : label,
           ]}

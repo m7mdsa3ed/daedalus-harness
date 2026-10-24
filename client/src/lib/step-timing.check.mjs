@@ -43,12 +43,16 @@ assert.equal(row.text, "Let me think about it", "both pieces are one item")
 assert.equal(row.at, START, "which began where the run did")
 assert.equal(row.endedAt, START + 15_000, "and ends where the run ended")
 
-// Live: no run behind the update to have measured, so no end and the row's own
-// clock stands (see useThoughtElapsed).
-t = fold(emptyThread, thought("live"), undefined, undefined)
+// Live: no run behind the update to have measured, so each chunk is its own
+// end and the thought stops at its last word, not at the call that follows it.
+t = fold(emptyThread, thought("live"), START, undefined)
 row = only(t)
-assert.equal(row.at !== undefined, true, "a live chunk is stamped by this device")
-assert.equal(row.endedAt, undefined, "and carries no end it was never told")
+assert.equal(row.at, START, "a live chunk is stamped by this device")
+assert.equal(row.endedAt, START, "and ends where it arrived")
+t = fold(t, thought(" more"), START + 3_000, undefined)
+row = only(t)
+assert.equal(row.at, START, "the run still began at its first chunk")
+assert.equal(row.endedAt, START + 3_000, "and ends at the last one to join it")
 
 // A session/load replay is history: no start means no length either, even when
 // the event does carry both ends.

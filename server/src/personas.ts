@@ -143,7 +143,7 @@ Name only files that exist and that you have seen. Omit the block when your answ
 /* ── Other agents to ask ──
  *
  * A second opinion from another (profile, agent) pair — `builtin:agents`. The
- * trailer lists the pairs that exist today (`WorkflowRunner.pairs`, minus the
+ * trailer lists the pairs that exist today (`WorkflowEngine.pairs`, minus the
  * thread's own and any not installed) for the same reason the commands trailer
  * lists commands: a model left to invent a name offers one that fails. The
  * client turns a pick into a message that *names* the pair, which is what

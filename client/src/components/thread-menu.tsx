@@ -22,6 +22,7 @@ import {
   Eye,
   FolderOpen,
   GitBranchIcon,
+  EyeOff,
   Link as LinkIcon,
   MessageSquare,
   MoreHorizontal,
@@ -93,6 +94,15 @@ const pinItem = (
   onClick: () => pin(session),
 })
 
+const hideItem = (
+  session: SessionMeta,
+  hide: (session: SessionMeta) => void
+): MenuItemSpec => ({
+  label: session.hiddenAt ? "Unhide" : "Hide",
+  icon: session.hiddenAt ? <Eye /> : <EyeOff />,
+  onClick: () => hide(session),
+})
+
 const renameItem = (session: SessionMeta, rename: (session: SessionMeta) => void): MenuItemSpec => ({
   label: "Rename",
   icon: <Pencil />,
@@ -130,6 +140,7 @@ export function threadMenuItems(
     onRename: (session: SessionMeta) => void
     onDelete: (session: SessionMeta) => void
     onPin: (session: SessionMeta) => void
+    onHide: (session: SessionMeta) => void
     onRemoveWorktree?: (session: SessionMeta) => void
   },
   options: { beside?: boolean } = {}
@@ -145,6 +156,7 @@ export function threadMenuItems(
     { type: "separator" },
     renameItem(session, handlers.onRename),
     pinItem(session, pinned, handlers.onPin),
+    hideItem(session, handlers.onHide),
     { label: "Copy link", icon: <LinkIcon />, onClick: () => copyThreadLink(session) },
     { type: "separator" },
     ...worktreeItems(session, handlers.onRemoveWorktree),
@@ -271,6 +283,15 @@ export function useThreadRowActions(
     [actions]
   )
 
+  const hide = React.useCallback(
+    (session: SessionMeta) => {
+      actions
+        .toggleHidden(session.id)
+        .catch((err) => reportError(err, session.hiddenAt ? "Couldn't unhide the thread" : "Couldn't hide the thread"))
+    },
+    [actions]
+  )
+
   const restore = React.useCallback(
     (session: SessionMeta) => {
       actions
@@ -339,7 +360,7 @@ export function useThreadRowActions(
     [confirm, actions]
   )
 
-  return { rename, remove, restore, purge, pin, removeWorktree }
+  return { rename, remove, restore, purge, pin, hide, removeWorktree }
 }
 
 import { writeClipboard } from "@/lib/clipboard"

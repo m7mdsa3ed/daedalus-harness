@@ -40,6 +40,18 @@ assert.equal(stats.min, 40);
 assert.equal(stats.max, 200);
 assert.ok(Math.abs(tpsAverage(stats)!.rate - (4_020 * 1000) / 100_100) < 1e-9, "token-weighted, not (40+200)/2");
 
+// --- waits sum across turns, and a turn with waits and no speed still counts ---
+{
+  const waiting = (waits: object) => ({ outputTokens: 0, generation: { outputTokens: 0, decodeMs: 0, waits } }) as never;
+  let waited = addTps(null, waiting({ totalMs: 5_000, retryMs: 2_000 }))!;
+  assert.deepEqual(waited.waits, { totalMs: 5_000, retryMs: 2_000 });
+  assert.equal(tpsAverage(waited), null, "no speed was measured");
+  waited = addTps(waited, waiting({ totalMs: 1_000, heldMs: 400 }))!;
+  assert.deepEqual(waited.waits, { totalMs: 6_000, heldMs: 400, retryMs: 2_000 });
+  waited = addTps(waited, { outputTokens: 100, durationMs: 10_000 })!;
+  assert.equal(waited.min, 10, "a first rate is not min'd against the zero a waits-only row holds");
+}
+
 // --- nothing to divide ---
 assert.equal(addTps(null, { outputTokens: 0, durationMs: 1_000 }), null);
 assert.equal(addTps(null, { outputTokens: 10 }), null);
@@ -47,6 +59,21 @@ assert.equal(tpsAverage(null), null);
 
 // --- the decode clock: prose only, never a numerator it cannot see ---
 const { DecodeClock, generationFromMeta, spendFromError, isModelOutput } = await import("../src/decode-clock.js");
+{
+  const { generationFromMeta } = await import("../src/decode-clock.js");
+  const meta = (generation: unknown) => ({ daedalus: { generation } });
+  assert.deepEqual(generationFromMeta(meta({ outputTokens: 5, decodeMs: 50, waits: { totalMs: 9, retryMs: -1 } })), {
+    outputTokens: 5,
+    decodeMs: 50,
+    waits: { totalMs: 9 },
+  });
+  assert.deepEqual(generationFromMeta(meta({ outputTokens: 0, decodeMs: 0, waits: { totalMs: 9, heldMs: 3 } })), {
+    outputTokens: 0,
+    decodeMs: 0,
+    waits: { totalMs: 9, heldMs: 3 },
+  });
+  assert.equal(generationFromMeta(meta({ outputTokens: 0, decodeMs: 0 })), undefined, "a half-record is dropped");
+}
 const chunk = { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "x" } } as never;
 const call = { sessionUpdate: "tool_call", toolCallId: "t", title: "t" } as never;
 const usage = (output: number) => ({ totalTokens: output, inputTokens: 0, outputTokens: output }) as never;

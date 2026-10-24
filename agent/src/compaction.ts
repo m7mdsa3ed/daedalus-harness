@@ -5,7 +5,7 @@ import type { AgentEnv } from "./env.js";
 import type { ModelFactory } from "./provider.js";
 import type { Session } from "./session.js";
 import type { Emitter } from "./updates.js";
-import type { CallMetering } from "./metering.js";
+import type { CallHooks } from "./trace.js";
 import { cacheAffinity } from "./provider.js";
 
 /**
@@ -100,8 +100,8 @@ export async function compact(
   emit: Emitter,
   announce: boolean,
   signal: AbortSignal,
-  /** The summarizer's own call, metered into the turn that asked for it. */
-  onCall?: (call: CallMetering) => void,
+  /** The summarizer's own call, metered and traced into the turn that asked for it. */
+  hooks?: CallHooks,
 ): Promise<void> {
   const compactionId = randomUUID();
   const say = async (update: acp.SessionUpdate) => {
@@ -115,7 +115,7 @@ export async function compact(
       messages: [...session.messages, { role: "user", content: SUMMARY_PROMPT }],
       abortSignal: signal,
       maxOutputTokens: MAX_SUMMARY_TOKENS,
-      onLanguageModelCallEnd: onCall,
+      ...hooks,
       /* The turn's own affinity key: a summarizer that lands on another
          backend re-sends the whole history uncached, which is the most
          expensive request a session makes. */

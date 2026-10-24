@@ -31,7 +31,7 @@ import type { SessionManager } from "./sessions.js";
  * `promptThread`, a `skipped` run says why a delivery did not happen, and
  * `scheduled_messages` is only read once, by the boot migration
  * (`scheduled-migration.ts`). `createScheduled`/`fire` keep their signatures
- * because `workflows.ts` calls them; the `*Scheduled` CRUD behind
+ * because `workflows/engine.ts` calls them; the `*Scheduled` CRUD behind
  * `/api/scheduled*` is a DEPRECATED alias over the routine model.
  *
  * Everything below the `routine triggers` banner is the clock itself: when a
@@ -112,7 +112,7 @@ export async function listScheduled(): Promise<ScheduledMessage[]> {
 }
 
 /** @deprecated Use the routines API (`runsIn: "session"`). Signature is relied
-    on by `workflows.ts`. */
+    on by `workflows/engine.ts`. */
 export async function createScheduled(input: ScheduledMessageInput): Promise<ScheduledMessage> {
   const routine = await createRoutine({
     name: input.text.replace(/\s+/g, " ").trim().slice(0, 60) || "Scheduled message",
@@ -175,7 +175,7 @@ export async function deleteScheduled(id: string): Promise<boolean> {
 
 /** Send one prompt, reviving the thread's process first if it has no live one.
     A prompt that lands mid-turn is queued behind it (see SessionManager.prompt).
-    Never throws: it is the fire-and-forget door `workflows.ts` uses. */
+    Never throws: it is the fire-and-forget door `workflows/engine.ts` uses. */
 export async function fire(sessionId: string, text: string, manager: SessionManager): Promise<void> {
   const session = manager.get(sessionId);
   if (!session || session.deletedAt !== null) return;

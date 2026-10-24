@@ -170,8 +170,13 @@ function run(
   });
 }
 
+/** One git invocation in a directory, for readers outside this file (the `@`
+    mention resolvers). Same bounds as every call here: argument array, timeout,
+    output ceiling, structured `WorkspaceError`. */
+export { run as runGit };
+
 /** The worktree root that owns a directory, or null when none does. */
-async function toplevelOf(dir: string): Promise<string | null> {
+export async function toplevelOf(dir: string): Promise<string | null> {
   try {
     const { stdout } = await run(dir, ["rev-parse", "--show-toplevel"]);
     return stdout.trim() || null;
@@ -1457,9 +1462,10 @@ const names = (stdout: string): string[] => stdout.split("\0").filter(Boolean);
  * Where "this branch" forked from — the merge-base of HEAD with the
  * repository's default branch: `origin/HEAD` when the remote says, else a
  * local `main` or `master`, whichever exists. Null (with the sentence the
- * panel shows) when there is no such branch, or HEAD *is* it.
+ * panel shows) when there is no such branch, or HEAD *is* it. `rev` names the
+ * branch being measured instead of HEAD (a mention of someone else's branch).
  */
-export async function branchBase(dir: string): Promise<{ base: string } | { unavailable: string }> {
+export async function branchBase(dir: string, rev = "HEAD"): Promise<{ base: string } | { unavailable: string }> {
   const verify = async (ref: string) => {
     try {
       return (await run(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])).stdout.trim() || null;
@@ -1467,7 +1473,7 @@ export async function branchBase(dir: string): Promise<{ base: string } | { unav
       return null;
     }
   };
-  const head = await verify("HEAD");
+  const head = await verify(rev);
   if (!head) return { unavailable: "This repository has no commits yet, so there is no branch to compare." };
   let ref: string | null = null;
   try {
@@ -1480,7 +1486,7 @@ export async function branchBase(dir: string): Promise<{ base: string } | { unav
     const tip = await verify(candidate);
     if (!tip) continue;
     if (tip === head) return { unavailable: "HEAD is the base branch — there is no branch of its own to compare." };
-    const { stdout } = await run(dir, ["merge-base", "HEAD", tip], undefined, [1]);
+    const { stdout } = await run(dir, ["merge-base", head, tip], undefined, [1]);
     const base = stdout.trim();
     if (!base) return { unavailable: "This branch shares no history with the base branch." };
     return { base };

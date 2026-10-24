@@ -1,17 +1,18 @@
 import * as React from "react"
 import type { TextSurface } from "@/components/composer/composer-editor"
-import { AtSign, Boxes, FileText, Folder, Plug, SquareCheck } from "lucide-react"
+import { AtSign, SquareCheck } from "lucide-react"
 import { reportError } from "@/lib/errors"
-import { formatBytes } from "@/lib/attachments"
-import { searchFiles, type WorkspaceEntry } from "@/lib/workspace/fs-api"
-import { mcpNeedsAuth, mcpSubtitle, type McpServerDef, type ThreadMcpServer } from "@/lib/settings"
-import { useMcpServers, useProjects } from "@/lib/queries/catalog"
-import { useBoardsEnabled, useTasksQuery } from "@/lib/queries/boards"
-import { taskKey } from "@/lib/tasks-board"
+import type { McpServerDef, ThreadMcpServer } from "@/lib/settings"
 import { HARNESS_MCP_ID, TASK_MENTION_RE } from "@/lib/task-mentions"
-import { McpIcon, ProjectIcon } from "@/components/entity-icon"
+import { useFeature } from "@/lib/queries/surfaces"
+import { MENTION_SOURCES, splitKindQuery } from "@/lib/mentions"
+import { kindHintSource } from "@/lib/mentions/sources/kind-hint"
+import type { AnyMentionSource, MentionCtx, MentionHit } from "@/lib/mentions"
+import type { McpResourceMatch } from "@/lib/mentions/sources/mcp-resources"
 import { useStripSummary } from "./composer-strip"
 import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer"
+
+export type { McpResourceMatch }
 
 /* `@` mentions for the composer — the file half of the slash menu.
 
@@ -24,11 +25,23 @@ import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer
    a reference and one that reads prose still gets the `@path` every runtime
    already understands.
 
+   **This file knows no source.** What the menu offers — tasks, MCP servers,
+   projects, files, MCP resources, and the `@kind:ref` kinds — is the registry
+   in `lib/mentions/` (`MentionSource`); the hook asks each one for matches and
+   the menu draws each one's row. It owns what is common to all of them: the
+   token at the caret, the debounce and the cache of asynchronous searches, the
+   key contract, and the caret after a pick.
+
    A query may name any path on the machine, not only the project: the scope is
    parsed server-side (`searchEntries` in `server/src/workspace-fs.ts`), so
    `@/etc/`, `@~/` and a relative `@src/` all search the directory they name, and
    the menu completes the path as typed. A directory pick appends `/` and leaves
    the token open so the next keystroke drills in; a file pick adds a space.
+
+   A query that opens with a known `kind:` (two or more lowercase letters, then a
+   colon — never `C:\`) is routed to that kind's source alone, and `@` or a
+   prefix of a kind offers `kind:` hint rows whose pick leaves the token open.
+   Both exist only when the server advertises `mentionKinds`.
 
    Unlike a command, a mention can appear anywhere in the message — you name a
    file mid-sentence — so the token is read at the **caret**, not from the start
@@ -37,57 +50,7 @@ import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer
    guaranteed) simply never opens the menu — the project is the base a relative
    query resolves against, and the auth scope of the search route. */
 
-/** Wait after the last keystroke before asking the server. Long enough that
-    typing a path costs one walk rather than one per character, short enough
-    that it reads as instant. */
-const DEBOUNCE_MS = 110
-const LIMIT = 20
-
-/** A resource one of the thread's MCP servers offers. Picking one does not
-    insert text: the token is removed and the resource is read and attached
-    (`onResource`), because what it names is not a path the agent can open. */
-export interface McpResourceMatch {
-  type: "mcp-resource"
-  serverId: string
-  server: string
-  uri: string
-  name: string
-  mimeType?: string
-}
-
-export interface McpServerMatch {
-  type: "mcp-server"
-  server: McpServerDef
-}
-
-/** Another project. Picking one inserts its cwd as an absolute `@path`, so it is
-    an ordinary mention from there on — `mentions.ts` links any path that exists. */
-export interface ProjectMatch {
-  type: "project"
-  id: string
-  name: string
-  cwd: string
-  logoUrl?: string
-}
-
-/** A task from the board. Picking one inserts `@KEY-12`, which the send
-    expands into the task and how to work it (`lib/task-mentions.ts`) — only for
-    a thread that carries the Harness MCP, so only such a thread is offered one. */
-export interface TaskMatch {
-  type: "task"
-  key: string
-  title: string
-  status?: string
-}
-
-export type MentionMatch = WorkspaceEntry | McpResourceMatch | McpServerMatch | ProjectMatch | TaskMatch
-
-
-/** How many entries of each catalog join the file matches. */
-const MCP_LIMIT = 8
-const CATALOG_LIMIT = 8
-/** Projects lead the list, so they are kept few enough not to bury the files. */
-const PROJECT_LIMIT = 5
+const NO_SIGNAL = new AbortController().signal
 
 interface MentionToken {
   /** What has been typed after the `@`. */
@@ -96,14 +59,30 @@ interface MentionToken {
   start: number
 }
 
+interface Entry {
+  source: AnyMentionSource
+  data: unknown
+}
+
+interface Route {
+  /** The text typed after `@`, or null while the menu is closed. */
+  query: string | null
+  /** What the sources are asked: the query, or the part after a `kind:`. */
+  q: string
+  /** The sources in play, in registry order. */
+  entries: Entry[]
+  /** Kind hint rows to append — only on a plain query. */
+  hints: Entry[]
+}
+
 export interface FileMentionState {
-  matches: MentionMatch[]
+  matches: MentionHit[]
   selected: number
   /** A search is in flight and nothing is on screen for this query yet. */
   loading: boolean
   /** Non-null while the menu is open, even before results arrive. */
   query: string | null
-  pick: (entry: MentionMatch) => void
+  pick: (hit: MentionHit) => void
   setSelected: (index: number) => void
   /** Returns true when the key drove the menu and must not reach the send logic. */
   onKeyDown: (e: React.KeyboardEvent) => boolean
@@ -124,6 +103,8 @@ export function useFileMentions(opts: {
   text: string
   setText: (text: string) => void
   projectId: string | undefined
+  /** The thread being typed in, for sources that read it. */
+  sessionId?: string
   inputRef: React.RefObject<TextSurface | null>
   /** The thread's MCP servers, whose resources are offered after the files. */
   mcpServers?: ThreadMcpServer[]
@@ -137,6 +118,7 @@ export function useFileMentions(opts: {
     text,
     setText,
     projectId,
+    sessionId,
     inputRef,
     mcpServers,
     draft = false,
@@ -144,19 +126,36 @@ export function useFileMentions(opts: {
     onResource,
     onMcpServer,
   } = opts
-  const libraryServers = useMcpServers()
+  const kinds = useFeature("mentionKinds")
   const linked = React.useMemo(() => new Set(linkedMcpServerIds), [linkedMcpServerIds])
   const [caret, setCaret] = React.useState(0)
   const [selected, setSelected] = React.useState(0)
   const [dismissed, setDismissed] = React.useState(false)
-  const [fileMatches, setMatches] = React.useState<WorkspaceEntry[]>([])
+  /* Answers of the asynchronous sources, by source id. */
+  const [results, setResults] = React.useState<Record<string, unknown[]>>({})
   const [loading, setLoading] = React.useState(false)
   /* Results for queries already asked, so backspacing through a path does not
      re-walk the project. Dropped when the menu closes: a cache that outlives
      the mention would go on answering for files that have since moved. */
-  const cache = React.useRef(new Map<string, WorkspaceEntry[]>())
+  const cache = React.useRef(new Map<string, unknown[]>())
   /** Where the caret must land once a pick has re-rendered the textarea. */
   const pendingCaret = React.useRef<number | null>(null)
+  /* A pick's side effects are the composer's latest closures; the context the
+     sources see keeps one identity. */
+  const actionsRef = React.useRef({ onResource, onMcpServer })
+  actionsRef.current = { onResource, onMcpServer }
+  const actions = React.useMemo<MentionCtx["actions"]>(
+    () => ({
+      onResource: (resource) => actionsRef.current.onResource?.(resource),
+      onMcpServer: (server) => actionsRef.current.onMcpServer?.(server),
+    }),
+    [],
+  )
+  const harness = linked.has(HARNESS_MCP_ID)
+  const ctx = React.useMemo<MentionCtx>(
+    () => ({ projectId, sessionId, draft, linked, harness, mcpServers, kinds, actions }),
+    [projectId, sessionId, draft, linked, harness, mcpServers, kinds, actions],
+  )
 
   /* One effect owns the caret after every text change, and the pending case
      goes first: split in two, the sync branch would run against the *old*
@@ -187,141 +186,131 @@ export function useFileMentions(opts: {
   }, [text, caret, dismissed])
 
   const query = token?.query ?? null
-  const queryText = (query ?? "").toLowerCase()
-  const serverMatches = React.useMemo((): McpServerMatch[] => {
-    if (!draft || query === null || query.includes("/")) return []
-    return libraryServers
-      .filter((server) => !linked.has(server.id))
-      .filter((server) => `${server.name} ${mcpSubtitle(server)}`.toLowerCase().includes(queryText))
-      .slice(0, CATALOG_LIMIT)
-      .map((server) => ({ type: "mcp-server", server }))
-  }, [draft, libraryServers, linked, query, queryText])
-  /* Tasks only where the agent can work them: the expansion tells it to call
-     the Harness MCP, so without it there is nothing to mention. Asked for once
-     the menu is open, never by a composer that is merely mounted. */
-  const harness = linked.has(HARNESS_MCP_ID)
-  const offerTasks = harness && query !== null && !query.includes("/")
-  const tasksQuery = useTasksQuery(offerTasks)
-  const { boards, statuses } = useBoardsEnabled(offerTasks)
-  const taskMatches = React.useMemo((): TaskMatch[] => {
-    if (!offerTasks) return []
-    const keyOf = new Map(boards.map((b) => [b.id, b.key]))
-    const statusOf = new Map(statuses.map((s) => [s.id, s.name]))
-    return (tasksQuery.data ?? [])
-      .filter((task) => !task.archived && keyOf.has(task.boardId))
-      .map((task) => ({
-        type: "task" as const,
-        key: taskKey(task, keyOf.get(task.boardId)!),
-        title: task.title,
-        status: statusOf.get(task.statusId),
-      }))
-      .filter((task) => `${task.key} ${task.title}`.toLowerCase().includes(queryText))
-      .slice(0, CATALOG_LIMIT)
-  }, [offerTasks, boards, statuses, tasksQuery.data, queryText])
-  const taskWithoutHarness = !harness && TASK_MENTION_RE.test(text)
+
+  /* Every source's hook runs on every render, in registry order (a constant
+     list, so the hook order is stable); each gates its own fetching on `query`. */
+  const datas = MENTION_SOURCES.map((source) => source.useData?.(ctx, query))
+  const all: Entry[] = MENTION_SOURCES.map((source, i) => ({ source, data: datas[i] }))
+
+  /* Where the query goes. A known `kind:` prefix wins even over a later `/`
+     (`@branch:feature/x`); otherwise it is a plain query for every source that
+     is not a kind, and a prefix of a kind also draws that kind's hint row. */
+  const route: Route = (() => {
+    if (query === null) return { query, q: "", entries: [], hints: [] }
+    const routed = kinds ? splitKindQuery(query) : null
+    if (routed) {
+      const only = all.find((e) => e.source.kind === routed.kind && e.source.available(ctx, e.data))
+      if (only) return { query, q: routed.rest, entries: [only], hints: [] }
+    }
+    const entries = all.filter((e) => !e.source.kind && e.source.available(ctx, e.data))
+    const hints =
+      kinds && /^[a-z]*$/.test(query)
+        ? all.filter((e) => e.source.kind?.startsWith(query) && e.source.available(ctx, e.data))
+        : []
+    return { query, q: query, entries, hints }
+  })()
+  /* The effect below is keyed on `asyncKey` alone (what actually changes the
+     question), and reads the rest through refs: `ctx` gets a new identity
+     whenever a caller passes a fresh array, and an effect that set state on
+     each of those would re-ask forever. */
+  const routeRef = React.useRef(route)
+  routeRef.current = route
+  const ctxRef = React.useRef(ctx)
+  ctxRef.current = ctx
+  const asyncIds = route.entries.filter((e) => e.source.debounceMs !== undefined).map((e) => e.source.id)
+  const asyncKey = `${asyncIds.join(",")}\0${route.q}\0${projectId ?? ""}`
 
   React.useEffect(() => {
-    if (!projectId || query === null) {
-      cache.current.clear()
-      setMatches([])
-      setLoading(false)
-      return
-    }
-    const key = query.toLowerCase()
-    const cached = cache.current.get(key)
-    if (cached) {
-      setMatches(cached)
+    const { query: asked, q, entries } = routeRef.current
+    const live = entries.filter((e) => e.source.debounceMs !== undefined)
+    if (asked === null || !projectId) cache.current.clear()
+    if (asked === null || live.length === 0) {
+      setResults({})
       setLoading(false)
       return
     }
     const controller = new AbortController()
-    setLoading(true)
-    const timer = setTimeout(() => {
-      searchFiles(projectId, query, { limit: LIMIT, signal: controller.signal })
-        .then((result) => {
-          cache.current.set(key, result.entries)
-          setMatches(result.entries)
-          setLoading(false)
-        })
-        .catch((err) => {
-          if (controller.signal.aborted) return
-          setMatches([])
-          setLoading(false)
-          /* A project whose directory has moved answers 404 for every query.
-             Said once per keystroke would be a storm, so it is a toast on the
-             request that actually failed and the menu simply stays empty. */
-          reportError(err, "Couldn't search for files")
-        })
-    }, DEBOUNCE_MS)
+    const timers: ReturnType<typeof setTimeout>[] = []
+    let pending = 0
+    for (const { source, data } of live) {
+      const key = `${source.id}\0${q.toLowerCase()}`
+      const cached = cache.current.get(key)
+      if (cached) {
+        setResults((prev) => ({ ...prev, [source.id]: cached }))
+        continue
+      }
+      pending++
+      timers.push(
+        setTimeout(async () => {
+          try {
+            const found = await source.search(q, ctxRef.current, data, controller.signal)
+            cache.current.set(key, found)
+            setResults((prev) => ({ ...prev, [source.id]: found }))
+          } catch (err) {
+            if (controller.signal.aborted) return
+            setResults((prev) => ({ ...prev, [source.id]: [] }))
+            /* A project whose directory has moved answers 404 for every query.
+               Said once per keystroke would be a storm, so it is a toast on the
+               request that actually failed and the menu simply stays empty. */
+            reportError(err, source.errorLabel ?? `Couldn't search ${source.id}`)
+          } finally {
+            if (!controller.signal.aborted && --pending === 0) setLoading(false)
+          }
+        }, source.debounceMs),
+      )
+    }
+    setLoading(pending > 0)
     return () => {
-      clearTimeout(timer)
+      timers.forEach(clearTimeout)
       controller.abort()
     }
-  }, [projectId, query])
+    // `route` and `ctx` are read through refs: `asyncKey` is what says it moved.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asyncKey])
 
-  /* Filtered here rather than asked for: the listing is already in the cache,
-     and a server's resource list is a handful of rows, not a tree to walk. */
-  const resourceMatches = React.useMemo((): McpResourceMatch[] => {
-    if (query === null || !mcpServers?.length) return []
-    const q = query.toLowerCase()
-    return mcpServers
-      .flatMap((server) =>
-        server.resources.map((r) => ({
-          type: "mcp-resource" as const,
-          serverId: server.id,
-          server: server.name,
-          uri: r.uri ?? r.name,
-          name: r.description || r.uri || r.name,
-          mimeType: r.mimeType,
-        })),
-      )
-      .filter((r) => !q || `${r.server} ${r.name} ${r.uri}`.toLowerCase().includes(q))
-      .slice(0, MCP_LIMIT)
-  }, [query, mcpServers])
-  /* A query with a `/` in it is a path being typed, never a project's name. */
-  const projects = useProjects()
-  const projectMatches = React.useMemo((): ProjectMatch[] => {
-    if (query === null || query.includes("/")) return []
-    const q = query.toLowerCase()
-    return projects
-      .filter((p) => p.id !== projectId && `${p.name} ${p.cwd}`.toLowerCase().includes(q))
-      .slice(0, PROJECT_LIMIT)
-      .map((p) => ({ type: "project" as const, id: p.id, name: p.name, cwd: p.cwd, logoUrl: p.logoUrl }))
-  }, [query, projects, projectId])
-  const matches = React.useMemo<MentionMatch[]>(
-    () => [...taskMatches, ...serverMatches, ...projectMatches, ...fileMatches, ...resourceMatches],
-    [taskMatches, serverMatches, projectMatches, fileMatches, resourceMatches],
+  const matches = React.useMemo<MentionHit[]>(
+    () => {
+      const hits: MentionHit[] = []
+      for (const { source, data } of route.entries) {
+        const found =
+          source.debounceMs !== undefined
+            ? (results[source.id] ?? [])
+            : (() => {
+                const sync = source.search(route.q, ctx, data, NO_SIGNAL)
+                return Array.isArray(sync) ? sync : []
+              })()
+        for (const match of found) hits.push({ key: `${source.id}:${source.key(match)}`, source, match })
+      }
+      for (const { source } of route.hints) {
+        const match = { kind: source.kind!, icon: source.icon!, hint: source.hint ?? "" }
+        hits.push({ key: `kind:${match.kind}`, source: kindHintSource as AnyMentionSource, match })
+      }
+      return hits
+    },
+    // The route is derived from exactly these; its entries carry fresh arrays every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [query, route.q, asyncKey, ctx, results, ...datas],
   )
 
   // Clamp rather than reset, so narrowing the query keeps the highlight stable.
   const index = Math.min(selected, Math.max(matches.length - 1, 0))
 
-  const pick = (entry: MentionMatch) => {
+  const pick = (hit: MentionHit) => {
     if (!token) return
-    if (entry.type === "mcp-resource") {
+    const insert = hit.source.insert(hit.match, ctx)
+    if (insert.type === "remove") {
       pendingCaret.current = token.start
       setText(text.slice(0, token.start) + text.slice(caret))
       setSelected(0)
-      onResource?.(entry)
+      insert.run()
       return
     }
-    if (entry.type === "mcp-server") {
-      pendingCaret.current = token.start
-      setText(text.slice(0, token.start) + text.slice(caret))
-      setSelected(0)
-      onMcpServer?.(entry.server)
-      return
-    }
-    /* A directory completes to `@path/` and leaves the token open, so the next
-       keystroke keeps drilling; a file or a project completes to `@path ` and is done. */
-    const insert =
-      entry.type === "project"
-        ? `@${entry.cwd} `
-        : entry.type === "task"
-          ? `@${entry.key} `
-          : `@${entry.path}${entry.type === "dir" ? "/" : " "}`
-    pendingCaret.current = token.start + insert.length
-    setText(text.slice(0, token.start) + insert + text.slice(caret))
+    /* An open token (a directory's `/`, a kind hint's `:`) leaves the caret
+       straight after it so the next keystroke keeps drilling; a finished one
+       takes a space and is done. */
+    const inserted = insert.open ? insert.text : `${insert.text} `
+    pendingCaret.current = token.start + inserted.length
+    setText(text.slice(0, token.start) + inserted + text.slice(caret))
     setSelected(0)
   }
 
@@ -370,7 +359,7 @@ export function useFileMentions(opts: {
     setSelected,
     onKeyDown,
     onSelect,
-    taskWithoutHarness,
+    taskWithoutHarness: !harness && TASK_MENTION_RE.test(text),
     requestCaret,
   }
 }
@@ -425,97 +414,15 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
 
   return (
     <CompleterList selected={state.selected} count={state.matches.length} hint={scope}>
-      {state.matches.map((entry, i) => {
-        if (entry.type === "task") {
-          return (
-            <CompleterRow
-              key={`task:${entry.key}`}
-              icon={SquareCheck}
-              label={entry.key}
-              description={entry.title}
-              aside={entry.status}
-              badge="task"
-              selected={i === state.selected}
-              onPick={() => state.pick(entry)}
-              onHover={() => state.setSelected(i)}
-            />
-          )
-        }
-        if (entry.type === "mcp-server") {
-          return (
-            <CompleterRow
-              key={`mcp-server:${entry.server.id}`}
-              icon={Plug}
-              mark={<McpIcon server={entry.server} className="size-4" />}
-              label={entry.server.name}
-              description={mcpSubtitle(entry.server)}
-              badge={mcpNeedsAuth(entry.server) ? "needs auth" : "enable MCP"}
-              selected={i === state.selected}
-              onPick={() => state.pick(entry)}
-              onHover={() => state.setSelected(i)}
-            />
-          )
-        }
-        if (entry.type === "mcp-resource") {
-          return (
-            <CompleterRow
-              key={`mcp:${entry.serverId}:${entry.uri}`}
-              icon={Plug}
-              prefix={`${entry.server}: `}
-              label={entry.name}
-              aside={entry.mimeType}
-              badge="MCP resource"
-              selected={i === state.selected}
-              onPick={() => state.pick(entry)}
-              onHover={() => state.setSelected(i)}
-            />
-          )
-        }
-        if (entry.type === "project") {
-          return (
-            <CompleterRow
-              key={`project:${entry.id}`}
-              icon={Boxes}
-              mark={<ProjectIcon project={entry} className="size-4" />}
-              label={entry.name}
-              aside={entry.cwd}
-              badge="project"
-              selected={i === state.selected}
-              onPick={() => state.pick(entry)}
-              onHover={() => state.setSelected(i)}
-            />
-          )
-        }
-        /* The directory is what tells two same-named files apart. It leads the
-           row, dimmed — a row then reads as the path it will insert, and the
-           list is one line per file instead of two. It is also what gives up
-           width first, so the *name* survives a narrow composer. */
-        const dir = entry.path.slice(0, entry.path.length - entry.name.length)
-        return (
-          <CompleterRow
-            key={entry.path}
-            icon={entry.type === "dir" ? Folder : FileText}
-            prefix={dir || undefined}
-            label={entry.name}
-            /* Size is the cheapest way to tell a 40-byte stub from the 2 MB
-               bundle beside it, and the search already answered it. Pinned to
-               the row's end, where every row's is on one line. */
-            aside={
-              entry.type === "file" && entry.size !== undefined
-                ? formatBytes(entry.size)
-                : undefined
-            }
-            /* What the project's own tooling thinks of this path — an ignored
-               or symlinked file is one you usually did not mean to name. */
-            badge={
-              entry.link ? "link" : entry.ignored ? "ignored" : entry.hidden ? "hidden" : undefined
-            }
-            selected={i === state.selected}
-            onPick={() => state.pick(entry)}
-            onHover={() => state.setSelected(i)}
-          />
-        )
-      })}
+      {state.matches.map((hit, i) => (
+        <CompleterRow
+          key={hit.key}
+          {...hit.source.row(hit.match)}
+          selected={i === state.selected}
+          onPick={() => state.pick(hit)}
+          onHover={() => state.setSelected(i)}
+        />
+      ))}
     </CompleterList>
   )
 }

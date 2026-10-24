@@ -68,6 +68,7 @@ import { useLocation, useNavigate } from "react-router"
 import {
   ArrowUp,
   AudioLines,
+  Check,
   ChevronDown,
   Maximize2,
   MessageSquareText,
@@ -129,6 +130,9 @@ import { consumeComposerInsertRequest, useComposerInsertRequest } from "@/lib/co
 import { reportError } from "@/lib/errors"
 import { withTaskContext } from "@/lib/tasks-board"
 import { HARNESS_MCP_ID, splitTaskContext } from "@/lib/task-mentions"
+import { useFeature } from "@/lib/queries/surfaces"
+import { splitSentContext, withMentionContext } from "@/lib/mentions/context"
+import { hasKindMention } from "@/lib/mentions"
 import { mcpPromptCommands, mcpPromptFor, readMcpResourceFile, renderMcpPrompt } from "@/lib/mcp-composer"
 import { useServer } from "@/lib/server-context"
 import { useIsFrontPanel } from "@/components/workspace/dock-context"
@@ -258,6 +262,8 @@ export const Composer = React.memo(function Composer({
      empty one it left behind before putting the words back. */
   const textRef = React.useRef(text)
   const expandingTasks = React.useRef(false)
+  const expandingMentions = React.useRef(false)
+  const mentionKinds = useFeature("mentionKinds")
   const composerRef = React.useRef<TextSurface>(null)
   const [expanded, setExpanded] = React.useState(false)
   const [editorOverflows, setEditorOverflows] = React.useState(false)
@@ -427,7 +433,9 @@ export const Composer = React.memo(function Composer({
     /* The tokens become their bodies here, at the last moment, exactly as
        `mentions.ts` derives resource links from the text at the last moment.
        Everything downstream sees the string it always did. */
-    let outgoing = expandPastes(value, pastes)
+    /* A recalled message carries the blocks it was sent with, `<tasks>` and
+       `<context>` in either order; they are made again below, never doubled. */
+    let outgoing = splitSentContext(expandPastes(value, pastes)).text
     /* A task mention brings the task along, appended the way a paste's body
        is — only where the agent has the Harness MCP the block tells it to use
        (`lib/task-mentions.ts`). Read before the box clears, so a failed read
@@ -445,6 +453,21 @@ export const Composer = React.memo(function Composer({
       }
     } else {
       outgoing = splitTaskContext(outgoing).text
+    }
+    /* A typed mention (`@thread:abc`) brings what it names along, after the
+       task block, the same way — only where the server can expand it
+       (`mentionKinds`), else it goes as the words typed. */
+    if (mentionKinds && meta?.projectId && hasKindMention(outgoing)) {
+      if (expandingMentions.current) return
+      expandingMentions.current = true
+      try {
+        outgoing = await withMentionContext(server, outgoing, { projectId: meta.projectId, sessionId })
+      } catch (err) {
+        reportError(err, "Couldn't read the mentioned items")
+        return
+      } finally {
+        expandingMentions.current = false
+      }
     }
     const attachments = files.ready.map(({ id, name, mimeType, size }) => ({
       id,
@@ -680,6 +703,7 @@ export const Composer = React.memo(function Composer({
     text,
     setText,
     projectId: meta?.projectId,
+    sessionId,
     inputRef: composerRef,
     mcpServers,
     draft,
@@ -858,10 +882,12 @@ export const Composer = React.memo(function Composer({
   const iconSize = coarse ? "icon-sm" : "icon-xs"
   const steerChord = formatChord(steerChords[0] ?? "")
 
+  /* The tooltip is where the full sentence goes: nothing is laid out for it, so
+     the box above can keep the short one. */
   const sendTitle = gated
     ? "Working…"
     : hold.paused
-      ? hold.sendHint
+      ? hold.sendHintDetail
       : thread.turnActive
         ? `Queue (${steerChord} steers the running turn instead)`
         : "Send"
@@ -1096,6 +1122,7 @@ export const Composer = React.memo(function Composer({
           onPaste={onPaste}
           pastes={shownPastes}
           ghost={fim.ghost}
+          onAcceptGhost={coarse ? fim.accept : undefined}
           pending={fim.pending}
           onOverflowChange={onEditorOverflowChange}
           expanded={expanded}
@@ -1113,13 +1140,19 @@ export const Composer = React.memo(function Composer({
           })}
           ariaLabel="Message the agent"
           placeholder={
+            /* Every one of these is a hint for a one-line box, so they are kept
+               short enough to read whole in a narrow panel: the queue hint used
+               to spell out "for when the agent finishes", which wrapped in a
+               column and was cut through the middle of its second line. What
+               the reader needs from it is which of the two things their message
+               will do, and the queue is the answer. */
             lock.note ??
             (voice.listening && !text
               ? "Listening…"
               : hold.paused
                 ? `${hold.sendHint}…`
                 : thread.turnActive
-                  ? "Queue a message for when the agent finishes…"
+                  ? "Queue a message…"
                   : (placeholder ?? "Message the agent…"))
           }
           disabled={disabled || gated}
@@ -1142,7 +1175,13 @@ export const Composer = React.memo(function Composer({
             `destructive` — so the row is stock variants only. */}
         <div
           data-slot="composer-toolbar"
-          className={cn("flex items-center gap-1 pt-1", coarse && "gap-2 pt-2")}
+          /* The gap does not grow with the target. A finger already gets a 32px
+             button instead of a 24px one (`iconSize`), and widening the space
+             between them on top of that pushed the row's marks apart without
+             making any of them easier to hit — the glyphs are the same size
+             either way, so all the extra gap bought was air. Only the row's
+             own height grows, which is what keeps the box clear of the thumb. */
+          className={cn("flex items-center gap-1 pt-1", coarse && "pt-2")}
         >
           <ComposerAddMenu
             disabled={disabled || gated}
@@ -1213,6 +1252,21 @@ export const Composer = React.memo(function Composer({
             >
               {formatTokens(chars)} · ~{formatTokens(Math.ceil(chars / 4))} tok
             </span>
+          )}
+          {/* A soft keyboard has no Tab, so on a touch screen a drawn suggestion
+              is taken here (or by tapping the ghost itself). The press is
+              held back from the button so the keyboard stays up. */}
+          {coarse && fim.ghost && (
+            <Button
+              variant="secondary"
+              size={iconSize}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => fim.accept()}
+              title="Accept suggestion"
+              aria-label="Accept suggestion"
+            >
+              <Check className={KEY_MARK} />
+            </Button>
           )}
           {(editorOverflows || expanded) && (
             <Button

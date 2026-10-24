@@ -148,12 +148,15 @@ export function makeThreadCallbacks(
             { restarting: closeInfo?.code === 1001 }
           )
         }
-        /* A dead socket ends any turn it was carrying, and settles it: the
-           turn is the server's and it runs on with nobody attached, but
-           nothing here is going to hear the end of it, so leaving the tools
-           in flight would leave a working indicator nothing could clear. The
-           next open re-folds the server's own account over the top. */
-        send({ type: "turn-active", id, active: false, settle: true })
+        /* A dead socket ends the turn this device was watching, but it settles
+           the work only when nothing is coming back: the turn is the server's
+           and runs on with nobody attached. A close the ladder will undo
+           (`recoverable`) leaves tools and workflow steps as they were, because
+           the reattach resumes from the cursor and only sends what is new — so
+           a step marked `disconnected` here stayed that way until a reload,
+           the run's card frozen on a phone that had merely slept. A thread
+           that is gone for good has nobody to correct it and settles. */
+        send({ type: "turn-active", id, active: false, settle: !recoverable })
       }
       /* Last, so the status and whatever history was already buffered commit
          together: a close during the replay is the one exit `caught_up` never
@@ -163,13 +166,14 @@ export function makeThreadCallbacks(
     /* The session's whole settings state, from wherever it changed: the
        handshake, this device, or another one. It is absolute, so applying it
        twice is the same as applying it once. */
-    onSessionConfig: (modes, modeId, configOptions, promptCapabilities, canPause, canCompact) => {
+    onSessionConfig: (modes, modeId, configOptions, promptCapabilities, canPause, canCompact, callsVia) => {
       if (
         modes !== undefined ||
         configOptions !== undefined ||
         promptCapabilities !== undefined ||
         canPause !== undefined ||
-        canCompact !== undefined
+        canCompact !== undefined ||
+        callsVia !== undefined
       ) {
         /* Left out means unchanged, and the reducer is what resolves it:
            inside a batched replay this action is not committed yet, so reading
@@ -183,6 +187,7 @@ export function makeThreadCallbacks(
           promptCapabilities,
           canPause,
           canCompact,
+          callsVia,
         })
       } else if (modeId) {
         send({ type: "mode", id, modeId })

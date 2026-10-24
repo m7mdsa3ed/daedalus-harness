@@ -6,6 +6,7 @@ import { buildAgentApp } from "../src/app.js";
 import { SessionStore } from "../src/persistence.js";
 import type { UpdateParams } from "../src/types.js";
 import {
+  connectPair,
   initialize,
   makeClient,
   promptOf,
@@ -25,7 +26,7 @@ let sessionId = "";
     makeModel: scriptedModel([textScript("The answer is 42. ")]),
   });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const created = await ctx.request("session/new", { cwd, mcpServers: [] });
     sessionId = created.sessionId;
@@ -40,7 +41,7 @@ let sessionId = "";
   // A fresh app over the same home is "the process restarted".
   const agent = buildAgentApp({ env, makeModel: scriptedModel([]) });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const loaded = await ctx.request("session/load", { sessionId, cwd, mcpServers: [] });
     assert.ok(loaded.modes);
@@ -82,7 +83,7 @@ let sessionId = "";
 {
   const agent = buildAgentApp({ env, makeModel: scriptedModel([]) });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     const init = await initialize(ctx);
     assert.ok(init.agentCapabilities?.sessionCapabilities?.resume, "resume advertised");
     const resumed = await ctx.request("session/resume", { sessionId, cwd, mcpServers: [] });
@@ -118,7 +119,7 @@ let sessionId = "";
     },
   });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     await ctx.request("session/load", { sessionId, cwd, mcpServers: [] });
     const response = await ctx.request("session/prompt", { sessionId, prompt: promptOf("go on") });
@@ -138,7 +139,7 @@ let sessionId = "";
   const { app: client, harness } = makeClient();
   let forkedAt = "";
   let forkedTip = "";
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const created = await ctx.request("session/new", { cwd, mcpServers: [] });
     const sid = created.sessionId as string;
@@ -189,7 +190,7 @@ let sessionId = "";
     },
   });
   const { app: readerClient, harness: readerHarness } = makeClient();
-  await readerClient.connectWith(reader, async (ctx) => {
+  await connectPair(reader, readerClient, async (ctx) => {
     await initialize(ctx);
     await ctx.request("session/load", { sessionId: forkedAt, cwd, mcpServers: [] });
     const replay = readerHarness

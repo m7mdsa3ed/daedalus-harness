@@ -12,6 +12,20 @@ export interface TpsStats {
   /** Generation: output tokens over decode time, summed over turns that had one. */
   generatedTokens?: number;
   decodeMs?: number;
+  /** Time between the turns' model requests, summed. */
+  waits?: TurnWaits;
+}
+
+/** The time between a turn's model requests: `totalMs` is the clock no request
+    was in flight on, and the rest names the parts the agent could tell apart —
+    held (a pause or a failed turn's hold), compacting the history, backing off
+    a failed request. What is left is the tools (approvals included) and the
+    harness's own work. Only a runtime that meters its calls says any of it. */
+export interface TurnWaits {
+  totalMs: number;
+  heldMs?: number;
+  compactMs?: number;
+  retryMs?: number;
 }
 
 /** What a turn's model calls wrote and how long they spent writing it — the
@@ -21,6 +35,9 @@ export interface TpsStats {
 export interface TurnGeneration {
   outputTokens: number;
   decodeMs: number;
+  /** Rides here because it is measured off the same calls and travels the
+      same road. A record with no tokens is a turn that has waits and no speed. */
+  waits?: TurnWaits;
 }
 
 /**
@@ -363,7 +380,7 @@ export interface SubagentStateUpdate {
  * two, and the reader adds them up.
  */
 /**
- * A harness workflow run was paused or resumed (`WorkflowRunner.pause`). The
+ * A harness workflow run was paused or resumed (`WorkflowEngine.pause`). The
  * harness's own, like `_daedalus/subagent_usage`, and journaled for the same
  * reason: the run card is drawn from the parent's log alone, and a replayed
  * run has to say it is standing still. Absolute — `paused` is the state, not a
@@ -604,6 +621,125 @@ export interface VoiceLine {
   _meta?: Record<string, unknown> | null;
 }
 
+/* ── Model calls ──
+ *
+ * One record per provider request, whoever observed it (docs/protocol.md
+ * "Model calls"). The record is the contract: the journal, the ledger
+ * (`model_calls`), the panel and the Spend tab see `ModelCall` and nothing
+ * else — `source` and `missing` are drawn, never branched on. The agent's
+ * `trace.ts` mirrors this shape because it cannot import it.
+ */
+
+/** One named piece of the static prefix: a system prompt section, or one tool's
+    definition. Raw local counts — only their proportions mean anything. */
+export interface PrefixItem {
+  name: string;
+  tokens: number;
+}
+
+/** ~ Where the prompt went. Present parts sum, with `unknown`, to fresh +
+    cacheRead + cacheWrite. A part the door could not see is null and named in
+    `ModelCall.missing`. */
+export interface PromptParts {
+  system: number | null;
+  tools: number | null;
+  mcp: number | null;
+  user: number | null;
+  assistant: number | null;
+  results: number | null;
+  unknown: number;
+}
+
+export interface PrefixItems {
+  system: PrefixItem[];
+  tools: PrefixItem[];
+  mcp: PrefixItem[];
+}
+
+/** ~ One tool's footprint in a request's conversation: the calls the model made
+    to it (`args`, inside `PromptParts.assistant`) and what came back
+    (`results`, inside `PromptParts.results`), anchored to those parts so the
+    figures are billed tokens, not raw counts. `calls` is how many of its calls
+    the history held. */
+export interface ToolUse {
+  name: string;
+  calls: number;
+  args: number;
+  results: number;
+}
+
+export interface ModelCall {
+  callId: string;
+  /** Epoch ms sent. */
+  at: number;
+  /** Wall time to the parsed response, when the door saw both ends. */
+  ms?: number;
+  who: "turn" | "subagent" | "compaction" | "title";
+  childId?: string;
+  /** 1-based within the turn; the door fills it when the source did not. */
+  step: number;
+  model: string;
+  finishReason?: string;
+  /** Which door built it. `usage` is the implicit last door: a runtime's own
+      `usage_update`, billed only, never listed in `callsVia`. */
+  source: "acp" | "otlp" | "proxy" | "files" | "usage";
+  /** Exact — the provider's counters, `acp.Usage` shaped (fresh input, cache
+      read/write beside it). */
+  billed: acp.Usage;
+  /** Only when the runtime says it (Claude Code's `cost_usd`). */
+  costUsd?: number;
+  timing?: { ttftMs?: number; decodeMs?: number };
+  prompt?: PromptParts;
+  /** "the system prompt", "tool schemas" — the door's own words. */
+  missing?: string[];
+  /** ~ What the output was; `reasoning` exact when reported. */
+  output?: { text: number; reasoning: number; toolCalls: number };
+  /** Which section / which tool definition is the big one. Sent when the
+      prefix changes, never every step. */
+  items?: PrefixItems;
+  /** ~ Which tools' calls and results the conversation carried, biggest first.
+      Absent where the door could not see the conversation. */
+  toolUse?: ToolUse[];
+  /** The tools this response asked to run, in order — one entry per call.
+      Absent where the door did not read the reply. */
+  called?: string[];
+}
+
+/**
+ * The one wire event for a model call: a journaled `update` on the session it
+ * belongs to (a subagent's on the child's id). The runtime's own (`acp`) and
+ * the server-built ones take the same path, so the bridge, the journal and the
+ * client cannot tell who built a record. The `_daedalus/` prefix for the reason
+ * `AutonomyAnswer` gives.
+ */
+export interface ModelCallUpdate {
+  sessionUpdate: "_daedalus/model_call";
+  call: ModelCall;
+  _meta?: Record<string, unknown> | null;
+}
+
+/**
+ * One way a runtime's model calls reach the harness (`AgentDef.callsVia`,
+ * ordered). A fifth door is a union member, a file under
+ * `model-calls/sources/` and a seed — nothing else.
+ */
+export type CallDoor =
+  /** The runtime sends `_daedalus/model_call` itself. Always attaches. */
+  | { kind: "acp" }
+  /** OpenTelemetry logs to the harness's receiver. `env` is the runtime's
+      switches, templated on `{otlpUrl}`/`{otlpBodies}` — every value resolves
+      empty when there is no receiver, so the keys prune. */
+  | { kind: "otlp"; dialect: "claude-otlp"; env: Record<string, string> }
+  /** The gateway shim reads the request and the response it forwards. Attaches
+      only for a thread behind the shim. */
+  | { kind: "proxy"; dialect: "anthropic-messages" | "openai-chat" | "openai-responses" }
+  /** The runtime's own session store on this machine, read-only. Attaches once
+      the ACP session id is earned. */
+  | { kind: "files"; format: "claude-jsonl" | "codex-rollout" | "opencode-sqlite" };
+
+/** Which door a thread's records come through, said on `session_config`. */
+export type CallsVia = CallDoor["kind"] | "usage";
+
 /** Everything a `session/update` can carry: the SDK's union plus the RFD's. */
 export type { ChangedFile } from "./db/schema.js";
 
@@ -634,7 +770,8 @@ export type SessionUpdate =
   | WorkflowStateUpdate
   | AutonomyAnswer
   | ShellCommand
-  | VoiceLine;
+  | VoiceLine
+  | ModelCallUpdate;
 
 export interface SessionInfoUpdate {
   sessionUpdate: "session_info_update";
@@ -816,8 +953,13 @@ export type ThreadCommand =
   /** Fetch the page of journaled steps immediately before `before` (the seq of
       the step's `turn_started` — see `attached.from`). Answered with
       `EarlierPage`. Only useful to a client that asked for a windowed attach —
-      see `attached.earlier`. */
-  | { id: number; cmd: "load_earlier"; before: number }
+      see `attached.earlier`.
+
+      `steps` is how many turns the page should hold — the reader's pick
+      (`earlierPageSteps`, clamped server-side). Absent, the page is
+      `EARLIER_PAGE_STEPS`, which is what a client that predates the setting
+      still gets. */
+  | { id: number; cmd: "load_earlier"; before: number; steps?: number }
   /** Liveness only — answered `{}` by any server that understands it, with no
       agent process required (see `load_earlier` for why that matters). The
       server pings at the frame level, which a browser answers on its own and
@@ -888,11 +1030,28 @@ export const REPLAY_CHUNK_BYTES = 256 * 1024;
  */
 export const REPLAY_WINDOW_BYTES = 50 * 1024;
 
-/** How many journaled steps one `load_earlier` page returns. A **step** is a
-    turn — the log is cut only at `turn_started` boundaries, so a page is always
-    a whole number of turns and the client never re-folds one that begins
-    mid-way (the old event-counted page landed wherever the count ran out). */
+/** How many journaled steps one `load_earlier` page returns when the caller
+    does not say. A **step** is a turn — the log is cut only at `turn_started`
+    boundaries, so a page is always a whole number of turns and the client never
+    re-folds one that begins mid-way (the old event-counted page landed wherever
+    the count ran out). The count is the reader's pick now (`earlierPageSteps`
+    below); this is the default an older client still gets. */
 export const EARLIER_PAGE_STEPS = 20;
+
+/** The most turns one page may be asked for. A page is read, merged and parsed
+    before it is sent, so an unbounded count would let one click pull a whole
+    archive through the server's heap — the client's own picker stops well below
+    this; the cap is for a caller that does not. */
+export const MAX_EARLIER_PAGE_STEPS = 500;
+
+/** The page size a `load_earlier` (or `GET …/earlier?steps=`) asked for,
+    clamped. Absent means `EARLIER_PAGE_STEPS`: the size used to be the server's
+    alone, so a client that predates the setting asks for nothing and must keep
+    getting the page it always got. */
+export function earlierPageSteps(steps: number | undefined): number {
+  if (typeof steps !== "number" || !Number.isFinite(steps)) return EARLIER_PAGE_STEPS;
+  return Math.min(MAX_EARLIER_PAGE_STEPS, Math.max(1, Math.floor(steps)));
+}
 
 /** Preview-card excerpts on `TurnTick`: the prompt that opened the turn, and
     the start of the answer it drew. Truncation, not content — the full
@@ -1120,6 +1279,12 @@ export type ThreadEvent =
           statement of what this session can be asked to do, this time in
           service of rewind rather than pause. */
       canRewind?: boolean;
+      /** Which door this process's model calls come through
+          (`model-calls/index.ts` `chooseDoor`): the panel says "from its
+          telemetry" / "from the gateway" / "from its saved files" / "the
+          provider's bill per step" from it. Same carrier and rules as
+          `canPause`; absent on an event journaled before it existed. */
+      callsVia?: CallsVia;
     }
   /** A mode, model or reasoning-effort change that landed while a turn was
       running (`AcpBridge.setMode`/`setConfigOption` with a prompt in flight).

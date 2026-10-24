@@ -13,7 +13,7 @@ import { libraryRoutes } from "../src/routes/library.js";
 import { profileRoutes } from "../src/routes/profiles.js";
 import { taskRoutes } from "../src/routes/tasks.js";
 import { harnessRoutes } from "../src/routes/harness.js";
-import type { WorkflowRunner } from "../src/workflows.js";
+import type { WorkflowEngine } from "../src/workflows/engine.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -40,7 +40,7 @@ profileRoutes(app, { sessions: {} as never });
 taskRoutes(app, { sessions: {} as never, tasks: {} as never });
 const runner = {
   resolveCaller: (key: string, sessionId: string) => (key === KEY && sessionId === SESSION ? { id: SESSION } : null),
-} as unknown as WorkflowRunner;
+} as unknown as WorkflowEngine;
 harnessRoutes(app, { runner });
 // Stands in for POST /api/files: echoes the raw body and the headers that crossed.
 app.post("/api/echo-upload", async (c) =>

@@ -1,8 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type Effort = "minimal" | "low" | "medium" | "high" | "xhigh";
-export const EFFORTS: Effort[] = ["minimal", "low", "medium", "high", "xhigh"];
+/* The AI SDK's own reasoning levels, all of them: a profile's catalog offers
+   `none` and `max`, and a value missing here was read as "no effort". */
+export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export const EFFORTS: Effort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** One row of `DAEDALUS_AGENT_MODEL_ROLES`: a free-form helper-model tag a
     subagent may be spawned on. `id` is what assignments point at, `label` is
@@ -15,9 +17,15 @@ export interface ModelRole {
   model: string;
 }
 
+export const PROTOCOLS = ["openai", "anthropic"] as const;
+export type Protocol = (typeof PROTOCOLS)[number];
+
 export interface AgentEnv {
   apiKey: string | null;
   baseUrl: string | null;
+  /** The wire protocol the endpoint speaks (`DAEDALUS_AGENT_PROTOCOL`): chat
+      completions or Anthropic messages. Unset or unknown means OpenAI. */
+  protocol: Protocol;
   model: string;
   smallModel: string;
   effort: Effort | null;
@@ -152,6 +160,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
   return {
     apiKey: str(env.DAEDALUS_AGENT_API_KEY),
     baseUrl: str(env.DAEDALUS_AGENT_BASE_URL),
+    protocol: PROTOCOLS.find((p) => p === str(env.DAEDALUS_AGENT_PROTOCOL)) ?? "openai",
     model,
     smallModel: str(env.DAEDALUS_AGENT_SMALL_MODEL) ?? model,
     effort: EFFORTS.includes(effortRaw as Effort) ? (effortRaw as Effort) : null,

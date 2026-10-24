@@ -18,11 +18,13 @@ export const MODES: acp.SessionMode[] = [
 ];
 
 const EFFORT_NAMES: Record<Effort, string> = {
+  none: "None",
   minimal: "Minimal",
   low: "Low",
   medium: "Medium",
   high: "High",
   xhigh: "Extra high",
+  max: "Max",
 };
 
 export interface SteerEntry {

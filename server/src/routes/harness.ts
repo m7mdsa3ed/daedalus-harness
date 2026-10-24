@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import { getConfig } from "../config.js";
 import { threadActor } from "../task-threads.js";
-import type { WorkflowRunner } from "../workflows.js";
+import type { WorkflowEngine } from "../workflows/engine.js";
 
 /**
  * The loopback the `harness` MCP server drives — outside `/api`, so outside the
@@ -15,7 +15,7 @@ import type { WorkflowRunner } from "../workflows.js";
  * a browser route fires is the same code, because it *is* the same route. The
  * child (`harness-mcp.ts`) only names which paths its tools reach.
  */
-export function harnessRoutes(app: Hono, deps: { runner: WorkflowRunner }): void {
+export function harnessRoutes(app: Hono, deps: { runner: WorkflowEngine }): void {
   const { runner } = deps;
   const marker = "/api/";
 

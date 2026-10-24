@@ -18,6 +18,7 @@ import type { ModelFactory } from "../src/provider.js";
 import type { ToolRuntime } from "../src/tools/context.js";
 import { globToRegExp, makeGrepTool } from "../src/tools/search.js";
 import {
+  connectPair,
   initialize,
   makeClient,
   promptOf,
@@ -109,7 +110,7 @@ function mcpServer(pidFile: string): acp.McpServer {
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", {
       cwd,
@@ -168,7 +169,7 @@ function mcpServer(pidFile: string): acp.McpServer {
   });
   const { app: client, harness } = makeClient();
   let sessionId = "";
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     ({ sessionId } = await ctx.request("session/new", { cwd: freshCwd(), mcpServers: [] }));
     await ctx.request("session/prompt", { sessionId, prompt: promptOf("first") });
@@ -228,7 +229,7 @@ function mcpServer(pidFile: string): acp.McpServer {
   });
   const { app: client, harness } = makeClient();
   let sessionId = "";
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     ({ sessionId } = await ctx.request("session/new", { cwd: freshCwd(), mcpServers: [] }));
     await ctx.request("session/prompt", { sessionId, prompt: promptOf("first") });
@@ -289,7 +290,7 @@ function mcpServer(pidFile: string): acp.McpServer {
   });
   const { app: client, harness } = makeClient();
   let sessionId = "";
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     ({ sessionId } = await ctx.request("session/new", { cwd: freshCwd(), mcpServers: [] }));
     await ctx.request("session/prompt", { sessionId, prompt: promptOf("first") });
@@ -329,7 +330,7 @@ function mcpServer(pidFile: string): acp.McpServer {
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd: freshCwd(), mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -358,7 +359,7 @@ function mcpServer(pidFile: string): acp.McpServer {
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd: freshCwd(), mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -477,7 +478,7 @@ function mcpServer(pidFile: string): acp.McpServer {
   });
   const { app: client, harness } = makeClient();
   let sessionId = "";
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     ({ sessionId } = await ctx.request("session/new", { cwd: freshCwd(), mcpServers: [] }));
     const response = await ctx.request("session/prompt", { sessionId, prompt: promptOf("long work") });
@@ -518,7 +519,7 @@ function mcpServer(pidFile: string): acp.McpServer {
   const prompts: unknown[][] = [];
   const agent = buildAgentApp({ env, makeModel: recordingModel([textScript("Noted. ")], prompts) });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", {
       cwd: freshCwd(),

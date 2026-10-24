@@ -8,6 +8,7 @@ import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
 import { buildAgentApp } from "../src/app.js";
 import { SessionStore } from "../src/persistence.js";
 import {
+  connectPair,
   initialize,
   makeClient,
   promptOf,
@@ -50,7 +51,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     makeModel: scriptedModel([textScript("Hello there, world. ", { input: 10, output: 5 })]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     const response = await ctx.request("session/prompt", {
@@ -82,7 +83,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -125,7 +126,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
       }),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     const first = ctx.request("session/prompt", { sessionId, prompt: promptOf("start") });
@@ -155,7 +156,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -178,7 +179,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -215,7 +216,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -248,7 +249,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/prompt", { sessionId, prompt: promptOf("first") });
@@ -283,7 +284,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     }),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd: twoModelCwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -360,7 +361,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     const turn = ctx.request("session/prompt", { sessionId, prompt: promptOf("go") }) as Promise<acp.PromptResponse>;
@@ -393,7 +394,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     const response = await ctx.request("session/prompt", { sessionId, prompt: promptOf("go") });
@@ -426,7 +427,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     const turn = ctx.request("session/prompt", { sessionId, prompt: promptOf("go") }) as Promise<acp.PromptResponse>;
@@ -464,7 +465,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     const turn = ctx.request("session/prompt", { sessionId, prompt: promptOf("go") }) as Promise<acp.PromptResponse>;
@@ -508,7 +509,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     const turn = ctx.request("session/prompt", { sessionId, prompt: promptOf("go") }) as Promise<acp.PromptResponse>;
@@ -534,7 +535,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
   });
   const agent = buildAgentApp({ env: testEnv(), makeModel: () => model });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     const init = await initialize(ctx);
     assert.equal(
       init.agentCapabilities?.promptCapabilities?.image,
@@ -578,7 +579,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -610,7 +611,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     const turn = ctx.request("session/prompt", { sessionId, prompt: promptOf("boom") }) as Promise<acp.PromptResponse>;
@@ -641,7 +642,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     ]),
   });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await assert.rejects(
@@ -682,7 +683,7 @@ console.log("turn.test.ts passed");
       }),
   });
   const { app: client } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
@@ -724,7 +725,7 @@ console.log("turn.test.ts passed");
     makeModel: scriptedModel([twoCalls, toolCallScript("bash", { command: "true" }, { id: "c" }), textScript("done ")]),
   });
   const { app: client, harness } = makeClient();
-  await client.connectWith(agent, async (ctx) => {
+  await connectPair(agent, client, async (ctx) => {
     await initialize(ctx);
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });

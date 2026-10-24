@@ -18,6 +18,7 @@ export function testEnv(overrides: Partial<AgentEnv> = {}): AgentEnv {
   return {
     apiKey: "test-key",
     baseUrl: null,
+    protocol: "openai",
     model: "test-model",
     smallModel: "test-small",
     effort: null,
@@ -221,12 +222,13 @@ export function makeClient(options: ClientOptions = {}): { app: acp.ClientApp; h
   return { app, harness };
 }
 
-const RFD_KINDS = new Set(["subagent_spawned", "subagent_state_update", "_daedalus/subagent_usage"]);
+const RFD_KINDS = new Set(["subagent_spawned", "subagent_state_update", "_daedalus/subagent_usage", "_daedalus/model_call"]);
 
 /* Connects agent and client over message streams with the same re-addressing
    the server's `agentStream` does: the SDK's SessionUpdateRouter validates
    every `session/update` against its closed union before any handler, so the
-   RFD kinds have to travel under a private method name. Direct `connectWith`
+   RFD kinds and the harness's own (`_daedalus/model_call`, one per model call
+   on every turn) have to travel under a private method name. Direct `connectWith`
    composition offers no seam for that — this is the seam. */
 export async function connectPair(
   agent: acp.AgentApp,

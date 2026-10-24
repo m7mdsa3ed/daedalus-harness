@@ -397,7 +397,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
             >
               <RefreshCwIcon className={cn(refreshing && "animate-spin")} />
             </Button>
-            <ViewMenu sort={sort} filter={filter} within={within} />
+            <ViewMenu sort={sort} filter={filter} within={within} subs={options.sidebarSubThreads} compact={options.sidebarCompact} />
           </div>
         </SidebarGroupLabel>
         {searching && (
@@ -446,7 +446,9 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
                   ? "Nothing is waiting on you."
                   : filter === "unread"
                     ? "Nothing unread."
-                    : "No thread was active in that time."
+                    : filter === "hidden"
+                      ? "No hidden threads."
+                      : "No thread was active in that time."
               : scopedProjects.length > 0
                 ? "No threads yet — start one from a project below."
                 : "No threads yet."}

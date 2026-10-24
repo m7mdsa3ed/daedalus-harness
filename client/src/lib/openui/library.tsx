@@ -76,7 +76,7 @@ import { InteractiveFlowchart } from "@/lib/openui/interactive-flowchart"
 import { usePlacePhoto, type PlacePhoto } from "@/lib/openui/place-photo"
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
-import { BODY, Box, BoxHeader, chartColor, FLOW, LABEL, META, PAD, PAD_ROW, SurfaceContext, TITLE, TONE_BAR, TONE_DOT, WELL_PAD } from "@/lib/openui/kit"
+import { BODY, Box, BoxHeader, chartColor, FLOW, LABEL, META, PAD, PAD_ROW, SurfaceContext, TITLE, TONE_BAR, TONE_DOT, ToneChip, WELL_PAD } from "@/lib/openui/kit"
 import { UI_GROUPS } from "@/lib/openui/groups"
 import { FileTree } from "@/lib/openui/components/FileTree"
 import { Button, Checkbox, Form, FormControl, Input, Select, SelectItem, Slider, Textarea } from "@/lib/openui/components/interactive"
@@ -86,6 +86,12 @@ import { LinkAnchor, linkTarget, plainText, RichText } from "@/lib/openui/rich-t
 import { Sequence } from "@/lib/openui/components/Sequence"
 import { Steps } from "@/lib/openui/components/Steps"
 import { Terminal } from "@/lib/openui/components/Terminal"
+import { Bars } from "@/lib/openui/components/Bars"
+import { ChangeSet } from "@/lib/openui/components/ChangeSet"
+import { Checks } from "@/lib/openui/components/Checks"
+import { Findings } from "@/lib/openui/components/Findings"
+import { Matrix } from "@/lib/openui/components/Matrix"
+import { Verdict } from "@/lib/openui/components/Verdict"
 
 /* ── The system ── (lives in kit.tsx) */
 
@@ -578,19 +584,6 @@ function GeneratedImage({ src, alt, caption }: { src: string; alt: string; capti
         )}
       </figure>
     </Box>
-  )
-}
-
-/** The one state chip: an outline whose tone is a dot and never a fill, so a
-    column of six statuses reads as a column and not as six colours. `Badges`
-    and a `Rows` row wear the same chip — a status means the same thing in
-    both. */
-function ToneChip({ text, tone }: { text: string; tone?: keyof typeof TONE_DOT }) {
-  return (
-    <Badge variant="outline" className="h-auto max-w-full gap-1.5 whitespace-normal">
-      <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[tone ?? "neutral"])} />
-      <span className="min-w-0 break-words">{text}</span>
-    </Badge>
   )
 }
 
@@ -1952,7 +1945,10 @@ const GROUP_NOTES: Record<string, string[]> = {
     "- Tabs for alternatives the reader picks between (per OS, before/after); Accordion for FAQs; Details for one optional fold.",
   ],
   text: [
+    "- Verdict opens an answer that has a conclusion: `Verdict(\"Safe to merge\", \"success\", \"One sentence of why.\", [\"3 files\", \"tests pass\"])`. Headline first, then tone (neutral, info, success, warn, error), then one supporting sentence and up to four short facts. Use it at most once, as the first thing in the view; never for a result that is not a conclusion.",
     "- Write each table row as its own array of strings, in the SAME order as `columns`.",
+    "- Choose the grid by what a cell holds: Table for values and words, Matrix when most cells are a yes/no/partial answer, Rows when two cells are paragraphs.",
+    "- Matrix: every cell after the first column opens with `yes`, `no`, `partial` or `n/a` and may follow it with a few words (`\"yes, per request\"`, `\"no\"`, `\"partial - whole prompt only\"`). The first column names the row. Never fill a Matrix with free prose; that is a Table.",
     "- A short answer is prose; reach for these when the answer is a structure.",
     "- Compare for weighing options, Badges for short statuses, People for who is involved.",
     "- A link is the words and the address they open: `Link` for one, `Links` for several. Draw the link instead of pasting a URL into a sentence, and never write an address you were not given.",
@@ -1979,6 +1975,7 @@ const GROUP_NOTES: Record<string, string[]> = {
     "- Timeline for ordered steps or history, Plan for a proposed or in-progress task checklist.",
     "- Steps for instructions the reader follows in order (install, setup, a how-to); Timeline for events over time, Plan for a task checklist with status.",
     "- Each step needs a short imperative title; put the command or snippet in `code` (raw, no fences or prompt characters) and the why in `text`.",
+    "- Checks is the report after something ran or was verified (tests, a build, a lint, a health probe, a requirements list): each item a name, a state of pass, fail, warn, skip or running, and a detail only when it adds something. Plan is work still to do; Checks is what happened. Never mark a check pass that was not run.",
   ],
   dev: [
     "- Diff for a before/after of text, Keys for shortcuts, Code for a snippet.",
@@ -1986,6 +1983,8 @@ const GROUP_NOTES: Record<string, string[]> = {
     "- Give only files, one object per file; set change to added/modified/deleted only when the answer is about a change, and keep note to a few words about what the file is or what changed.",
     "- Use Terminal when the answer is a shell session (a command and what it printed); use Code for a plain snippet or log with no command.",
     "- Terminal command is the bare line without a leading \"$ \" (the prompt is drawn for you); output is the verbatim stdout/stderr, never summarised or invented.",
+    "- ChangeSet is the files a change touched, flat and in reading order: `{path, added, removed, status, note}` with the real line counts from `git diff --numstat` (omit `added`/`removed` when you do not have them, never guess), status added, modified, deleted or renamed, and a note of a few words on what changed in that file. Use FileTree for a layout, ChangeSet for a diff, a commit or a pull request.",
+    "- Findings is a review's output, one item per problem: `{title, severity, location, text, fix}` with severity critical, high, medium, low or info, location as `path/to/file.ext:42`, the explanation in `text` and the correction in `fix`. Write them in any order, they draw worst first. Only report what you can point at; no findings is a sentence of prose, not an empty Findings.",
     "- Terminal exitCode is the number the command returned (0 = success, shown with a red badge otherwise); cwd is a path label. Omit both rather than guessing. Nothing is executed.",
   ],
   diagrams: [
@@ -2001,6 +2000,7 @@ const GROUP_NOTES: Record<string, string[]> = {
   ],
   numbers: [
     "- `values` must be the same length as `labels` for Chart; Heatmap rows should match the column count.",
+    "- Bars ranks values: one bar per row scaled to the largest, `{label, value, hint, tone}` with `unit` (\"ms\", \" tokens\", \"%\") appended to every value. Use it for hits per bug, time per step, tokens per tool; use Chart for a trend over shared labels and Breakdown for the parts of one total. Sort the items largest first yourself.",
     "- Prefer StatRow for a handful of figures, Sparkline for a compact metric trend, and Chart for a full trend or comparison.",
     "- Breakdown is for parts of one total: a set of counts that add up (the states of a queue, where the budget went). Give it the tones the parts deserve and let it say the shares; do not repeat the same counts in a table beside it.",
     "- Heatmap shows values across two dimensions; Funnel shows stage retention; Waterfall shows additive increases/decreases and explicit totals.",
@@ -2066,6 +2066,12 @@ export const openuiLibrary = createLibrary({
     Terminal,
     Sequence,
     Quadrant,
+    Verdict,
+    Matrix,
+    Checks,
+    ChangeSet,
+    Findings,
+    Bars,
     Button,
     Form,
     FormControl,

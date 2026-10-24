@@ -46,6 +46,30 @@ export const vendorMeta = (
 export const stepIdOf = (meta: unknown): string | undefined =>
   str(vendorMeta(meta, "daedalus")?.stepId) ?? undefined
 
+/** Where the wait before a model request went, said on its first call
+    (`_meta.daedalus.lead`, ours): the agent's own clock for the causes it
+    booked, the time to the model's first output and how long it wrote before
+    the call opened. Absent for a runtime that does not meter, and for a call
+    that was not its request's first. */
+export interface StepLead {
+  ttftMs?: number
+  writeMs?: number
+  heldMs?: number
+  compactMs?: number
+  retryMs?: number
+}
+const LEAD_KEYS = ["ttftMs", "writeMs", "heldMs", "compactMs", "retryMs"] as const
+export const stepLeadOf = (meta: unknown): StepLead | undefined => {
+  const raw = vendorMeta(meta, "daedalus")?.lead
+  if (!raw || typeof raw !== "object") return undefined
+  const lead: StepLead = {}
+  for (const key of LEAD_KEYS) {
+    const ms = (raw as Record<string, unknown>)[key]
+    if (typeof ms === "number" && Number.isFinite(ms) && ms >= 0) lead[key] = ms
+  }
+  return Object.keys(lead).length > 0 ? lead : undefined
+}
+
 /** `<name>…</name>` out of an XML-ish body — task notifications and OpenCode's
     task wrapper are both read with it. */
 export const tagText = (body: string, name: string): string | null => {

@@ -16,7 +16,17 @@ export interface GraphStep {
   /** The step's group id once spawned; a pending step has none to open. */
   id: string | null
   name: string
-  state: "running" | "completed" | "failed" | "cancelled" | "disconnected" | "pending"
+  state:
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "disconnected"
+    | "pending"
+    | "retrying"
+    | "awaiting_approval"
+    | "sleeping"
+    | "waiting_signal"
   /** When the step started — the running node's clock counts from it. */
   startedAt?: number
   /** A running step's latest calls, oldest first. */
@@ -34,6 +44,19 @@ const TONE = {
   cancelled: "failed",
   disconnected: "failed",
   pending: "pending",
+  /* The flowchart knows four tones. A step parked on a person, a clock or a
+     signal is live work, so it reads as running; its hint says which. */
+  retrying: "running",
+  awaiting_approval: "running",
+  sleeping: "running",
+  waiting_signal: "running",
+} as const
+
+const PARKED_HINT = {
+  retrying: "retrying",
+  awaiting_approval: "awaiting approval",
+  sleeping: "sleeping",
+  waiting_signal: "waiting for signal",
 } as const
 
 export function WorkflowGraph({
@@ -51,7 +74,7 @@ export function WorkflowGraph({
   const nodes: FlowchartNode[] = []
   const edges: FlowchartEdge[] = []
   const steps = phases.flatMap((phase) => phase.steps)
-  const end = steps.some((step) => step.state === "running" || step.state === "pending")
+  const end = steps.some((step) => TONE[step.state] === "running" || step.state === "pending")
     ? "pending"
     : steps.some((step) => step.state === "failed")
       ? "failed"
@@ -70,7 +93,9 @@ export function WorkflowGraph({
             ? `running ${formatElapsed(Math.max(0, now - step.startedAt))}`
             : step.state === "completed"
               ? "done"
-              : step.state,
+              : step.state in PARKED_HINT
+                ? PARKED_HINT[step.state as keyof typeof PARKED_HINT]
+                : step.state,
           step.tokens,
         ]
           .filter(Boolean)
@@ -78,7 +103,7 @@ export function WorkflowGraph({
         tone: TONE[step.state],
         shape: "box",
         updates: step.state === "running" ? step.updates : undefined,
-        result: step.state === "running" ? undefined : step.result,
+        result: TONE[step.state] === "running" ? undefined : step.result,
       })
       return id
     })

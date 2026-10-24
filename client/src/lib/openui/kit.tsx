@@ -5,6 +5,7 @@
    library (which imports it back). One `SurfaceContext` exists, defined here
    once, so a `StatRow`'s cell and a `Box` read the same instance. */
 import { createContext, useContext, type CSSProperties, type ReactNode } from "react"
+import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
@@ -62,6 +63,9 @@ export function BoxHeader({ title, meta }: { title: ReactNode; meta?: ReactNode 
   )
 }
 
+/** The five tones every component that has a state spells the same way. */
+export const TONES = ["neutral", "info", "success", "warn", "error"] as const
+
 /** What a chip's tone dot is filled with: the app's status tokens. */
 export const TONE_DOT = {
   neutral: "bg-muted-foreground",
@@ -84,3 +88,16 @@ export const TONE_BAR = {
 
 /** Colours are the app's `--chart-*` tokens. */
 export const chartColor = (index: number) => `var(--chart-${(index % 5) + 1})`
+
+/** The one state chip: an outline whose tone is a dot and never a fill, so a
+    column of six statuses reads as a column and not as six colours. `Badges`,
+    a `Rows` row and a finding's severity wear the same chip — a status means
+    the same thing in all of them. */
+export function ToneChip({ text, tone }: { text: string; tone?: keyof typeof TONE_DOT }) {
+  return (
+    <Badge variant="outline" className="h-auto max-w-full gap-1.5 whitespace-normal">
+      <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[tone ?? "neutral"])} />
+      <span className="min-w-0 break-words">{text}</span>
+    </Badge>
+  )
+}

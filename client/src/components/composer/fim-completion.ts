@@ -3,7 +3,8 @@
  * The composer's one ambient call (`docs/plans/fim-composer.md`): after a pause,
  * the lane's completion model is asked to fill the gap at the caret and the
  * answer is drawn as ghost text — never written into `text`, because `text` is
- * the exact message sent. Tab puts it in as an ordinary edit; Escape drops it;
+ * the exact message sent. Tab puts it in as an ordinary edit (on a touch screen,
+ * where there is no Tab, a tap on the ghost or the toolbar's button does); Escape drops it;
  * any keystroke retires it, since it was drawn for different text.
  *
  * Two shapes, one hook. A `!` line is a shell command: prefix-only, one line,
@@ -219,15 +220,23 @@ export function useFimCompletion({
        which is memoised on the ghost alone. */
   }, [text, enabled, ready, caret, endpoint, context])
 
+  /* The one way a suggestion goes in, whichever gesture asked: Tab on a
+     keyboard, a tap on the ghost or on the toolbar's button on a touch screen
+     (a soft keyboard has no Tab). */
+  const accept = React.useCallback((): boolean => {
+    if (!ghost) return false
+    afterAccept.current = insert(ghost.text, ghost.at)
+    setGhost(null)
+    return true
+  }, [ghost, insert])
+
   const onKeyDown = React.useCallback(
     (event: React.KeyboardEvent<HTMLElement>): boolean => {
       if (!ghost) return false
       /* Tab, and only the unmodified one: Shift-Tab is ProseMirror's own. */
       if (event.key === "Tab" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
         event.preventDefault()
-        afterAccept.current = insert(ghost.text, ghost.at)
-        setGhost(null)
-        return true
+        return accept()
       }
       /* Escape drops the suggestion and nothing else: when no ghost is drawn
          this consumer declines, so Escape still means whatever it meant. */
@@ -238,8 +247,8 @@ export function useFimCompletion({
       }
       return false
     },
-    [ghost, insert]
+    [ghost, accept]
   )
 
-  return { ghost, status, pending, onKeyDown }
+  return { ghost, status, pending, accept, onKeyDown }
 }

@@ -69,4 +69,10 @@ rows = layoutBatches([{ start: 0, end: 900 }, { start: 5 }, { start: 8 }], timin
 assert.deepEqual(rows.map((r) => r.running), [undefined, undefined, 2])
 rows = layoutBatches([{ start: 0, end: 900 }, { start: 5, end: 300 }], timing)
 assert.ok(rows.every((r) => r.running === undefined))
+// The wait carries what the next batch's first call said it was made of.
+rows = layoutBatches([{ start: 0, end: 10 }, { start: 5000, end: 5100, lead: { ttftMs: 4000 } }, { start: 5100, end: 5200, lead: { ttftMs: 1 } }], timing)
+assert.deepEqual(rows[0].gapLead, { ttftMs: 4000 })
+assert.equal(rows[1].gapLead, undefined) // a wait too short to say carries nothing
+rows = layoutBatches([{ start: 0, end: 10 }, { start: 5000, end: 5100 }], timing)
+assert.equal(rows[0].gapLead, undefined) // a runtime that does not say
 console.log("tool-batches: ok")

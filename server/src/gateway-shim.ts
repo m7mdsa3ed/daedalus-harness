@@ -149,6 +149,61 @@ export function setGatewaySessionResolver(resolver: SessionResolver): void {
   resolveSession = resolver;
 }
 
+/* ── The model-call tap ──
+ *
+ * The `proxy` door (model-calls/sources/proxy.ts) sees a thread's provider
+ * requests here and nowhere else. The shim hands over what it forwarded — the
+ * request body as sent, the reply as text — once the reply has **ended**, and
+ * knows nothing about what either contains: the dialect, the usage reader and
+ * the counting are the door's, after the tap. Only a thread the tap `wants`
+ * pays for it: its request body is read into memory (it used to stream
+ * through) and its reply is tee'd and collected while it is piped; every other
+ * thread is forwarded exactly as before.
+ */
+export interface GatewayTap {
+  /** Is this thread's door the shim? Decides whether a request is copied at all. */
+  wants(sessionId: string): boolean;
+  /** A forwarded reply has ended. `response.body` is the text the child read;
+      `timing.ttftMs` is to its first byte, `ms` to its end, both from `at`. */
+  ended(
+    sessionId: string,
+    requestBody: string,
+    response: { contentType: string; body: string },
+    timing: { at: number; ms: number; ttftMs?: number },
+  ): void;
+}
+
+let tap: GatewayTap | null = null;
+
+export function setGatewayTap(next: GatewayTap | null): void {
+  tap = next;
+}
+
+/** Drain a tee'd reply to text, timing its first byte. A reply that errors or
+    is cut mid-stream yields nothing — a record needs the usage at its end. */
+/* A copy of the reply taken in passing: every chunk goes on to the child
+   unchanged, and `done` is told the whole text once the stream has ended. A
+   pass-through transform rather than a `tee()`, because a tee cancels its
+   source only when *both* branches cancel — so a child that aborted (Escape
+   mid-stream) no longer stopped the upstream generation, which kept being
+   written and billed into a copy nobody would read. A cancelled reply is
+   handed to nobody: it never ended. */
+function copyReply(at: number, done: (reply: { text: string; ttftMs?: number }) => void): TransformStream<Uint8Array, Uint8Array> {
+  const decoder = new TextDecoder();
+  let text = "";
+  let ttftMs: number | undefined;
+  return new TransformStream({
+    transform(chunk, controller) {
+      if (ttftMs === undefined) ttftMs = Date.now() - at;
+      text += decoder.decode(chunk, { stream: true });
+      controller.enqueue(chunk);
+    },
+    flush() {
+      done({ text: text + decoder.decode(), ttftMs });
+    },
+  });
+}
+
 /** Called once at boot with the port this server listens on. Until then
     `gatewayUrlFor` hands out nothing and a spawn goes straight to the gateway
     — which is also what a test that never boots a server gets. */
@@ -606,12 +661,15 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
      and a multi-megabyte prompt still costs the shim nothing. */
   const isResponses = /\/responses\/?$/.test(parsed.rest);
   const rewriting = thread?.rewriteModel === true && (isResponses || /\/messages\/?$/.test(parsed.rest));
+  /* The third reason, and the only one that is not a repair: a thread whose
+     model-call door is this shim gets its request copied for the tap. */
+  const tapped = parsed.kind === "s" && tap?.wants(parsed.id) ? tap : null;
   let body: BodyInit | null = req.body;
   let namespaces: string[] = [];
   let renames: Record<string, RenamedTool> = {};
   if (
     req.method === "POST" &&
-    (isResponses || rewriting) &&
+    (isResponses || rewriting || tapped) &&
     /application\/json/i.test(req.headers.get("content-type") ?? "")
   ) {
     const text = await req.text();
@@ -645,6 +703,7 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   }
 
   let upstream: Response;
+  const at = Date.now();
   /* The deadline is disarmed the moment fetch resolves — once headers are in,
      the body is the model streaming and takes as long as it takes. */
   const connect = new AbortController();
@@ -688,23 +747,45 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
      `text/event-stream` and is piped as it arrives. Errors keep their status
      and their body — the SDK reads `error.message` from either shape. */
   const contentType = upstream.headers.get("content-type") ?? "";
+  const requestText = typeof body === "string" ? body : "";
   if (upstream.ok && /\/messages\/?$/.test(parsed.rest) && /application\/json/i.test(contentType)) {
     const text = await upstream.text();
     const { body: normalized, rewritten } = normalizeMessagesResponse(text);
     if (rewritten) console.log(`[gateway-shim] rewrote an OpenAI-shaped reply from ${baseUrl} into an Anthropic message`);
+    /* The tap reads what the child reads — the repaired shape, so one reader
+       serves this reply and the streamed ones. */
+    if (tapped) {
+      const ms = Date.now() - at;
+      setImmediate(() => tapped.ended(parsed.id, requestText, { contentType, body: normalized }, { at, ms }));
+    }
     return new Response(normalized, { status: upstream.status, headers: out });
   }
-  if (upstream.ok && upstream.body && /text\/event-stream/i.test(contentType)) {
-    let stream: ReadableStream<Uint8Array> = upstream.body;
+  /* A tapped reply is copied in passing (`copyReply`): the bytes go to the
+     child exactly as they arrive, a cancel reaches upstream, and the tap is
+     told after the end, on the next tick — nothing is counted on this
+     request's path (decision 9).
+     ponytail: the copy holds one reply's text until its end; a turn is a few
+     hundred KB of SSE at most. */
+  let stream: ReadableStream<Uint8Array> | null = upstream.body;
+  if (tapped && upstream.ok && stream) {
+    stream = stream.pipeThrough(
+      copyReply(at, (reply) =>
+        setImmediate(() =>
+          tapped.ended(parsed.id, requestText, { contentType, body: reply.text }, { at, ms: Date.now() - at, ttftMs: reply.ttftMs }),
+        ),
+      ),
+    );
+  }
+  if (upstream.ok && stream && /text\/event-stream/i.test(contentType)) {
     if (namespaces.length) stream = stream.pipeThrough(renamespaceSse(namespaces, renames));
     return new Response(stream, { status: upstream.status, headers: out });
   }
-  if (namespaces.length && upstream.ok && upstream.body) {
+  if (namespaces.length && upstream.ok && stream) {
     if (/text\/event-stream/i.test(contentType)) {
-      return new Response(upstream.body.pipeThrough(renamespaceSse(namespaces, renames)), { status: upstream.status, headers: out });
+      return new Response(stream.pipeThrough(renamespaceSse(namespaces, renames)), { status: upstream.status, headers: out });
     }
     if (/application\/json/i.test(contentType)) {
-      const text = await upstream.text();
+      const text = await new Response(stream).text();
       try {
         return new Response(JSON.stringify(renamespaceCalls(JSON.parse(text), namespaces, renames)), { status: upstream.status, headers: out });
       } catch {
@@ -712,5 +793,5 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
       }
     }
   }
-  return new Response(upstream.body, { status: upstream.status, headers: out });
+  return new Response(stream, { status: upstream.status, headers: out });
 }

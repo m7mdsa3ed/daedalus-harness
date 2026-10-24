@@ -8,21 +8,25 @@ import * as React from "react"
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react"
 
 import { Prose } from "@/components/prose"
-import { UserPastes, UserTasks, collapsePastes } from "@/components/thread-items/user-chips"
+import { UserMentions, UserPastes, UserTasks, collapsePastes } from "@/components/thread-items/user-chips"
 import { useFollowRelease } from "@/components/thread-view/dormant"
-import { splitTaskContext } from "@/lib/task-mentions"
+import { splitSentContext } from "@/lib/mentions/context"
 import { cn } from "cn"
 
 export function UserMessageText({ text }: { text: string }) {
-  const { collapsed, tasks } = React.useMemo(() => {
-    const split = splitTaskContext(text)
-    return { collapsed: collapsePastes(split.text), tasks: split.tasks }
+  /* A `<tasks>` and a `<context>` block may both trail the message, in either
+     order; both are folded out before the pastes are. */
+  const { collapsed, tasks, mentions } = React.useMemo(() => {
+    const split = splitSentContext(text)
+    return { collapsed: collapsePastes(split.text), tasks: split.tasks, mentions: split.mentions }
   }, [text])
   return (
     <UserTasks tasks={tasks}>
-      <UserPastes pastes={collapsed.pastes}>
-        <Prose text={collapsed.text} mentions />
-      </UserPastes>
+      <UserMentions mentions={mentions}>
+        <UserPastes pastes={collapsed.pastes}>
+          <Prose text={collapsed.text} mentions />
+        </UserPastes>
+      </UserMentions>
     </UserTasks>
   )
 }
