@@ -7,10 +7,10 @@ import { ArrowDownIcon } from "lucide-react"
  * the primitive's own at-the-end state, which is not the pin the composer folds
  * on (`useFollowStream`), so the two disagreed. This one is shown while the
  * reader is off the tail (`pinned` false) — the same fact the composer folds on
- * — and it has two places, both on the composer's right edge: beside the pill
- * while the box is folded away (`data-composer-away`, read through the thread's
- * group), and centred above the card once the reader has brought it back (a click on
- * the pill, a fill) and is still not at the end. Showing waits 300ms (`delay-300`; hiding is immediate), so brushing past the
+ * — and it has two places: centred above the card, and on the composer's right
+ * edge beside the pill while a voice call has the box away
+ * (`data-composer-away`, read through the thread's group). Showing waits 300ms
+ * (`delay-300`; hiding is immediate), so brushing past the
  * edge while scrolling never draws it. Hidden, it is `invisible`: out
  * of the tab order and the accessibility tree, not just transparent.
  *

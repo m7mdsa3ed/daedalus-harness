@@ -28,6 +28,7 @@
    unsent, editable, caret at the end. Nothing is run or sent by the click. */
 import { LABEL } from "@/components/tool-parts"
 import type { SuggestGroup } from "@/lib/suggestions"
+import { dominantTextDir } from "@/lib/text-direction"
 import { cn } from "@/lib/utils"
 
 /** The card's own ground: the registry card's ring over `bg-card`, the same
@@ -83,6 +84,7 @@ export function SuggestionGroup({
               )}
             >
               <span
+                dir={dominantTextDir(text)}
                 className={cn(
                   "min-w-0 flex-1 text-muted-foreground transition-colors group-hover/suggestion:text-foreground group-focus-visible/suggestion:text-foreground",
                   kind.mono ? "truncate font-mono text-xs leading-5" : "line-clamp-2 text-sm leading-5"

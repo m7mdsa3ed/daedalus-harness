@@ -4,6 +4,7 @@ import { CSS } from "@dnd-kit/utilities"
 import { ChevronDown, CornerDownRight, ListChecks, ListTree } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { dominantTextDir } from "@/lib/text-direction"
 import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -266,14 +267,15 @@ export function TaskRow({
             bubbles to the row, which is what opens the task. */}
         <button
           type="button"
+          dir={dominantTextDir(task.title)}
           className={cn(
-            "block max-w-full truncate text-left font-medium focus-visible:underline focus-visible:outline-none",
+            "block max-w-full truncate text-start font-medium focus-visible:underline focus-visible:outline-none",
             done && "text-muted-foreground line-through",
           )}
         >
           {task.title}
         </button>
-        <p className="truncate text-xs text-muted-foreground @panel-sm:hidden">{narrowMeta}</p>
+        <p dir={dominantTextDir(narrowMeta)} className="truncate text-start text-xs text-muted-foreground @panel-sm:hidden">{narrowMeta}</p>
       </div>
       <div className="flex items-center gap-3">
         {task.labels.length > 0 && (

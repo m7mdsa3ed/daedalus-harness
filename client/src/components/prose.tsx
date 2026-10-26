@@ -16,6 +16,7 @@ import Markdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { splitBlocks } from "@/lib/markdown-blocks"
 import { rehypeHighlight } from "@/lib/highlight"
+import { HEADING_ID_PREFIX, rehypeHeadingIds } from "@/lib/heading-ids"
 import { fencedBlock } from "@/lib/pretty"
 import { PrettyButton, usePretty } from "@/components/ui/pretty-button"
 import { TAIL_WORDS, needsTail, rehypeStreamWords, type StreamEffect } from "@/lib/stream-words"
@@ -284,6 +285,58 @@ const MarkdownBlock = React.memo(function MarkdownBlock({ text, rehype }: { text
     </Markdown>
   )
 })
+
+/* ── A markdown file, read as a document ──
+   The Preview panel's markdown is the same pass as `Prose`, with two things a
+   document has and a chat turn does not: headings carry GitHub's ids
+   (`lib/heading-ids`), and a `#slug` link scrolls to its heading inside this
+   panel instead of writing a hash to the app's URL — which the dock reads as
+   the active tab's route. `harness-doc` widens the heading scale for a whole
+   outline (index.css). */
+const REHYPE_DOCUMENT = [rehypeHighlight, rehypeHeadingIds] as never
+
+function decodeHash(hash: string): string {
+  try {
+    return decodeURIComponent(hash)
+  } catch {
+    // A malformed escape: match the text as written.
+    return hash
+  }
+}
+
+export const MarkdownDocument = React.memo(function MarkdownDocument({
+  text,
+  className,
+}: {
+  text: string
+  className?: string
+}) {
+  const ref = React.useRef<HTMLDivElement>(null)
+  const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    const root = ref.current
+    const anchor = (event.target as Element).closest?.("a[href^='#']")
+    if (!root || !anchor || !root.contains(anchor)) return
+    const hash = decodeHash(anchor.getAttribute("href")!.slice(1))
+    if (!hash) return
+    // A TOC names the bare slug; a footnote's link already carries the prefix.
+    const target =
+      root.querySelector(`[id="${CSS.escape(HEADING_ID_PREFIX + hash)}"]`) ??
+      root.querySelector(`[id="${CSS.escape(hash)}"]`)
+    if (!target) return
+    event.preventDefault()
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    target.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" })
+  }
+  return (
+    <div ref={ref} onClick={onClick} className={cn("prose prose-sm harness-doc max-w-none", className)}>
+      <Markdown remarkPlugins={REMARK} rehypePlugins={REHYPE_DOCUMENT} components={MARKDOWN_COMPONENTS}>
+        {text}
+      </Markdown>
+    </div>
+  )
+})
+MarkdownDocument.displayName = "MarkdownDocument"
 
 /**
  * Inline markdown for a string drawn inside somebody else's type scale.

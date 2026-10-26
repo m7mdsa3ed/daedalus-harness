@@ -514,21 +514,38 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   runtime, an older journal — falls back to timing: starting within `batchBurst` of the batch's
   first call, or before its latest call has ended. A step with neither (a notice, a `session/load`
   replay, whose stamps are the reload's) never joins, so no evidence marks nothing. The batch is
-  drawn as a group of its own (`ToolRun`'s `parallel`): on a `primary` wash that bleeds 8px past
-  the run's rows — the group and its header in one rounded box, so no row moves and every tool
-  layout gets it — *and* a ring, because a tint on a ground that is also a ground reads as nothing
-  on its own. **Its weight is the transcript's, never a badge's**: the wash is the `!` run's
-  (`bg-primary/[0.06]`, the same `-mx-2` geometry — one shape for "this stretch is marked") and
-  the ring is the app's own edge tone (`ring-foreground/10`, what a card's border is). A first
+  drawn as a group of its own (`ToolRun`'s `parallel`), **and how it is bracketed is a reading
+  preference, not a constant** (`groupStyle`, `GROUP_STYLES`): `wash` — a marked stretch on a
+  `primary` wash, its calls on the run's rail; `card` — a boxed set on the app's inset ground, its
+  calls a hairline list; `columns` — the same calls laid out side by side in a grid, because they
+  *ran* side by side, which is the only one of the three that says what "parallel" meant. **The
+  chrome for each is one module** (`thread-items/group-style.tsx`): the row asks for a treatment
+  (`frame`, `list`, `cell`, `grid`) instead of spelling `bg-… ring-…` inline, so a style and the
+  settings page that offers it cannot drift apart, and adding a fourth is that file plus a
+  `GROUP_STYLES` value. **All three sit flush on the transcript's column**, the same edge a step
+  row's hover ground, a todo card, the thinking panel and the gap rule are on — and `px-1` is not
+  a free number, because the header and every call row inside a frame carry StepRow's
+  `-mx-1 px-1`, which holds *their* content on the column while their hover ground bleeds 4px.
+  The frame supplies exactly that 4px. It used to bleed instead (`-mx-2 px-2`, which put the frame
+  8px outside the column while technically holding its content still), and in one turn that read
+  as three different columns — thinking panel at +4, todo card and step rows at 0, batch at −8 —
+  so the batch's header started left of the card above it and its chevron ran past the prose
+  below. **A bleed is only free when it is the one thing on screen with an edge**; beside cards
+  and rules that all sit on the column, it reads as a box that does not line up. The paint room in
+  the clips that can hold a group (`-mx-2 px-2` in `thread-view.tsx`, `rows.tsx`,
+  `thread-cards.tsx`) stays and costs nothing — it is room, not an offset — so a style added
+  tomorrow that does want to bleed may use it.
+  **The weight is the transcript's, never a badge's**: the wash is the `!` run's strength
+  (`bg-primary/[0.06]` — one shape for "this stretch is marked") and the ring is the app's own
+  edge tone (`ring-foreground/10`, what a card's border is). A first
   version reached for `bg-primary/10` and `ring-primary/25`, which put one row's frame 56 levels
   below every other edge on screen — a box shouting over its own contents, and the one thing in
   the transcript drawn that way. **A live batch takes the accent's colour on that same weight
-  (`ring-primary/30`)**, so "these went out together and are still coming back" is said by hue
-  rather than by a heavier frame. **The wash's bleed sets the paint
-  room everywhere it can land**: an ordinary row hangs its hover ground 4px out, a batch 8px, so
-  the transcript item and every rail clip open `-mx-2 px-2` — at 4px the wash was clipped to its
-  own box and kept the ring on the top and bottom edges only, which read as a card sliced off down
-  both sides. The header says `3 in parallel` in the batch's hue, on the app's own chip shape
+  (`ring-primary/30`, or `border-primary/30` on the card)**, so "these went out together and are
+  still coming back" is said by hue rather than by a heavier frame. **`columns` reflows on the
+  panel's width, not the window's** (`@panel-sm`, the container query): two step rows side by side
+  in half a panel is two columns of truncated titles, so below it the grid falls back to the list.
+  The header says `3 in parallel` in the batch's hue, on the app's own chip shape
   (`CHIP` — one radius, one line box and one size as every other chip in the row, told apart by
   colour alone rather than by a pill of its own), and, beside it, how the batch stands: `1 of 3 running`
   (`StepBatch.running`) while any call is out, then the span from first start to latest end once
@@ -626,9 +643,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   apps: fixed nav rows on top (`SidebarNav`: New thread, Search, Tasks — menu rows,
   so they survive the icon rail), then Pinned, an **Opened** tier of the threads
   with a tab open (in dock order — `lib/workspace/open-threads`, published by the
-  dock and rebuilt from the restored layout on a reload), a flat Recents, **one
-  folder per project** with its threads under it and a hover `+` that starts a
-  thread *in* that project, Scheduled, Trash. **Recents lists what is not open**:
+  dock and rebuilt from the restored layout on a reload), a flat Recents, and —
+  under "By project" — **one section per project**, Scheduled, Trash. **A
+  project section is one level, not a folder**: the project's own mark and name
+  are a heading over its threads (`ProjectSection`), not a control that folds,
+  with the `+` that starts a thread *in* that project and the way into its page
+  as the heading's hover controls and right-click rows. It was a foldable folder
+  per project under a foldable "Projects" tier, which made the sidebar a tree
+  three deep (project → thread → its sub threads) and buried every project after
+  a long open one. The heading keeps the folder's rollups — running, needs-you,
+  thread count — because a section scrolled to the top is still a reading, and
+  its body is capped and scrolls itself (`SECTION_BODY`) so one project with a
+  year of threads in it cannot push the next heading off the foot of the
+  sidebar. **It prints no period headings and names no project on its rows**:
+  the heading already filed them by project, so a Today/Yesterday tier inside
+  would be a second level, and the row would repeat the name it sits under. **Recents lists what is not open**:
   a thread with a tab is in Opened, so it is not also a shortcut below it, and
   closing the tab is what returns it to Recents. The focused tab's row carries the
   active tint in whichever tier holds it. **Recents keeps every running thread in the
@@ -646,8 +675,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   places**: a folder holds every one of its project's threads, the recent and
   the pinned included, because a folder that dropped whatever was recent was an
   incomplete index of its own project — with the newest thread, the one most
-  likely to be looked for, the one missing from where it lives. Inside a folder
-  the rows are **grouped by period** (`periodLabel` in `lib/time.ts`, `grouped`
+  likely to be looked for, the one missing from where it lives. Inside a project
+  section the rows are flat — the heading is its own level — while the **flat
+  Recents list is grouped by period** (`periodLabel` in `lib/time.ts`, `grouped`
   on `ThreadList`): Today / Yesterday / Previous 7 days / Previous 30 days, then
   by month. Counted in calendar days, so 00:10 says "Yesterday" about 23:50, and
   the headings are inserted over the rows that are *visible*, so `limit` still
@@ -685,7 +715,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   one scale (`ROW`/`MENU`/`GROUP`/`TIER`, exported for the settings nav too). There is no plan-usage
   gauge in the sidebar: the plans are listed on Settings › Usage and nowhere else. The
   main surface (`SidebarInset`) is `bg-card` over the sidebar's tinted ground, and
-  the Threads label carries a sort/filter menu (sort: recent / created / title / by project; show: all / running / needs you / unread; active in: any / 24h / 7d / 30d). **Those, and every other sidebar pick (variant, compact rows, row dress, period headings, the Pinned group, the page rows, empty folders), are `sidebar*` keys of the one layout-options store** (`ui.viewOptions`) — Settings › Appearance › Interface edits the same values the menu does, and its Reset counts only the sidebar scope. `ui.sidebarView` and the variant in `ui.sidebarLayout` were folded in once and removed. Fold
+  the Threads label carries a sort/filter menu (sort: recent / created / title / by project; show: all / running / needs you / unread / trash; active in: any / 24h / 7d / 30d; sub threads: all / active / off). **Hiding is a switch, not a filter** (`sidebarShowHidden`, "Hidden threads"): hiding a thread takes it out of every list, and reading what it hid used to mean spending the list on them — so the switch adds a `Hidden` group after the list instead (count on its label, shut by default, each row carrying its own Unhide), and no reading of the list is given up to find one. A stored `sidebarFilter: "hidden"` from before the switch carries over as `all` plus the group open (`pick`). **Those, and every other sidebar pick (variant, compact rows, row dress, period headings, the Pinned group, the page rows, empty folders), are `sidebar*` keys of the one layout-options store** (`ui.viewOptions`) — Settings › Appearance › Interface edits the same values the menu does, and its Reset counts only the sidebar scope. `ui.sidebarView` and the variant in `ui.sidebarLayout` were folded in once and removed. Fold
   state is `ui.collapsedProjects`, keyed by project id. **Every row wears one status glyph in its trailing slot**
   (`ThreadStateBadge`): the words "Needs you"/"Error" for the two asks, otherwise a
   pause (held at a failure), a spinner (running) or a primary dot (finished since this
@@ -693,9 +723,14 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   (`sidebar/activity.ts`); **unread is device-local** (`ui.threadSeen`: the `activityAt`
   last in front of you per thread, plus a first-launch baseline so history does not all
   read unread) and is stamped by the thread in front of you — reading is not activity, so
-  nothing is written to the server. **Folders roll up** running and needs-you counts when
-  closed, and the Threads label carries the total needs-you. A folder wears a heavier,
-  faintly tinted header so it reads apart from the two-line rows. **The in-sidebar filter**
+  nothing is written to the server. **A project section's heading rolls up** its running
+  and needs-you counts, and the Threads label carries the total needs-you; the heading is
+  medium weight, so a column of them reads apart from the thread rows under it. **Trash is
+  sticky to the foot of the panel**, not the end of the list: the list grows a page at a
+  time on scroll, so a Trash living after the last row was one nobody reached without
+  loading the whole history first. It folds shut by default, its opened body is capped
+  (`SECTION_BODY`) so a long Trash cannot cover the list it sticks over, and
+  `Empty Trash` stays outside that scroll box. **The in-sidebar filter**
   (`sidebarFilter`, Alt+T, or the magnifier on the label) matches already-loaded threads
   by title, project or agent id, locally and unstored; the palette stays the deep search.
   The All / Running / Needs you chips write the same `sidebarFilter` the menu does.
@@ -717,6 +752,23 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   project's `logoUrl` (else its initial in a disc whose hue is hashed from the
   name). Projects carry `logo_url`; the API reports `""`
   for none, like profiles. No component draws a folder for a project any more.
+  **An MCP server's mark is `McpIcon`, and the harness's own five built-ins carry a hue**
+  (`BUILTIN_MCP_HUES`): web search indigo, knowledge green, workflows violet, ask-agents amber,
+  harness rose. A built-in is a *known* facet, so its colour is stated once beside its glyph.
+  **A server the user added takes a hue hashed off its name** (`lib/hue.ts`'s `hueOf`, the one
+  helper the project initial and a task assignee also use): an `http` row usually resolves a
+  favicon, but a stdio row has no URL for `resolveMcpLogo` to ask, so it drew one grey
+  `TerminalIcon` and two stdio servers in the chip were two identical discs. Hashing is right
+  precisely because nothing knows what the server is — the colour is a property of the name, so
+  it is the same on every device with no column to store, and renaming re-tints it. Only a
+  server with no identity at all (an absent row, a built-in this build dropped) keeps the
+  neutral grey. The hue is a number on the element
+  (`--mcp-hue`, from `mcpHueStyle`) and the palette says how loudly to wear it in two rules
+  (`.mcp-hue-mark` / `[data-mcp-disc]` in index.css, one lightness each per mode): the glyph
+  takes the hue at full strength and the disc around it a 12% wash, so the composer chip's
+  overlapping stack reads as three coloured discs instead of three identical grey ones. Every
+  surface that draws a server — the chip, the picker's rows, Settings › MCP, a transcript's
+  tools — gets it from the same two exports, so none of them can drift apart.
   **Settings › Knowledge base** (`components/settings/knowledge.tsx`) is the cross-project
   view of what the built-in `knowledge` MCP server has written: one `GET /api/knowledge`
   (`listAllKnowledge` in `server/src/knowledge.ts`, every entry newest-updated first with its
@@ -746,6 +798,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   excerpts ("Ask about this" on a transcript selection) are inline quote chips, *in* the box, and
   `editor-text.ts` maps string offsets to editor positions so every caret reader is unchanged
   (checked by `editor-text.check.mjs`).
+- **A paste chip's popover reads its body as markdown, when the body is a document.** A paste is
+  parked because it was too long to sit in the box, and what it holds is usually a brief or a spec
+  whose headings, lists and tables are half of what it says; the popover drew it in a `<pre>`, so
+  all of that arrived as characters. `ChipPreview` takes the flag and draws the body through
+  `Prose` — the transcript's own pass, so a link there is the chip's and a fence is highlighted —
+  while Copy still hands over exactly what was pasted. **The flag is decided, never assumed**
+  (`lib/paste-markdown.ts`): markdown's own evidence — a heading, a list item at a line's start, a
+  quote, a fence, a table, a reference definition — says it is a document, and failing that a body
+  with no long line and no run of four plain lines in a row is a paragraph that was pasted
+  hard-wrapped. What it refuses is the case the change would break: a stack trace or a log has no
+  blank lines, and markdown joins a line to the one above it, so forty frames would come back as
+  one run-on block — less readable than the `<pre>` it replaced. A quote chip and the "sent to the
+  agent" bodies stay verbatim, where the characters *are* the point. Both sides of the chip read
+  the one decision: the transcript's (`user-chips.tsx`) and the composer's
+  (`composer-editor.tsx`). Checked by `paste-markdown.check.mjs`.
 - **The composer can be *away*, and away is the scroller's answer, never its own**: `ThreadView`
   passes `collapsed={!follow.pinned}` — the pin `useFollowStream` owns, the same state that reveals
   the scroll-to-end button — so a reader who scrolls away from the tail gets the transcript back and
@@ -799,7 +866,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `-warn`/`-error`); that made the composer wear the state of the *thread*, and it reported a
   dead socket as an entire surface coloured amber. It is a `Notice` at the foot of the
   transcript now (`components/thread-view/thread-status.tsx`), with the wait, the working line and the
-  turn's other stops — so the shelf has no tone and nothing on it is ever wrong. The foot is the
+  turn's other stops — so **the shelf has no *status* tone** and nothing on it is ever wrong: no
+  surface of it ever goes amber because a socket died. That is a different statement from the one
+  about *kinds* below, and the two must not be conflated — a tone that says "this item is a shell
+  command" is not a tone that says "something is wrong". The foot is the
   *pane's*, not the content's: the transcript's content box is `min-h-full`, and the status item
   carries `mt-auto`, so a thread shorter than the pane — an opening replay, a first turn — rests
   its live line just above the composer instead of in the middle of the blank paper under the
@@ -820,6 +890,17 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   the count of subagents out working. It is a "which of these do you want in front" mechanism,
   and a fact that is *always* true is not a card in it — the project spent its life as a card
   nobody brought forward and then stopped being drawn at all. It stacks **above the footer**.
+  **Every item wears the hue of its kind** (`StripTone`): `accent` for a file riding along with
+  the message, `positive` for a set found by `/` or `@`, `caution` for a project command, which
+  is the one row that will *run* something. The rail's mark carries it at full strength and the
+  card in front wears a 12% wash of it over `--shelf` (`[data-strip-tone]`), so the thing you
+  are looking at is identifiable before its words are read — an untinted item is `neutral` and
+  is exactly the grey shelf every item used to be. The vocabulary is the palette's
+  (`--shelf-tone-*` in index.css alias `--primary`, `--success`, `--warning`), so a theme
+  needs no new token and `.dark` needs no override — the aliases point at tokens that
+  already have one. **This is a tone of kind, never of state**: it says "this item is a
+  shell command", not "something is wrong", which is the statement the shelf lost on purpose
+  when the connection readings left it.
 - **The readings are one cluster at the end of the footer, one shape each**
   (`ThreadToolsMenu`, then `TodoIndicator`, `AgentsIndicator`, `ChangesIndicator`,
   `ContextIndicator` in `components/composer-status.tsx` — the first placed by the row itself,
@@ -838,6 +919,12 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   control in the row that says which directory the work lands in; it wears the same badge with
   `always` and truncates. Each still answers for itself whether it draws at all, so an idle
   thread's cluster is the ring alone, plus the tools row on a draft, where it is the picker.
+  **The cluster is colour-coded by subject, not by alert**: the project and the worktree branch
+  wear `text-primary` and `text-step-tool`, the checklist `text-step-think` (the transcript's
+  own reasoning blue), the changed-file count `text-success` — each a hue the palette already
+  chooses, and each on the *mark* only, with the words keeping the row's own text colour. The
+  context ring is deliberately left uncoloured: a dial that turns amber as a thread fills reads
+  as an alarm in a cluster of settled facts.
   The checklist and the agent count have been a card on the shelf (folded behind a 14px sliver) and
   a card at the foot of the transcript (a screenful of scrolling from view); both were the
   whole list, permanently, for a question that is usually "how far along". **A popover is a
@@ -1092,7 +1179,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   line reading "Running 30 tools" over a stack of six identical wrenches. The server is part of
   the key, so one integration's *consecutive* calls fold together, and the counting line and the
   stack are by integration too ("Bugsnag 6 calls · Clickup 4 calls", one mark per server rather
-  than one per call). Consecutive is deliberate: **a run never reorders the steps it holds**,
+  than one per call). **The stack holds one mark per distinct act, never one per call** — the
+  sentence beside it already counts the calls, so five `Bash` calls drew five identical terminals
+  saying nothing the summary had not. Marks are keyed by `callKeyOf`, the same key `summarise`
+  groups by, so the stack is a legend for its own sentence and its `+N` counts the acts that did
+  not fit. Consecutive is deliberate: **a run never reorders the steps it holds**,
   because a call's result is often what the next call was for — so interleaved servers are
   several stretches inside one group, and that group's own line is what counts them together. **A setting changed between two of
   those calls rides inside the run too** (`isConfigNotice`): the agent changed nothing about the
@@ -1572,7 +1663,7 @@ double-click on a divider evens out the views it separates — in the main dock 
   a routed draft, which is what the console mints before it sends. The tab's mark is its
   sidebar row's (`PageIcon` in `panel-kinds.tsx`); its title is written forward only, so a
   restored tab never flashes "Page".
-- **The Preview panel is a viewer for project files and diffs, never a browser.** A mention,
+- **The Preview panel is a viewer and editor for project files and diffs, never a browser.** A mention,
   a file link or a source-control row opens it (`web-panel.tsx`): a file is drawn by
   `FilePreview`, a diff by `DiffTab`, and there is no address bar, no embedded page, no
   `<webview>`, no console and no element picker. It was a browser once; **driving it from an
@@ -1580,21 +1671,48 @@ double-click on a divider evens out the views it separates — in the main dock 
   and nothing in Electron touches CDP. `parsePanel` drops a stored `web` panel that carries a
   browser-era `url`/`trust`; a `web` panel with no file is *not* one of those — it is the
   explorer alone, and it comes back.
-- **The project's working tree stands beside the preview** (`project-tree.tsx`), which is what
-  makes the panel somewhere to navigate rather than a window onto one path: a click there
-  repoints the same panel at another file, so a file and a diff are places *inside* it. The
-  descriptor stays the state (`api.updateParameters`), so a panel showing nothing but the tree
-  restores exactly as it was. A directory is read when it is opened and not again unless
-  **the watch stream** says something moved (the tree family is invalidated; only the branches
-  on screen are mounted, so that is all that is re-read) — no polling, no focus refetch. The
-  file being previewed is revealed: every ancestor opens and its row is scrolled to. The find
-  box is the route the composer's `@` menu already reads, because a cwd with a `node_modules`
-  in it is not browsable by hand; a folder it finds is opened in the tree rather than in the
-  viewer, which cannot show one. Dotfiles and git-ignored directories are the reader's call
-  (`preview-prefs.ts`, device-local like every other reader's property — with the pane's
-  width), stated in the request rather than filtered silently on the client, and the pane is
-  not drawn at all where the panel is too narrow to hold one: the panel's width is measured,
-  never the window's.
+- **The project's working tree stands beside the preview, in either dock** (`project-tree.tsx`).
+  It was a thread's alone, and the gate (`useThreadDockSession()`) left a Preview opened from a
+  source-control row or a mention in an outer tab a window onto one path; the project's files
+  are the project's, so the gate is gone and the width rule below is the only one. `Files` (the
+  `+` over a transcript, or "Project files" in the palette) opens the Preview panel with no file
+  at all. The tree is what makes the panel somewhere to
+  *navigate* rather than a window onto one path: a click there repoints the same panel at
+  another file, so a file and a diff are places *inside* it, and the descriptor is the state
+  (`api.updateParameters`) so a panel showing nothing but the tree restores exactly as it was.
+  A directory is read when it is opened and not again unless **the watch stream** says
+  something moved (the tree family is invalidated; only the branches on screen are mounted, so
+  that is all that is re-read) — no polling, no focus refetch. The file being previewed is
+  revealed: every ancestor opens and its row is scrolled to. The find box is the route the
+  composer's `@` menu already reads, because a cwd with a `node_modules` in it is not browsable
+  by hand; a folder it finds is opened in the tree rather than in the viewer, which cannot show
+  one. Dotfiles and git-ignored directories are the reader's call (`preview-prefs.ts`,
+  device-local like every other reader's property — with the pane's width), stated in the
+  request rather than filtered silently on the client. What fits is measured on the panel,
+  never the window: **below the width a tree needs beside a preview, the two stop being panes
+  and become two screens** — the tree takes the panel whole when nothing is open, and the
+  toolbar's `PanelLeft` mark navigates back to it from a file or a diff instead of hiding a
+  pane that is not there. That is what makes a phone, or a Preview docked beside a terminal,
+  able to browse at all; before, the panel said it was too narrow for the tree and offered
+  nothing, on the one `+ → Files` gesture that asked for it.
+- **The Preview panel holds open files, and an unsaved edit is never the editor's to keep.**
+  `tabs` in the `web` descriptor are the files open and `file` the one in front; a file pointed
+  at from outside arrives as `file` alone and becomes a tab, so there is one reading of the
+  descriptor and `parsePanel` keeps the list. Back/Forward walk a history that is the panel's
+  own and **not saved** (a back button that survives a reload goes somewhere nobody remembers);
+  it is mutated only by `visit`, and a step along it sets a flag so the step is not recorded as a
+  visit. Editing is Monaco on a model of the text (`file-editor.tsx`), and **the text of an unsaved
+  edit lives in `lib/workspace/edit-drafts.ts`**, keyed by project and path, so a tab switch, the
+  viewer toggle and a re-open lose nothing; a draft is *dirty* when its text differs from its base,
+  so opening a file to look at it never raises a discard question. A save is a write at the version
+  the file was read at (`expectedVersion`); a 409 is said with its two ways out (Reload drops the
+  edit, Overwrite sends `force`), and the watch stream is read by asking the file's version, so a
+  clean draft follows the disk silently and a dirty one only says so. The tree writes through
+  the project's file routes but **does not decide what a rename or delete does to the panel**: it
+  reports `onRenamed` / `onDeleted` and the panel moves or drops its tabs, history, open editors
+  and drafts together. Closing a tab, a deleted folder holding edits, or the panel (a close guard)
+  asks first. Drafts are deliberately not persisted: one that outlived a reload would be applied to
+  a file that may have moved on, which is what the version exists to catch.
 - **A hidden chat tab is `display: none` while its thread dock stays mounted.** Dockview's
   `always` renderer hides an inactive panel with `visibility`, which the inner dock's own
   overlays escape; `display: none` cannot be escaped, and keeping the dock mounted is what

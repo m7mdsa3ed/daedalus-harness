@@ -3,7 +3,7 @@ import * as React from "react"
 import { BookOpen, ChevronDown, Plus, RefreshCwIcon, Trash2 } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Input } from "@/components/ui/input"
 import {
   ResponsiveDialog,

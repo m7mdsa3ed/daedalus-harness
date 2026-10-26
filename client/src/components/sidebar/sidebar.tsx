@@ -11,9 +11,9 @@
       │ Today / Yesterday / …                      flat, newest activity first,
       │                                            each row naming its project —
       │   or, "By project":
-      │ ▸ harness                + ·               one folder per project, ALL
-      │ ▸ website                                  its threads; + starts one in it
-      │ Trash                                      folded shut
+      │   harness                                  a project section, its threads below
+      │   website                                  + starts a thread in it
+      │   Trash                                    available in the Show filter
      └ usage · server · notifications · Settings   the footer (app-shell.tsx)
 
    Rows are one line: the agent's mark, the title, and its status (a running
@@ -30,24 +30,18 @@
 
    This folder is the sidebar: the spacing scale (`scale.ts`), the nav rows
    (`nav.tsx`), the sort/filter store and its menu (`view.tsx`), the
-   folder/group primitives (`groups.tsx`), the memoized row and list
-   (`thread-row.tsx`, `thread-list.tsx`) and the Trash's own action
+   section/group primitives (`groups.tsx`), the memoized row and list
+   (`thread-row.tsx`, `thread-list.tsx`) and the Trash filter's own action
    (`trash.tsx`). This file is the layout that stacks them;
    `components/thread-sidebar.tsx` is the barrel the rest of the app imports
    from. */
 import * as React from "react"
-import { ChevronRight, FolderIcon, Pin, RefreshCwIcon, Search, Trash2, X } from "lucide-react"
+import { ChevronRight, EyeOff, Pin, RefreshCwIcon, Search, X } from "lucide-react"
 import { useNavigate } from "react-router"
-import {
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarMenu,
-  useSidebar,
-} from "@/components/ui/sidebar"
+import { SidebarGroup, SidebarGroupLabel, useSidebar } from "@/components/ui/sidebar"
 import { SidebarEnvContext, type SidebarEnv } from "./env"
 import { deriveTiers } from "./tiers"
-import { FoldableGroup, ProjectFolder } from "./groups"
-import { PROJECT_PAGE_SIZE } from "./scale"
+import { FoldableGroup, ProjectSection } from "./groups"
 import { ThreadList } from "./thread-list"
 import type { ThreadStatus } from "./thread-row"
 import { EmptyTrash } from "./trash"
@@ -65,7 +59,7 @@ import { useActiveChat, useOpenThreads } from "@/lib/workspace/open-threads"
 import { activityAt, inSpace as isInSpace, isListed, type Project, type SessionMeta } from "@/lib/settings"
 import { useStoreSelect, type ThreadItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
@@ -197,10 +191,22 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects]
   )
-  const { live, trashed, pinned, filed } = React.useMemo(
+  const { trashed, pinned, filed, hidden } = React.useMemo(
     () =>
-      deriveTiers({ sessions, inSpace, filter, within, sort, unread, statuses, pins, query, projectNames }),
-    [sessions, statuses, unread, pins, filter, within, sort, inSpace, query, projectNames]
+      deriveTiers({
+        sessions,
+        inSpace,
+        filter,
+        showHidden: options.sidebarShowHidden,
+        within,
+        sort,
+        unread,
+        statuses,
+        pins,
+        query,
+        projectNames,
+      }),
+    [sessions, statuses, unread, pins, filter, within, sort, inSpace, query, projectNames, options.sidebarShowHidden]
   )
 
   /* The Sessions label's numbers come from the unfiltered
@@ -336,9 +342,12 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   }, [actions, sessionWindow.total])
 
   const hasMore = sessionWindow.ids.length < sessionWindow.total
+  const trashView = filter === "trash"
   const filtered = filter !== "all" || within !== "any"
   const searched = query.trim() !== ""
-  const nothingLive = live.length === 0
+  /* The Hidden group is drawn whether or not the list has rows left, so an
+     empty list is not "no threads" while some are sitting under it. */
+  const nothingListed = filed.length === 0 && hidden.length === 0
 
   return (
     <SidebarEnvContext.Provider value={env}>
@@ -397,7 +406,14 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
             >
               <RefreshCwIcon className={cn(refreshing && "animate-spin")} />
             </Button>
-            <ViewMenu sort={sort} filter={filter} within={within} subs={options.sidebarSubThreads} compact={options.sidebarCompact} />
+            <ViewMenu
+              sort={sort}
+              filter={filter}
+              within={within}
+              subs={options.sidebarSubThreads}
+              compact={options.sidebarCompact}
+              showHidden={options.sidebarShowHidden}
+            />
           </div>
         </SidebarGroupLabel>
         {searching && (
@@ -434,21 +450,21 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
         )}
       </SidebarGroup>
 
-      {nothingLive && (
+      {nothingListed && (!trashView || trashed.length === 0 || searched) && (
         <SidebarGroup>
           <p className="px-3 py-2 text-xs text-muted-foreground">
             {query.trim()
               ? "No thread matches that."
               : filtered
-              ? filter === "running"
+              ? filter === "trash"
+                ? "Trash is empty."
+                : filter === "running"
                 ? "Nothing is running right now."
                 : filter === "waiting"
                   ? "Nothing is waiting on you."
                   : filter === "unread"
                     ? "Nothing unread."
-                    : filter === "hidden"
-                      ? "No hidden threads."
-                      : "No thread was active in that time."
+                    : "No thread was active in that time."
               : scopedProjects.length > 0
                 ? "No threads yet — start one from a project below."
                 : "No threads yet."}
@@ -456,7 +472,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
         </SidebarGroup>
       )}
 
-      {pinned.length > 0 && options.sidebarShowPinned && (
+      {pinned.length > 0 && options.sidebarShowPinned && !trashView && (
         <FoldableGroup groupKey="__pinned" label="Pinned" icon={<Pin />}>
           <ThreadList sessions={pinned} />
         </FoldableGroup>
@@ -465,29 +481,40 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       {/* Flat: every live thread, newest activity first, under Today /
           Yesterday / … headings, each row naming its project. The thread in
           front of you is highlighted in place — it is always one of these. */}
-      {sort !== "project" && filed.length > 0 && (
+      {(sort !== "project" || trashView) && filed.length > 0 && (
         <SidebarGroup>
-          <ThreadList sessions={filed} grouped showProject />
+          <ThreadList sessions={filed} grouped={!trashView} showProject={trashView ? false : undefined} trash={trashView} />
+          {trashView && <EmptyTrash sessions={trashed} actions={actions} />}
         </SidebarGroup>
       )}
 
-      {/* Projects: one folder each. Not a foldable tier itself — the folders
-          are the folds — but it hides under a status filter that matched
-          nothing, where a column of empty folders would be noise. */}
-      {sort === "project" && scopedProjects.length > 0 && !((filtered || searched) && nothingLive) && (
-        <FoldableGroup groupKey="__projects" label="Projects" icon={<FolderIcon />}>
-            <SidebarMenu>
-              {scopedProjects
-                /* A folder with nothing in it is "empty" only when nothing is
-                   narrowing the list; under a search or a filter it is just
-                   not a match. */
-                .filter(
-                  (project) =>
-                    byProject.has(project.id) ||
-                    (options.sidebarEmptyProjects && !searched && !filtered)
-                )
-                .map((project) => (
-                <ProjectFolder
+      {/* By project: one section per project — its name is the heading, its
+          threads sit under it, and the section's body scrolls once it outgrows
+          its cap (`SECTION_BODY`) so a project with a year of threads in it
+          cannot push the next one off the foot of the sidebar. "Show more" is
+          still inside each section, past `PROJECT_PAGE_SIZE`.
+
+          This was a tree: a foldable "Projects" tier over a foldable folder per
+          project over its threads over its sub threads. Three levels deep, and
+          every project after a long open one was a scroll away. The sections
+          say the same thing on one level, the way the period headings in the
+          flat list do. */}
+      {sort === "project" &&
+        !trashView &&
+        scopedProjects.length > 0 &&
+        !((filtered || searched) && nothingListed) && (
+          <>
+            {scopedProjects
+              /* A section with nothing in it is "empty" only when nothing is
+                 narrowing the list; under a search or a filter it is just not a
+                 match. */
+              .filter(
+                (project) =>
+                  byProject.has(project.id) ||
+                  (options.sidebarEmptyProjects && !searched && !filtered)
+              )
+              .map((project) => (
+                <ProjectSection
                   key={project.id}
                   id={project.id}
                   name={project.name}
@@ -497,34 +524,24 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
                   sessions={byProject.get(project.id) ?? []}
                   onNewThread={() => startIn(project)}
                   onOpenProject={() => void navigate(projectPath(project.id))}
-                 
                 />
               ))}
-              {orphans.map((id) => (
-                <ProjectFolder
-                  key={id}
-                  id={id}
-                  name="Other"
-                  sessions={byProject.get(id) ?? []}
-                 
-                />
-              ))}
-            </SidebarMenu>
-        </FoldableGroup>
-      )}
+            {orphans.map((id) => (
+              <ProjectSection key={id} id={id} name="Other" sessions={byProject.get(id) ?? []} />
+            ))}
+          </>
+        )}
 
-      {/* Trash folds, and folds shut by default: it is where things go, not
-          where anyone works. */}
-      {trashed.length > 0 && (
-        <FoldableGroup
-          groupKey="__trash"
-          label="Trash"
-          icon={<Trash2 />}
-          count={trashed.length}
-          defaultOpen={false}
-        >
-          <ThreadList sessions={trashed} trash limit={PROJECT_PAGE_SIZE} />
-          <EmptyTrash sessions={trashed} actions={actions} />
+      {/* The threads hiding took out of every list. Not a *reading* of the
+          list — that filter swapped the list for them, so going to find one
+          cost you what you were reading. "Hidden threads" in the view menu
+          draws this group instead: a count on its label, shut by default
+          (they were hidden) and every row still carrying its own Unhide. It
+          sits after the list, because what it holds is what the list above is
+          not showing. */}
+      {hidden.length > 0 && (
+        <FoldableGroup groupKey="__hidden" label="Hidden" icon={<EyeOff />} count={hidden.length} defaultOpen={false}>
+          <ThreadList sessions={hidden} />
         </FoldableGroup>
       )}
 
@@ -555,6 +572,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
           </span>
         </div>
       )}
+
     </SidebarEnvContext.Provider>
   )
 }

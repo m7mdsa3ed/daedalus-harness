@@ -159,4 +159,29 @@ const assertOneStep = (out, kids) => {
   assert.equal(extractAgentMessage({ title: "Bash", rawInput: {} }), null)
 }
 
+// Two subagents thinking at once interleave on one socket. Each run merges
+// into ITS OWN stream, not into whatever the wire happened to say last — the
+// other order drew one thinking child as a row per chunk of the other's, each
+// with its own clock ("Thinking 10s 910ms", "Thinking 10s 637ms", "Thinking 4s
+// 611ms" over fragments of one sentence).
+{
+  const thought = (text) => ({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text } })
+  let items = []
+  for (const [text, sessionId] of [
+    ["Since the token", "sa"],
+    [" itself is a 256-bit secret, this le", "sa"],
+    ["XIF or", "sb"],
+    ["ak is negligible, but to avoid it", "sa"],
+    ["whatever", "sb"],
+  ]) {
+    items = applySessionUpdate(items, thought(text), false, sessionId)
+  }
+  const a = items.filter((i) => i.parentId === "subagent:sa")
+  const b = items.filter((i) => i.parentId === "subagent:sb")
+  assert.equal(a.length, 1, `the interleaved run is one item, got ${a.length}`)
+  assert.equal(a[0].text, "Since the token itself is a 256-bit secret, this leak is negligible, but to avoid it")
+  assert.equal(b.length, 1, "and so is the one it interleaved with")
+  assert.equal(b[0].text, "XIF orwhatever")
+}
+
 console.log("subagents.check: ok")

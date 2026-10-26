@@ -1,5 +1,6 @@
 import * as React from "react"
-import { Popover, PopoverContent } from "@/components/ui/popover"
+import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
+import { cn } from "cn"
 
 /**
  * Every native `title` in the app drawn as the app's own tooltip, from one
@@ -91,17 +92,26 @@ export function TitleTooltips() {
   }, [])
 
   return (
-    <Popover open={!!tip} modal={false}>
+    /* Composed from the primitive rather than `ui/popover` because this tip has
+       no trigger: it is anchored to whatever element the pointer found, which
+       is the positioner's `anchor` prop. The registry's `PopoverContent` takes
+       it from the trigger's context and does not forward it, and this file must
+       not depend on the registry file's shape anyway. */
+    <PopoverPrimitive.Root open={!!tip} modal={false}>
       {tip && (
-        <PopoverContent
-          anchor={tip.el}
-          side="bottom"
-          sideOffset={6}
-          className="pointer-events-none w-fit max-w-[min(24rem,calc(var(--float-w)-1.5rem))] gap-0 px-3 py-1.5 text-xs whitespace-pre-line"
-        >
-          {tip.text}
-        </PopoverContent>
+        <PopoverPrimitive.Portal>
+          <PopoverPrimitive.Positioner anchor={tip.el} side="bottom" sideOffset={6} className="isolate z-50">
+            <PopoverPrimitive.Popup
+              data-slot="popover-content"
+              className={cn(
+                "pointer-events-none z-50 flex w-fit max-w-[min(24rem,calc(var(--float-w)-1.5rem))] origin-(--transform-origin) flex-col gap-0 rounded-2xl bg-popover px-3 py-1.5 text-xs whitespace-pre-line text-popover-foreground shadow-2xl ring-1 ring-foreground/5 outline-hidden duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+              )}
+            >
+              {tip.text}
+            </PopoverPrimitive.Popup>
+          </PopoverPrimitive.Positioner>
+        </PopoverPrimitive.Portal>
       )}
-    </Popover>
+    </PopoverPrimitive.Root>
   )
 }

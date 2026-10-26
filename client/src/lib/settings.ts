@@ -3,6 +3,7 @@
 // servers can be stored at once; one of them is active (switched in the
 // sidebar), and the active one is what every request in the app talks to.
 
+import type { PeakSchedule as ModelPeak } from "@daedalus/peak"
 import { uuid } from "./uuid"
 import { sameUiGroups } from "./openui/groups"
 import { clearPersistedCache } from "./queries/persist"
@@ -344,6 +345,34 @@ export interface AgentDef {
   /** The row's mark: a URL (the built-ins ship `data:` URIs), or `"app"` for
       the harness's own runtime. Null draws a neutral glyph. */
   icon?: string | null
+  /** The runtime's own on/off switches and which ones a person turned
+      (`AgentBehavior`). `switches` is the seed's half and is never sent back;
+      `values` is the person's, keyed by env key, absent meaning the runtime's
+      default. Null/absent = this runtime declares none. */
+  behavior?: {
+    switches: AgentBehaviorSwitch[]
+    values?: Record<string, boolean>
+  } | null
+  /** The env this runtime ships with, as the server's current release defines it —
+      computed, never stored, and absent for an agent somebody added by hand.
+      Settings draws the env by it: a seeded key still holding its
+      `{placeholder}` is the profile's wiring and is shown as such, while
+      anything else is the person's to edit. */
+  seededEnv?: Record<string, string>
+}
+
+/** One behaviour switch a runtime owns — the row the form draws. The four
+    strings are the runtime's own words, so no component names a key. */
+export interface AgentBehaviorSwitch {
+  /** The env key it becomes at spawn (`DAEDALUS_AGENT_*` for ours). */
+  key: string
+  label: string
+  description: string
+  /** What on/off become in the env; `"1"`/`"0"` when absent. */
+  on?: string
+  off?: string
+  /** What the runtime does with the key absent — what an untouched switch means. */
+  fallback: boolean
 }
 
 export interface McpServerStdio {
@@ -734,6 +763,9 @@ export interface ModelOption {
   description?: string
   /** USD per million tokens, at full price. */
   pricing?: { input: number; output: number }
+  /** When that price is not what a request costs — see `@daedalus/peak`. The
+      composer badges a prompt sent at a dearer moment. */
+  peak?: ModelPeak
   /** Input modalities, e.g. ["text", "image"]. */
   modalities?: string[]
   /** Provenance when enriched: "providerId/modelId" in models.dev. */

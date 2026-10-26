@@ -147,6 +147,14 @@ const ModelRow = z.object({
   reasoningEfforts: z.array(str).default([]),
   description: str.optional(),
   pricing: z.object({ input: z.number(), output: z.number() }).optional(),
+  // A schedule the user wrote, so a bundle carries it — see `peak.ts`.
+  peak: z
+    .object({
+      windows: str,
+      when: z.enum(["peak", "off-peak"]).optional(),
+      multiplier: z.number().optional(),
+    })
+    .optional(),
   modalities: z.array(str).optional(),
   devRef: str.optional(),
   // The model's own mark and its picker group: both user-written, like the

@@ -137,6 +137,12 @@ export interface QuotaAccount {
   /** The provider behind it (`claude`, `codex`, `glm`), as a word, for a
       subtitle that says what kind of account this is. Null when unnamed. */
   provider?: string | null;
+  /** What to call that provider where it heads a group — `vercel-ai-gateway`
+      is `Vercel AI Gateway`. The adapter's word, because a slug is the
+      gateway's internal name for a provider and not what a person reads; a
+      renderer that title-cased the slug itself would spell `commandcode` as
+      one word. Null when the account named no provider. */
+  providerLabel?: string | null;
   /** The plan that account is on, when its provider reported one. */
   plan?: string | null;
   /** How many readable windows it contributed. Zero is an account that is

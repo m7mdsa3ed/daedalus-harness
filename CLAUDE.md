@@ -212,8 +212,42 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 
 ## Profiles, models, config → `docs/profiles-and-config.md`
 
+- **A runtime's behaviour switches are a field on its row, not a paragraph of env to type.**
+  `AgentDef.behavior` / `AgentBehaviorSwitch` is the only place a client learns that
+  `DAEDALUS_AGENT_HOLD_ON_ERROR` is a switch, what it is called in words, and what it does with
+  the key absent — so `Settings › Agents` draws controls and no component spells a key. The
+  **declarations are the seed's and the values are the person's**, exactly like
+  `name`/`command`/`args`/`env`: `AgentInputSchema.behaviorValues` is the only writable half, a
+  key the row does not declare is dropped, and `resolveSpawn` writes **only the switches somebody
+  changed** over the env templates — which is what leaves an untouched switch on the runtime's own
+  default and lets a later seed move that default without contradicting a value nobody chose.
+  Reset restores the declarations and clears the values.
 - **A profile is a provider, not an agent; a thread is a (profile, agent) pair.** The agent is
   chosen at draft time, lives on `sessions.agent_id`, and survives a respawn.
+- **A model's price is one number, and when it is not, the schedule is a sentence.** `pricing`
+  is the listed per-Mtok rate; `ModelDef.peak` says when that rate is not what a request costs —
+  `windows` (free-form, `server/src/peak.ts`), `when: "peak" | "off-peak"` and `multiplier`,
+  defaulting to peak x2. Providers do not agree on a shape (DeepSeek raises two weekday UTC
+  windows, Alibaba discounts a Beijing night), so the grammar is **one parser aliased into both
+  halves** (`@daedalus/peak`, like `@daedalus/tps`) and never a column per vendor, and a sentence
+  it cannot read is no schedule at all — never a guess, because a billing fact is not a place to
+  infer. The composer's `PeakIndicator` is the only thing that acts on one and its phase is
+  **what the price is doing, never which side of the windows the clock is on** (`bandLabel`) —
+  those part company on an `off-peak` card, where the hours inside the window are the cheap ones.
+  A moment at the listed price is `Off-peak` only where the windows are the dear ones; on an
+  `off-peak` card it says `Listed price`, and `standard` is what an absent window means for
+  *either* `when`: "cheap because it is not peak" is a discount nobody granted. The *tone* is
+  what costs say (warn above the listed price, muted at it, success for a real discount), and
+  the face leads with the reader's own clock — `Peak in 40m`, `1h 12m left` — because the
+  distance to the next change is the only number somebody about to send can act on. Every
+  boundary is read in the reader's time first with the provider's spelling beside it, and a
+  next rise that is not the next change at all (a weekday card seen on a Saturday) is named
+  too: `upcomingTransitions` decides it from the band each edge *opens*, so an `off-peak`
+  card's window closing — the hour getting dearer — is not reported as a discount starting. **Which families bill by the clock is a
+  fact, not a default** (`server/src/peak-schedules.ts`): DeepSeek and the Z.AI/Zhipu coding
+  plans are named there and backfilled once at boot, matched on the leaf id; Anthropic, OpenAI
+  and Mistral are deliberately absent — Anthropic removed its peak-hour reduction on 2026-05-06
+  and the other two vary by tier rather than by hour.
 - **The profile decides who owns the model — and only the model and the effort.** Every other
   agent option passes through untouched and stays live.
 - **Being env at spawn does not mean being env forever.** `POST /api/sessions/:id/config` is
@@ -565,19 +599,18 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `--harness-composer-width`, so the whole unit breathes on every click in and out of the
   textarea, which is motion the reader did not ask for at the exact moment they are aiming
   at something.
-- **The composer gets out of the way when the reader leaves the tail, and never by itself.**
-  `ThreadView` hands `Composer` the scroller's own pin (`useFollowStream.pinned`) as `collapsed`,
-  so the one fact that shows the scroll-to-end button is also what slides the box down — a
-  transform and an opacity and `inert`, never `hidden`, because **the height it reserves stays**
-  (`--composer-dock-h`) and collapsing must not re-flow a transcript somebody is reading.
-  The card **morphs into a pill** as it goes (a `clip-path` onto the pill's box — a clip moves no
-  layout) and the pill is the way back in place. Coming back is a gesture: the pill, reaching the
-  bottom (which re-pins), and the scroll-to-end button are the same door — **and a fill re-opens it** (`revealed`), because a suggested follow-up, a queued row's
-  Edit or an "Ask about this" has to be seen. A composer that collapsed *itself* — on a narrow
-  panel or a short window — was tried and removed: it took the box away from someone who was
-  typing, on no gesture at all, and left a "Show composer" button where the box had been. A
-  thread with nothing to scroll cannot be unpinned, so a new thread is never the one that leaves;
-  so is the landing console, which has no scroller to ask.
+- **After the first message the composer is the mini one, and the advanced form is a toggle on it
+  — nothing is hidden behind a button of its own.** `ThreadView` hands `Composer` `compact`
+  (the thread is not empty), and the mini box is the editor, the toggle and Send on one line:
+  the scope row, the add menu, the pickers and the readings come back with the toggle
+  (remembered per thread for the life of the page, `ADVANCED_THREADS`). A draft and the landing
+  console are the full box — the first message is written in it. `ThreadView` also hands it the
+  scroller's own pin (`useFollowStream.pinned`) as `collapsed`: leaving the tail folds an advanced
+  box back to mini, and **a fill re-opens it** (`revealed`), because a suggested follow-up, a
+  queued row's Edit or an "Ask about this" has to be seen. Only a voice call still takes the box
+  away (the `composer-pill`, a clip-path morph that keeps the height it reserves,
+  `--composer-dock-h`). A composer that collapsed *itself* — on a narrow panel or a short window —
+  was tried and removed: it took the box away from someone who was typing, on no gesture at all.
 - **The shelf has a surface of its own** (`--shelf`, `bg-shelf`), derived from `--composer`
   and **darker than it in both modes — which is two declarations, not one**: darker is toward
   the foreground in a light palette and toward the *background* in a dark one, where

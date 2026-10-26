@@ -429,9 +429,4 @@ export function initialsOf(name: string): string {
   return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase()
 }
 
-/** A stable hue per name, so the same assignee is the same colour everywhere. */
-export function hueOf(name: string): number {
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360
-  return h
-}
+export { hueOf } from "@/lib/hue"

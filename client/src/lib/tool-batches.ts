@@ -56,6 +56,12 @@ export interface BatchSpan extends StepSpan {
   step?: string
   /** Where the wait before this call's request went, when the runtime says. */
   lead?: StepLead
+  /** A row that is not a call but is part of the previous batch's tail — the
+      reasoning that ended its response (`groupToolRuns`). It joins no batch and
+      takes no place in one: it only says the batch stopped being written when
+      this ended, so the wait after it is not the wait *through* it. The
+      thought's own line already reports how long it thought. */
+  quiet?: true
 }
 
 /** A call's span for the batch layout: a call still out has no end, and a
@@ -100,11 +106,32 @@ export interface StepBatch {
 
 export function layoutBatches(spans: readonly BatchSpan[], options: BatchOptions): StepBatch[] {
   const out: StepBatch[] = spans.map(() => ({}))
-  const batches: { members: number[]; start: number; end: number; step?: string }[] = []
+  /* `end` is what the batch's calls cost; `wrote` is when its step stopped being
+     written, which a thought riding after the calls pushes later than they
+     ended — and `at` is the row that said so, since that is where the wait after
+     it is drawn. The span is the first and the wait after it is the second. */
+  const batches: {
+    members: number[]
+    start: number
+    end: number
+    wrote: number
+    at: number
+    step?: string
+  }[] = []
 
   spans.forEach((span, i) => {
-    if (span.start === undefined) return
     const last = batches[batches.length - 1]
+    /* A quiet row is not a batch of its own: it closes the one before it, so the
+       wait after the thinking is measured from where the thinking ended rather
+       than from the call that preceded it. */
+    if (span.quiet) {
+      if (last && Number.isFinite(last.wrote) && span.end !== undefined && span.end > last.wrote) {
+        last.wrote = span.end
+        last.at = i
+      }
+      return
+    }
+    if (span.start === undefined) return
     const sameStep =
       last && span.step !== undefined && last.step !== undefined ? span.step === last.step : undefined
     const joins =
@@ -112,8 +139,11 @@ export function layoutBatches(spans: readonly BatchSpan[], options: BatchOptions
     if (last && joins) {
       last.members.push(i)
       last.end = Math.max(last.end, span.end ?? Infinity)
+      last.wrote = last.end
+      last.at = i
     } else {
-      batches.push({ members: [i], start: span.start, end: span.end ?? Infinity, step: span.step })
+      const end = span.end ?? Infinity
+      batches.push({ members: [i], start: span.start, end, wrote: end, at: i, step: span.step })
     }
   })
 
@@ -128,12 +158,12 @@ export function layoutBatches(spans: readonly BatchSpan[], options: BatchOptions
       else out[last].running = batch.members.filter((i) => spans[i].end === undefined).length
     }
     const next = batches[b + 1]
-    if (options.gapMinMs === null || !next || !Number.isFinite(batch.end)) return
-    const gap = next.start - batch.end
+    if (options.gapMinMs === null || !next || !Number.isFinite(batch.wrote)) return
+    const gap = next.start - batch.wrote
     /* A zero wait is a step that started the instant the last ended — nothing
        to say, even on "All". */
     if (gap > 0 && gap >= options.gapMinMs) {
-      const row = out[batch.members[size - 1]]
+      const row = out[batch.at]
       row.gapMs = gap
       const lead = spans[next.members[0]].lead
       if (lead) row.gapLead = lead

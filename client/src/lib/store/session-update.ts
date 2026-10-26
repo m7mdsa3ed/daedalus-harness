@@ -57,15 +57,32 @@ function appendText(
   parentId?: string,
   endedAt?: number
 ): ThreadItem[] {
-  const last = items[items.length - 1]
-  /* Same kind AND same owner: a subagent's prose and the parent's resuming
-     after it are two runs, not one. Without the second test the parent's next
-     sentence was glued onto the child's last one — inside the child's rail. */
-  if (last && last.kind === kind && last.parentId === parentId) {
+  /* **The run an owner is writing, wherever it sits** — not `items.at(-1)`.
+     Chunks of two sessions interleave on one thread's socket: parallel
+     subagents each think at once, and every child update carries its own
+     `sessionId` (so its own `parentId`). A run merged only into the literal
+     last item then broke at every interleave — one thinking subagent drew as a
+     row per chunk of the other's, each with its own clock, which is the
+     transcript of "Thinking 10s 910ms", "Thinking 10s 637ms", "Thinking 4s
+     611ms" over fragments of one sentence. So the tail is walked back to the
+     newest item this owner wrote, and nothing but its own newer items may
+     stand between: the moment this owner has written something else since
+     (prose, a call), that earlier run is over and this chunk opens a new one.
+     Which is what keeps a subagent's prose and the parent's resuming after it
+     two runs rather than one, and the parent's next sentence out of the child's
+     rail. */
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]
+    if (item.parentId !== parentId) continue
+    if (item.kind !== kind) break
     /* The run's end moves with every chunk that joins it, so the item ends up
        holding the last one: a run the replay split at its size cap arrives as
        two merged events, and the second's end is the run's own. */
-    return [...items.slice(0, -1), { ...last, text: last.text + text, endedAt: endedAt ?? last.endedAt }]
+    return [
+      ...items.slice(0, i),
+      { ...item, text: item.text + text, endedAt: endedAt ?? item.endedAt },
+      ...items.slice(i + 1),
+    ]
   }
   /* A thought's clock starts where the step before it ended, never later than
      its own first chunk (`TextItem.startedAt`). */

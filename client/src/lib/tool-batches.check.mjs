@@ -75,4 +75,18 @@ assert.deepEqual(rows[0].gapLead, { ttftMs: 4000 })
 assert.equal(rows[1].gapLead, undefined) // a wait too short to say carries nothing
 rows = layoutBatches([{ start: 0, end: 10 }, { start: 5000, end: 5100 }], timing)
 assert.equal(rows[0].gapLead, undefined) // a runtime that does not say
+// Reasoning that ended a step closes the batch above it, so the wait after the
+// thinking is what is left once it stopped — not the whole thinking again.
+// It joins no batch: it takes no place, no index and no size.
+rows = layoutBatches([{ start: 0, end: 10 }, { end: 5000, quiet: true }, { start: 8000, end: 8100 }], timing)
+assert.equal(rows[1].gapMs, 3000, "the wait runs from the thinking's end, and is drawn under it")
+assert.equal(rows[0].gapMs, undefined)
+assert.deepEqual([rows[1].index, rows[1].size, rows[1].edge], [undefined, undefined, undefined])
+// A quiet row with nothing before it says nothing rather than inventing a batch.
+rows = layoutBatches([{ end: 5000, quiet: true }, { start: 5100, end: 5200 }], timing)
+assert.equal(rows[1].gapMs, undefined)
+// One that ended the batch in a batch's own word: the bracket is still the calls.
+rows = layoutBatches([{ start: 0, end: 10, step: "a" }, { start: 5, end: 20, step: "a" }, { end: 900, quiet: true }], timing)
+assert.deepEqual(rows.map((r) => [r.index, r.size]), [[1, 2], [2, 2], [undefined, undefined]])
+assert.equal(rows[1].spanMs, 20, "the bracket is the calls' own cost, not the thinking's")
 console.log("tool-batches: ok")

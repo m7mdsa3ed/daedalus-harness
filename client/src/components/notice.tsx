@@ -83,6 +83,7 @@ export function Notice({
     <Alert
       variant={t === "error" ? "destructive" : "default"}
       role={t === "warn" || t === "error" ? "alert" : "status"}
+      dir="auto"
       className={cn(
         "flex items-start gap-2.5",
         size === "md" ? "px-4 py-3" : "px-3 py-2",

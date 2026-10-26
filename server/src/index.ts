@@ -8,6 +8,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { loadConfig } from "./config.js";
 import { HttpError } from "./http-error.js";
 import { migrateLegacyPrompts } from "./legacy-prompts.js";
+import { backfillPeakSchedules } from "./peak-schedules.js";
 import { migrateScheduledMessages } from "./scheduled-migration.js";
 import { retitleBuiltinMcp } from "./library.js";
 import { seedModelPrompts, writeModelPromptsLibrary } from "./model-prompts.js";
@@ -76,6 +77,10 @@ configureOtlp({ port: config.port });
 await seedAgents();
 // Legacy saved prompts and personas become slash commands, once.
 await migrateLegacyPrompts();
+/* The published time-of-day rate cards onto models saved before `peak`
+   existed, once, and only where the user has written no schedule of their own.
+   See peak-schedules.ts for which families bill by the clock. */
+mark(`peak schedules: ${await backfillPeakSchedules()} model(s)`);
 // Scheduled messages become session-mode routines, once.
 await migrateScheduledMessages();
 /* Same rules again for the model-prompt library, then the file the runtime

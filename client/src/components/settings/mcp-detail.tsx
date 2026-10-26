@@ -22,7 +22,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { BracesIcon, FileTextIcon, MessageSquareTextIcon, SearchCheckIcon, WrenchIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { Notice } from "@/components/notice"
 import { Empty } from "@/components/empty"

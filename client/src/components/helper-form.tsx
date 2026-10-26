@@ -1,7 +1,7 @@
 import * as React from "react"
 import { ChevronRight, Plus } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"

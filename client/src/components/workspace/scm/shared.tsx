@@ -10,7 +10,7 @@ import * as React from "react"
 import { PlusSignIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Spinner } from "@/components/ui/spinner"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { cn } from "@/lib/utils"

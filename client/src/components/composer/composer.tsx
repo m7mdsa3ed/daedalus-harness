@@ -70,8 +70,8 @@ import {
   AudioLines,
   Check,
   ChevronDown,
+  ChevronUp,
   Maximize2,
-  MessageSquareText,
   Mic,
   Minimize2,
   Pause,
@@ -81,7 +81,7 @@ import {
   TriangleAlert,
 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Spinner } from "@/components/ui/spinner"
 import { McpPicker } from "@/components/composer/mcp-picker"
 import { KEY_MARK } from "@/components/composer/indicator"
@@ -100,6 +100,7 @@ import { quoteLines } from "@/components/composer/editor-text"
 import { ComposerStrip } from "@/components/composer-strip"
 import { ComposerAddMenu } from "@/components/composer/add-menu"
 import { EnhanceButton } from "@/components/composer/enhance-button"
+import { PeakIndicator } from "@/components/composer/peak-indicator"
 import { composerKeyDown } from "@/components/composer/keys"
 import { usePromptHistory } from "@/components/composer/prompt-history"
 import { PromptHistoryWalk } from "@/components/composer/history-menu"
@@ -194,6 +195,9 @@ export interface ComposerHandle {
   quote(excerpt: string): void
 }
 
+/* Threads whose reader opened the advanced box, for the life of the page. */
+const ADVANCED_THREADS = new Set<string>()
+
 /* Memoized: `ThreadView` re-renders on every streamed token, and the
    composer — the Tiptap editor, the indicators, the menus — was re-rendered
    with it on the urgent pass, holding the *old* deferred thread, before its
@@ -214,6 +218,7 @@ export const Composer = React.memo(function Composer({
   placeholder,
   autoFocus,
   collapsed = false,
+  compact = false,
   voiceCall = false,
   ref,
 }: {
@@ -238,13 +243,17 @@ export const Composer = React.memo(function Composer({
       whose route is `/` and whose only purpose is this box. Still refused on
       touch, and still only for a draft. */
   autoFocus?: boolean
-  /** The reader has scrolled away from the tail of the transcript, so the box
-      rides down out of the way until they come back to it. Read off the
-      scroller's own pin by `ThreadView` (`useFollowStream`), never state of this
-      component's own, so it is the same fact the scroll-to-end button draws.
-      The reserved height stays (`--composer-dock-h`): collapsing must not
-      re-flow the transcript under somebody who is reading it. */
+  /** The reader has scrolled away from the tail of the transcript, so an
+      advanced box folds to the mini one until they come back to it. Read off
+      the scroller's own pin by `ThreadView` (`useFollowStream`), never state of
+      this component's own, so it is the same fact the scroll-to-end button
+      draws. */
   collapsed?: boolean
+  /** The thread has started, so the box is the mini one by default — a line, a
+      send and the toggle — and the advanced form (every control, the scope row
+      and its readings) is a choice. False for a draft and the landing console,
+      which are what the first message is written in and draw the whole box. */
+  compact?: boolean
   /** Offer the voice call. Wherever it is offered, something has to draw the
       call card with it — a thread view at the transcript's foot, the landing
       console above its box (`landing-page.tsx`). */
@@ -270,15 +279,29 @@ export const Composer = React.memo(function Composer({
   const onEditorOverflowChange = React.useCallback((overflowing: boolean) => {
     setEditorOverflows(overflowing)
   }, [])
-  /* Words put in the box from outside it — a suggested follow-up, a queued row's
-     Edit, an "Ask about this", the enhancer's rewrite — have to be *seen*, so a
-     fill while the box is scrolled away re-opens it. Handed back to the scroll
-     the moment the reader is at the tail again, which is the state the pin was
-     clean in; the box is an overlay, so re-opening one moves nothing. */
+  /* Mini or advanced, for a started thread. Mini is the default and advanced is
+     the reader's choice, remembered per thread for as long as the page lives so
+     a tab switch does not fold a box they opened. Scrolling off the tail folds
+     an advanced box back to mini (`collapsed`) and `revealed` is the reader
+     asking for it again — the toggle, or words put in the box from outside it (a
+     suggested follow-up, a queued row's Edit, an "Ask about this", the
+     enhancer's rewrite), which have to be seen. Handed back to the scroll the
+     moment the reader is at the tail again. */
+  const [advanced, setAdvancedState] = React.useState(() => ADVANCED_THREADS.has(sessionId))
+  React.useEffect(() => setAdvancedState(ADVANCED_THREADS.has(sessionId)), [sessionId])
   const [revealed, setRevealed] = React.useState(false)
   React.useEffect(() => {
     if (!collapsed) setRevealed(false)
   }, [collapsed])
+  const mini = compact && (!advanced || (collapsed && !revealed))
+  const toggleAdvanced = () => {
+    const next = mini ? true : !advanced
+    if (next) ADVANCED_THREADS.add(sessionId)
+    else ADVANCED_THREADS.delete(sessionId)
+    setAdvancedState(next)
+    setRevealed(next)
+    requestAnimationFrame(() => composerRef.current?.focus())
+  }
   textRef.current = text
   React.useEffect(() => setText(loadDraft(sessionId)), [sessionId])
   React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
@@ -892,19 +915,17 @@ export const Composer = React.memo(function Composer({
         ? `Queue (${steerChord} steers the running turn instead)`
         : "Send"
 
-  /* Away only while the scroll says so and nothing has just been put in the box
-     — see `revealed` above. */
-  const away = (collapsed && !revealed) || inCall
+  /* Away for the whole of a voice call, whose controls take the box's place. */
+  const away = inCall
 
   return (
-    /* Collapsed: the reader has left the tail, so the shelf rides down out of
-       the way and the card morphs into a pill — a transform, an opacity and a
-       clip, never `hidden`, so the height it reserves for the transcript
-       (measured off this element as `--composer-dock-h`) does not move and the
-       words being read stay put. `inert` too, or the box would keep the caret
-       and the tab order while it is clipped away. What brings it back is the
-       reader's own gesture: the pill, reaching the bottom (which re-pins the
-       scroller, `useFollowStream`), or the scroll-to-end button. */
+    /* In a call the shelf rides down out of the way and the card morphs into a
+       pill — a transform, an opacity and a clip, never `hidden`, so the height
+       it reserves for the transcript (measured off this element as
+       `--composer-dock-h`) does not move. `inert` too, or the box would keep
+       the caret and the tab order while it is clipped away. Out of a call the
+       box never leaves: it is the mini one when the thread is started and the
+       reader is not asking for more. */
     <div
       data-composer-away={away || undefined}
       className={cn(
@@ -912,33 +933,23 @@ export const Composer = React.memo(function Composer({
         away ? "pointer-events-none" : "pointer-events-auto"
       )}
     >
-      {/* Away, the card morphs into this pill (its clip-path below shrinks onto
-          exactly this box), and a click is the reader asking for the box back:
-          the same `revealed` a fill sets, handed back to the scroll at the tail.
-          In a call the box is away for good and the pill is the way out of it:
-          it ends the call, which gives the box back. */}
+      {/* In a call the card morphs into this pill (its clip-path below shrinks
+          onto exactly this box) and the pill is the way out of it: it ends the
+          call, which gives the box back. */}
       <button
         type="button"
         tabIndex={away ? 0 : -1}
         aria-hidden={!away || undefined}
-        aria-label={inCall ? "End voice call" : "Message the agent"}
-        title={inCall ? `End voice call${voiceChord ? ` (${voiceChord})` : ""}` : text.trim() || "Message the agent"}
-        onClick={() => {
-          if (inCall) return endVoiceCall(sessionId)
-          setRevealed(true)
-          requestAnimationFrame(() => composerRef.current?.focus())
-        }}
+        aria-label="End voice call"
+        title={`End voice call${voiceChord ? ` (${voiceChord})` : ""}`}
+        onClick={() => endVoiceCall(sessionId)}
         className={cn(
           "composer-pill absolute bottom-[max(0.75rem,var(--safe-bottom))] right-[max(1rem,calc((100%_-_var(--harness-composer-width))/2))] z-20",
           "transition-opacity duration-300 ease-out motion-reduce:transition-none",
           away ? "pointer-events-auto opacity-100 delay-100" : "pointer-events-none opacity-0"
         )}
       >
-        {inCall ? (
-          <PhoneOff className="size-4 shrink-0 text-destructive" />
-        ) : (
-          <MessageSquareText className="size-4 shrink-0" />
-        )}
+        <PhoneOff className="size-4 shrink-0 text-destructive" />
       </button>
       {/* The call's controls, beside the pill that ends it: the box is away
           for the whole call, so this is where it is run from. Mounted here,
@@ -979,7 +990,8 @@ export const Composer = React.memo(function Composer({
            at, so it is a `Notice` at the foot of the transcript with the other
            things the thread is doing (`ThreadStatus`). */
         footer={
-          meta && (
+          meta &&
+          !mini && (
             <DraftScopeRow
               meta={meta}
               actions={actions}
@@ -1001,6 +1013,9 @@ export const Composer = React.memo(function Composer({
                   {!draft && <AutomationsIndicator sessionId={sessionId} />}
                   <ChangesIndicator changes={changes} />
                   <RepoIndicator meta={meta} />
+                  {/* What the hour does to this model's price — drawn only
+                      while a schedule says the row's number is not it. */}
+                  <PeakIndicator meta={meta} />
                   <ContextIndicator
                     thread={thread}
                     meta={meta}
@@ -1066,7 +1081,9 @@ export const Composer = React.memo(function Composer({
             : "[clip-path:inset(-5rem)]",
           /* The composer's ground (theme glass, the recipe `Card` wears). */
           "bg-composer-glass backdrop-blur-[var(--app-blur)] backdrop-saturate-[calc(1.3*var(--app-saturate))]",
-          voice.listening && "ring-1 ring-destructive/40"
+          voice.listening && "ring-1 ring-destructive/40",
+          /* Mini: the editor, the toggle and Send share one line. */
+          mini && "flex items-end gap-1"
         )}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return
@@ -1101,7 +1118,8 @@ export const Composer = React.memo(function Composer({
             of controls about sending. It rewrites the draft through the AI SDK
             against the profile picked in Settings › General — a device habit,
             not a property of the thread. */}
-        <div className={cn("absolute right-composer-pad z-10", coarse ? "top-[calc(var(--spacing-composer-pad)+0.125rem)]" : "top-[calc(var(--spacing-composer-pad)+0.375rem)]")}>
+        {!mini && (
+        <div className={cn("absolute right-composer-pad z-10 animate-in fade-in-0 duration-300 motion-reduce:animate-none", coarse ? "top-[calc(var(--spacing-composer-pad)+0.125rem)]" : "top-[calc(var(--spacing-composer-pad)+0.375rem)]")}>
           <EnhanceButton
             sessionId={sessionId}
             meta={meta}
@@ -1114,6 +1132,7 @@ export const Composer = React.memo(function Composer({
             onEnhanced={applySuggestion}
           />
         </div>
+        )}
         <ComposerEditor
           ref={composerRef}
           value={text}
@@ -1160,11 +1179,11 @@ export const Composer = React.memo(function Composer({
             /* Same reading size as the transcript's messages: the card carries
                the `--text-sm` bump `.thread-transcript` sets, so typing matches
                what is being answered. */
-            "w-full text-sm md:text-sm",
+            mini ? "min-w-0 flex-1 text-sm md:text-sm" : "w-full text-sm md:text-sm",
             /* Clear of the enhance button in the corner. */
-            coarse ? "pr-8" : "pr-6",
+            !mini && (coarse ? "pr-8" : "pr-6"),
             /* Keep the compact default, with more room available on demand. */
-            expanded ? "max-h-[min(50vh,32rem)]" : "max-h-40",
+            expanded ? "max-h-[min(50vh,32rem)]" : mini ? "max-h-24" : "max-h-40",
             /* Roomier under a thumb: the caret row leading its 32px buttons
                is how the row stays visually centred while the targets grow. */
             coarse && "[&_.tiptap]:min-h-11"
@@ -1181,8 +1200,17 @@ export const Composer = React.memo(function Composer({
              making any of them easier to hit — the glyphs are the same size
              either way, so all the extra gap bought was air. Only the row's
              own height grows, which is what keeps the box clear of the thumb. */
-          className={cn("flex items-center gap-1 pt-1", coarse && "pt-2")}
+          /* Mini: the row is as tall as the editor's one line (`min-h-9`, 11 on
+             touch) and centres its buttons in it, so they sit on the text's
+             line rather than hanging off the bottom of the box. */
+          className={cn(
+            "flex items-center gap-1 pt-1",
+            coarse && "pt-2",
+            mini && cn("shrink-0 self-end pt-0", coarse ? "min-h-11" : "min-h-9")
+          )}
         >
+          {!mini && (
+            <>
           <ComposerAddMenu
             disabled={disabled || gated}
             size={iconSize}
@@ -1211,7 +1239,7 @@ export const Composer = React.memo(function Composer({
             }}
             onClear={clearAll}
           />
-          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="flex min-w-0 flex-1 animate-in items-center gap-1 overflow-x-auto fade-in-0 slide-in-from-bottom-1 duration-300 [scrollbar-width:none] motion-reduce:animate-none [&::-webkit-scrollbar]:hidden">
             {/* Who answers. */}
             {/* `keys`: Alt+M / Alt+S open these from anywhere in the thread in
                 front — the menus are already arrow/typeahead/Space driven. */}
@@ -1221,6 +1249,8 @@ export const Composer = React.memo(function Composer({
             {/* The MCPs it will carry, read and picked here beside the model. */}
             {meta && <McpPicker meta={meta} actions={actions} keys={routed || autoFocus} />}
           </div>
+            </>
+          )}
           {/* The completion lane at work. It sits in this row rather than over
               the text because nothing about it is positioned: it is a fact about
               the box, like the length. A failure takes the same slot for one
@@ -1284,7 +1314,7 @@ export const Composer = React.memo(function Composer({
               {expanded ? <Minimize2 className={KEY_MARK} /> : <Maximize2 className={KEY_MARK} />}
             </Button>
           )}
-          {voice.supported && (voice.listening || (!hasContent && !gated)) && (
+          {voice.supported && (voice.listening || (!mini && !hasContent && !gated)) && (
             <Button
               variant="ghost"
               size={iconSize}
@@ -1302,7 +1332,7 @@ export const Composer = React.memo(function Composer({
               <Mic className={KEY_MARK} />
             </Button>
           )}
-          {voiceBackend && voiceCall && (
+          {voiceBackend && voiceCall && !mini && (
             <Button
               variant="ghost"
               size={iconSize}
@@ -1327,7 +1357,7 @@ export const Composer = React.memo(function Composer({
               is the same hold: a turn that failed waits at the same boundary
               for the same resume. Only the words change — after a model change
               this is Continue, and continuing is what it does. */}
-          {thread.canPause && (thread.turnActive || thread.paused) && (
+          {thread.canPause && (thread.turnActive || thread.paused) && (!mini || thread.paused) && (
             <Button
               variant="ghost"
               size={iconSize}
@@ -1351,6 +1381,19 @@ export const Composer = React.memo(function Composer({
               }
             >
               {thread.paused ? <Play className={KEY_MARK} /> : <Pause className={KEY_MARK} />}
+            </Button>
+          )}
+          {compact && (
+            <Button
+              variant="ghost"
+              size={iconSize}
+              className="text-muted-foreground"
+              onClick={toggleAdvanced}
+              title={mini ? "Show all controls" : "Show the mini composer"}
+              aria-label={mini ? "Show all controls" : "Show the mini composer"}
+              aria-pressed={!mini}
+            >
+              {mini ? <ChevronUp className={KEY_MARK} /> : <ChevronDown className={KEY_MARK} />}
             </Button>
           )}
           {thread.turnActive && (

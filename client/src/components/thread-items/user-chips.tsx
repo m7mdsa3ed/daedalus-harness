@@ -31,6 +31,7 @@ import {
 } from "@/components/inline-chip"
 import { FilePreviewContext, projectPath } from "@/lib/file-preview"
 import { TASK_KEY } from "@/lib/task-mentions"
+import { readsAsMarkdown } from "@/lib/paste-markdown"
 import { useKindFace, parseKindToken, parseRangeToken } from "@/lib/mentions"
 
 type MdNode = {
@@ -199,7 +200,13 @@ function PasteChip({ n }: Hast & { n?: string }) {
         icon={ClipboardListIcon}
         label={/^0/.test(n ?? "") ? "Pasted text" : `Pasted text #${n}`}
         aside={linesLabel(lines)}
-        preview={<ChipPreview caption={`${body.length.toLocaleString()} chars`} text={body} />}
+        preview={
+          <ChipPreview
+            caption={`${body.length.toLocaleString()} chars`}
+            text={body}
+            markdown={readsAsMarkdown(body)}
+          />
+        }
       />
     </span>
   )

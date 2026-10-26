@@ -8,8 +8,20 @@ import { ErrorNote } from "@/components/error-note"
 import { EntityIcon } from "@/components/entity-icon"
 import { captureError, type InlineError } from "@/lib/errors"
 import { api, type ModelCandidate, type ModelKind, type ModelWire, type ServerSettings } from "@/lib/settings"
+import {
+  bandLabel,
+  daysLabel,
+  parsePeak,
+  peakState,
+  phaseLabel,
+  upcomingTransitions,
+  windowLabel,
+  windowRun,
+  zoneLabel,
+  type PeakSchedule,
+} from "@daedalus/peak"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -56,6 +68,13 @@ export interface ModelRow {
   efforts: string
   pricingInput: string
   pricingOutput: string
+  /** The peak/off-peak schedule, as written (`@daedalus/peak`). Empty = the
+      listed price is the price at every hour. */
+  peakWindows: string
+  /** `"peak"` or `"off-peak"`. */
+  peakWhen: "peak" | "off-peak"
+  /** A multiple of the listed price. Empty = 2 for `peak`, 0.5 for `off-peak`. */
+  peakMultiplier: string
   modalities: string
   devRef: string
   iconUrl: string
@@ -80,6 +99,9 @@ export const blankModelRow = (): ModelRow => ({
   efforts: "",
   pricingInput: "",
   pricingOutput: "",
+  peakWindows: "",
+  peakWhen: "peak",
+  peakMultiplier: "",
   modalities: "",
   devRef: "",
   iconUrl: "",
@@ -100,6 +122,9 @@ export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
   efforts: candidate.reasoningEfforts.join(", "),
   pricingInput: candidate.pricing ? String(candidate.pricing.input) : "",
   pricingOutput: candidate.pricing ? String(candidate.pricing.output) : "",
+  peakWindows: "",
+  peakWhen: "peak",
+  peakMultiplier: "",
   modalities: (candidate.modalities ?? []).join(", "),
   devRef: candidate.devRef ?? "",
   iconUrl: candidate.iconUrl ?? "",
@@ -116,6 +141,7 @@ export const toModelRows = (models: {
   maxOutputTokens?: number
   reasoningEfforts: string[]
   pricing?: { input: number; output: number }
+  peak?: PeakSchedule
   modalities?: string[]
   devRef?: string
   iconUrl?: string
@@ -133,6 +159,9 @@ export const toModelRows = (models: {
     efforts: m.reasoningEfforts.join(", "),
     pricingInput: m.pricing ? String(m.pricing.input) : "",
     pricingOutput: m.pricing ? String(m.pricing.output) : "",
+    peakWindows: m.peak?.windows ?? "",
+    peakWhen: m.peak?.when === "off-peak" ? "off-peak" : "peak",
+    peakMultiplier: m.peak?.multiplier !== undefined ? String(m.peak.multiplier) : "",
     modalities: (m.modalities ?? []).join(", "),
     devRef: m.devRef ?? "",
     iconUrl: m.iconUrl ?? "",
@@ -150,6 +179,7 @@ export function rowsToModels(rows: ModelRow[]) {
     maxOutputTokens?: number
     reasoningEfforts: string[]
     pricing?: { input: number; output: number }
+    peak?: PeakSchedule
     modalities?: string[]
     devRef?: string
     iconUrl?: string
@@ -183,6 +213,21 @@ export function rowsToModels(rows: ModelRow[]) {
       pricingInput > 0 &&
       pricingOutput > 0
         ? { pricing: { input: pricingInput, output: pricingOutput } }
+        : {}),
+      /* The schedule is kept exactly as typed — it is a sentence, not a
+         number, and the parser treats an unreadable one as no schedule at all
+         rather than as a default. Losing the reader's spelling would mean they
+         could not see why nothing was drawn. */
+      ...(row.peakWindows.trim()
+        ? {
+            peak: {
+              windows: row.peakWindows.trim(),
+              when: row.peakWhen,
+              ...(row.peakMultiplier.trim() && Number(row.peakMultiplier) > 0
+                ? { multiplier: Number(row.peakMultiplier) }
+                : {}),
+            },
+          }
         : {}),
       ...(modalities.length ? { modalities } : {}),
       ...(row.devRef.trim() ? { devRef: row.devRef.trim() } : {}),
@@ -218,6 +263,13 @@ const summaryBadges = (row: ModelRow) => {
   if (context > 0) badges.push(`${formatTokens(Math.round(context))} context`)
   if (row.pricingInput.trim() && row.pricingOutput.trim())
     badges.push(`$${trimNum(Number(row.pricingInput))} / $${trimNum(Number(row.pricingOutput))} per Mtok`)
+  const peak = parsePeak(row.peakWindows.trim() ? { windows: row.peakWindows, when: row.peakWhen } : null)
+  if (peak)
+    badges.push(
+      `${row.peakWhen} ×${trimNum(peak.multiplier)} · ${peak.windows
+        .map((window) => `${daysLabel(window.days)} ${windowLabel(window)}`)
+        .join(", ")} ${zoneLabel(peak.zone)}`,
+    )
   const efforts = row.efforts.split(/[,\s]+/).filter(Boolean)
   if (efforts.length) badges.push(`efforts: ${efforts.join(" · ")}`)
   const modalities = row.modalities.split(/[,\s]+/).filter((m) => m && m !== "text")
@@ -298,6 +350,56 @@ const MODEL_COLUMNS: ColumnDef<ModelItem, unknown>[] = [
       )
     },
     meta: { align: "end", className: "hidden @panel-md:table-cell w-32" },
+  },
+  {
+    id: "peak",
+    header: "Peak",
+    cell: ({ row }) => {
+      const { peakWindows, peakWhen } = row.original.row
+      const plan = parsePeak(
+        peakWindows.trim() ? { windows: peakWindows, when: peakWhen } : null,
+      )
+      /* Unreadable is said as unreadable: a schedule printed as though it were
+         in force is a badge the composer will silently never draw. */
+      if (!plan) {
+        return peakWindows.trim() ? (
+          <span className="text-xs text-destructive" title={peakWindows}>
+            unreadable
+          </span>
+        ) : (
+          <Dash />
+        )
+      }
+      /* The column says what the schedule is doing **now** — the same word the
+         composer's badge prints — because "peak · 2" told a reader how the card
+         is written and never which side of it they were on. The sentence itself
+         is one hover away, and the count names the windows it parses to. */
+      const now = Date.now()
+      const phase = phaseLabel(peakState(plan, now), plan)
+      const next = upcomingTransitions(plan, now)[0] ?? null
+      /* The sentence and the next change, on one line: `title` is a single-line
+         tip, and a `\n` in one runs the two facts together anyway. */
+      const title = next
+        ? `${plan.raw} — ${bandLabel(next.band, plan)} from ${new Date(next.at).toLocaleString(
+            undefined,
+            { weekday: "short", hour: "2-digit", minute: "2-digit" },
+          )}`
+        : plan.raw
+      return (
+        <span className="whitespace-nowrap text-sm" title={title}>
+          <span
+            className={cn(
+              phase === "Peak" && "text-warning",
+              phase === "Off-peak" && "text-success",
+            )}
+          >
+            {phase}
+          </span>
+          <span className="text-muted-foreground"> · {plan.windows.length}</span>
+        </span>
+      )
+    },
+    meta: { className: "hidden @panel-lg:table-cell w-24" },
   },
   {
     id: "efforts",
@@ -765,6 +867,117 @@ function ModelEditorFields({
             className="text-left @panel-sm:text-right font-mono"
           />
         </Field>
+        <div className="@panel-sm:col-span-2">
+          <Field
+            label="Peak / off-peak windows"
+            hint="Optional. When the price above is not what a request costs. Free-form: 01:00-04:00, 06:00-10:00 UTC · Mon-Fri 01:00-04:00 UTC · 22:00-08:00 Asia/Shanghai · 1am-4am UTC. Leave empty for a flat price."
+          >
+            <Input
+              value={row.peakWindows}
+              onChange={(e) => onPatch({ peakWindows: e.target.value })}
+              placeholder="01:00-04:00, 06:00-10:00 UTC"
+              className="font-mono"
+            />
+          </Field>
+          {row.peakWindows.trim() && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {(() => {
+                const plan = parsePeak({
+                  windows: row.peakWindows,
+                  when: row.peakWhen,
+                  ...(row.peakMultiplier.trim() && Number(row.peakMultiplier) > 0
+                    ? { multiplier: Number(row.peakMultiplier) }
+                    : {}),
+                })
+                if (!plan) return "Not readable yet — a window needs a time range, e.g. 01:00-04:00 UTC."
+                /* The sentence a person typed, read back **on their own clock
+                   first** — the hours they will actually act on — with the
+                   provider's spelling beside it, because that is the page it
+                   came from. The local side is resolved per window (its next
+                   run, so a DST edge moves with it) instead of shifting by an
+                   offset, and the weekday comes with it: a window that opens at
+                   01:00 UTC lands on the previous evening west of Greenwich. */
+                const now = Date.now()
+                const clock = (at: number) =>
+                  new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+                const stamp = (at: number) =>
+                  new Date(at).toLocaleString(undefined, {
+                    weekday: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                const local = plan.windows
+                  .slice(0, 4)
+                  .map((window) => {
+                    const run = windowRun(window, plan.zone, now)
+                    if (!run) return null
+                    /* The end carries its weekday only when it falls on another
+                       day — the one case where the hours alone read backwards
+                       (a window opening at 22:00 here and closing at 02:00). */
+                    const sameDay =
+                      new Date(run.start).toDateString() === new Date(run.end).toDateString()
+                    return `${clock(run.start)}-${sameDay ? clock(run.end) : stamp(run.end)}`
+                  })
+                  .filter(Boolean)
+                  .join(", ")
+                const zone = plan.windows
+                  .slice(0, 4)
+                  .map((window) => `${daysLabel(window.days)} ${windowLabel(window)}`)
+                  .join(", ")
+                /* What it means right now, and when that changes — the two facts
+                   the badge in the composer leads with, so the editor cannot
+                   disagree with the reading it configures. */
+                const phase = phaseLabel(peakState(plan, now), plan)
+                const transitions = upcomingTransitions(plan, now)
+                const next = transitions[0] ?? null
+                const rise = transitions.find((t) => t.dearer) ?? null
+                return `Reads as ${zone} ${zoneLabel(plan.zone)} — ${trimNum(
+                  plan.multiplier,
+                )}× the listed price inside those windows.${
+                  local ? ` On this device that is ${local}.` : ""
+                } Right now that is ${phase}${
+                  next ? `, with ${bandLabel(next.band, plan)} from ${stamp(next.at)}` : ""
+                }${
+                  /* A weekday card seen on a Saturday changes on Monday, so the
+                     hour somebody is actually waiting to avoid is worth naming
+                     even when it is not the next thing the schedule does. */
+                  rise && rise !== next
+                    ? `; the price next rises ${stamp(rise.at)}`
+                    : ""
+                }.`
+              })()}
+            </p>
+          )}
+        </div>
+        {row.peakWindows.trim() && (
+          <>
+            <Field label="The windows are">
+              <Select
+                value={row.peakWhen}
+                onValueChange={(value) => onPatch({ peakWhen: value as "peak" | "off-peak" })}
+              >
+                <SelectTrigger>
+                  <SelectValue>{row.peakWhen === "off-peak" ? "Off-peak (cheaper)" : "Peak (dearer)"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="peak">Peak (dearer)</SelectItem>
+                  <SelectItem value="off-peak">Off-peak (cheaper)</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Multiplier" hint="× the listed price. Empty = 2 for peak, 0.5 for off-peak.">
+              <Input
+                type="number"
+                step="any"
+                min="0"
+                value={row.peakMultiplier}
+                onChange={(e) => onPatch({ peakMultiplier: e.target.value })}
+                placeholder={row.peakWhen === "off-peak" ? "0.5" : "2"}
+                className="text-left @panel-sm:text-right font-mono"
+              />
+            </Field>
+          </>
+        )}
         <div className="@panel-sm:col-span-2">
           <Field label="Icon URL" hint="Optional — shown in the composer trigger when this model is selected.">
             <div className="flex items-center gap-2">

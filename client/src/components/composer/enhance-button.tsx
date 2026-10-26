@@ -6,7 +6,7 @@
 import * as React from "react"
 import { Sparkles } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Spinner } from "@/components/ui/spinner"
 import { KEY_MARK } from "@/components/composer/indicator"
 import {

@@ -20,10 +20,11 @@ import type { Actions } from "@/lib/actions"
 import type { ThreadState } from "@/lib/store"
 import { formatBytes } from "@/lib/attachments"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
 import { useLayoutOptionsContext } from "@/lib/layout-options"
+import { dominantTextDir } from "@/lib/text-direction"
 
 export function ComposerQueue({
   sessionId,
@@ -305,7 +306,7 @@ function QueuedMessageRow({
           </div>
         )}
       </div>
-      <div dir="auto" className="min-w-0 break-words px-1 text-sm text-muted-foreground">
+      <div dir={dominantTextDir(item.text)} className="min-w-0 break-words px-1 text-sm text-muted-foreground">
         {item.attachments && item.attachments.length > 0 && (
           <QueuedAttachments
             attachments={item.attachments}

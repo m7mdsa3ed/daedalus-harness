@@ -8,7 +8,6 @@ import { useState } from "react"
 import { ChevronDownIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import { Notice } from "@/components/notice"
 import {
@@ -21,7 +20,7 @@ import {
   Ring,
 } from "@/components/composer/indicator"
 import {
-  accountTitle,
+  accountsByProvider,
   formatAmount,
   formatReset,
   peakWindow,
@@ -254,46 +253,46 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
       {quota.windows.length === 0 && accounts.length === 0 ? (
         <p className="mt-2 text-xs text-muted-foreground">{quotaStatusText(quota)}</p>
       ) : accounts.length > 0 ? (
-        /* A gateway's reading, at a glance's measure: the account is the
-           heading — a thread that spends one of four accounts has to be told
-           which — and its own bars sit under it. */
-        <div className="mt-2 max-h-48 space-y-1 overflow-y-auto overscroll-contain pr-1">
-          {accounts.map((account, index) => {
-            const windows = windowsByGroup.get(account.group) ?? []
-            const accountPeak = windows.reduce<QuotaWindow | null>(
-              (worst, window) => (!worst || window.usedPercent > worst.usedPercent ? window : worst),
-              null
-            )
-            const percent = accountPeak ? Math.min(100, Math.max(0, Math.round(accountPeak.usedPercent))) : null
-            const tone = percent === null ? null : quotaTone(percent)
-            return (
-              <Collapsible key={account.id} defaultOpen={index === 0} className="border-b last:border-0">
-                <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-2 py-2 text-left">
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{accountTitle(account)}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {windows.length} {windows.length === 1 ? "window" : "windows"}
-                  </span>
-                  {percent !== null && tone && (
-                    <span className={cn("shrink-0 text-sm font-medium tabular-nums", tone.text)}>{percent}%</span>
-                  )}
-                  <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <div className="space-y-2 pb-2 pl-2">
-                    {windows.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">
-                        {account.disabled ? "Turned off in the gateway" : (account.state ?? "No quota reported")}
-                      </p>
-                    ) : (
-                      windows.map((window) => (
-                        <WindowBar key={window.id} window={window} label={window.label} />
-                      ))
-                    )}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            )
-          })}
+        /* A gateway's reading, at a glance's measure: the *provider* is the
+           heading, because that is the choice a person makes ("I am out of
+           Claude, is a Command Code seat free?"), and each account is one
+           compact line under it with its own worst window's number. Folded
+           per account would ask a tap per line to learn what one number
+           already says, in a popover with room for about eight of them. */
+        <div className="mt-2 max-h-64 space-y-2 overflow-y-auto overscroll-contain pr-1">
+          {accountsByProvider(accounts).map((group) => (
+            <div key={group.label}>
+              <p className="text-xs font-medium text-muted-foreground">
+                {group.label}
+                <span className="ps-1.5 font-normal tabular-nums text-muted-foreground/70">
+                  {group.accounts.length === 1 ? "1 account" : `${group.accounts.length} accounts`}
+                </span>
+              </p>
+              <div className="mt-1 space-y-1.5">
+                {group.accounts.map((account) => {
+                  const windows = windowsByGroup.get(account.group) ?? []
+                  const accountPeak = windows.reduce<QuotaWindow | null>(
+                    (worst, window) => (!worst || window.usedPercent > worst.usedPercent ? window : worst),
+                    null
+                  )
+                  const percent = accountPeak ? Math.min(100, Math.max(0, Math.round(accountPeak.usedPercent))) : null
+                  const tone = percent === null || account.disabled ? null : quotaTone(percent)
+                  return (
+                    <div key={account.id} className="flex min-w-0 items-baseline gap-2">
+                      <span className="min-w-0 flex-1 truncate text-sm">{account.name}</span>
+                      {account.disabled ? (
+                        <span className="shrink-0 text-xs text-muted-foreground">off</span>
+                      ) : percent === null ? (
+                        <span className="shrink-0 text-xs text-muted-foreground">no reading</span>
+                      ) : (
+                        <span className={cn("shrink-0 text-sm font-medium tabular-nums", tone?.text)}>{percent}%</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
         <div className="mt-2 space-y-3">

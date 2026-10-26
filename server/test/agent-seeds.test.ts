@@ -6,7 +6,7 @@
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { agents as agentsTable, db } from "../src/db/index.js";
-import { getAgent, seedAgents } from "../src/registry.js";
+import { getAgent, resolveSpawn, seedAgents } from "../src/registry.js";
 import type { Profile } from "../src/profiles.js";
 import type { Project } from "../src/projects.js";
 
@@ -70,6 +70,33 @@ await test("seed 33 takes OpenCode back off the gateway shim, only where the tem
   await resetAgents([{ id: "opencode", seededVersion: 32, env: { OPENCODE_CONFIG_CONTENT: mine } }]);
   await seedAgents();
   assert.equal((await getAgent("opencode"))?.env.OPENCODE_CONFIG_CONTENT, mine);
+});
+
+// Seed 38: the runtime's own behaviour switches. The declarations are the
+// seed's, a value the user set survives a reseed, and the env the spawn builds
+// carries only the ones actually turned — an untouched switch writes nothing,
+// which is what leaves the runtime's own default in charge.
+await test("seed 38 declares the daedalus behaviour switches and keeps the values a user set", async () => {
+  await resetAgents([]);
+  await seedAgents();
+  const seeded = (await getAgent("daedalus"))!.behavior!;
+  const keys = seeded.switches.map((s) => s.key);
+  assert.ok(keys.includes("DAEDALUS_AGENT_HOLD_ON_ERROR"), keys.join(","));
+  assert.equal(seeded.values, undefined, "a fresh row has nothing turned");
+
+  await resetAgents([{ id: "daedalus", seededVersion: 37, env: {}, behavior: { switches: seeded.switches, values: { DAEDALUS_AGENT_TITLES: false } } } as never]);
+  await seedAgents();
+  assert.deepEqual((await getAgent("daedalus"))!.behavior!.values, { DAEDALUS_AGENT_TITLES: false }, "the user's switches are theirs");
+});
+
+await test("a behaviour switch writes its env only where it was turned", async () => {
+  await resetAgents([]);
+  await seedAgents();
+  const off = await getAgent("daedalus");
+  off!.behavior!.values = { DAEDALUS_AGENT_HOLD_ON_ERROR: false };
+  const spawn = resolveSpawn(off!, profile, project, "m", undefined, undefined, undefined, [], []);
+  assert.equal(spawn.env.DAEDALUS_AGENT_HOLD_ON_ERROR, "0", "off writes the off spelling");
+  assert.equal(spawn.env.DAEDALUS_AGENT_TITLES, undefined, "an untouched switch writes nothing");
 });
 
 console.log(`agent-seeds: ${passed} passed, ${failures.length} failed`);

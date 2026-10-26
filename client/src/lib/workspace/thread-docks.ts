@@ -18,7 +18,6 @@ import { createLocalStore } from "@/lib/local-store"
 export type ThreadPanelKind =
   | "transcript"
   | "changes"
-  | "plan"
   | "agents"
   | "details"
   | "trace"

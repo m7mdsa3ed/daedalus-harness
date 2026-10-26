@@ -3,7 +3,7 @@ import { Plus } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { reportError } from "@/lib/errors"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { Kbd } from "@/components/ui/kbd"
 
@@ -105,7 +105,13 @@ export function QuickAdd({
         />
         <InputGroupAddon align="inline-end">
           <Kbd className="pointer-coarse:hidden" title="Enter to add, Esc to close">↵</Kbd>
-          <InputGroupButton type="submit" size="sm" variant="default" loading={busy} disabled={!title.trim()} className="h-7 px-2.5 pointer-coarse:h-9">
+          <InputGroupButton
+            type="submit"
+            size="sm"
+            variant="default"
+            disabled={busy || !title.trim()}
+            className="h-7 px-2.5 pointer-coarse:h-9"
+          >
             Add
           </InputGroupButton>
         </InputGroupAddon>

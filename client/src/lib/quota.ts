@@ -100,12 +100,48 @@ export const fetchProfileQuota = (
 export const windowTitle = (window: QuotaWindow): string =>
   window.group?.trim() ? `${window.group.trim()} · ${window.label}` : window.label
 
+/** The provider as words, for a heading or a subtitle: the label the adapter
+    minted, else the slug itself. A reading taken before the adapter sent one
+    still says something rather than nothing, and `providerLabel` is the
+    adapter's because only it knows `vercel-ai-gateway` is "Vercel AI Gateway". */
+export const providerLabelOf = (account: QuotaAccount): string | null =>
+  account.providerLabel?.trim() || account.provider?.trim() || null
+
 /** What an account inside a multi-account reading is called where it has to be
     one string — the sidebar popover's block title, the composer glance's
     heading. The Usage page draws the two halves itself, as a heading and a
     subtitle, and does not come through here. */
 export const accountTitle = (account: QuotaAccount): string =>
-  [account.name, account.provider].filter(Boolean).join(" · ")
+  [account.name, providerLabelOf(account)].filter(Boolean).join(" · ")
+
+/** A gateway's accounts filed under the provider they belong to, in first-seen
+    order — which for 9Router is the gateway's own priority order, the order it
+    will spend them in.
+
+    The whole point of the reading: a gateway is not eight plans, it is three
+    Claude logins and four Command Code seats and a Vercel key, and a flat list
+    of sixteen makes the one that is exhausted a row among sixteen. Filed, each
+    provider is a group with a count, and the accounts inside it are the
+    interchangeable capacity they actually are. Keyed case-folded so `Codex` and
+    `codex` are one provider; an account with no provider is its own group under
+    "Other". */
+export interface ProviderAccounts {
+  /** The key to group by — the display label, which is what is drawn. */
+  label: string
+  accounts: QuotaAccount[]
+}
+
+export function accountsByProvider(accounts: QuotaAccount[]): ProviderAccounts[] {
+  const groups = new Map<string, ProviderAccounts>()
+  for (const account of accounts) {
+    const label = providerLabelOf(account) ?? "Other"
+    const key = label.toLowerCase()
+    const held = groups.get(key)
+    if (held) held.accounts.push(account)
+    else groups.set(key, { label, accounts: [account] })
+  }
+  return [...groups.values()]
+}
 
 /** Whether this snapshot has anything to draw a bar for. */
 export const hasWindows = (quota: QuotaSnapshot | null | undefined): quota is QuotaSnapshot =>

@@ -7,6 +7,8 @@ import {
   agentOptions,
   agents as agentsTable,
   db,
+  type AgentBehavior,
+  type AgentBehaviorSwitch,
   type AgentDiscovery,
   type BuiltinToolOverrides,
   type CatalogProbe,
@@ -254,6 +256,34 @@ export interface AgentDef {
    * model kept calling it.
    */
   builtinTools?: BuiltinToolOverrides | null;
+  /**
+   * The runtime's own on/off switches, and which ones a person has turned
+   * (`AgentBehavior`).
+   *
+   * Declared here rather than as columns-per-switch for the same reason
+   * `builtinTools` and `quotaProbe` are: which behaviours a runtime has is the
+   * runtime's, and a row someone repoints at a fork repoints these with it. The
+   * `switches` half is the seed's and is never written by a request; `values`
+   * is the person's half, exactly like `name`/`command`/`args`/`env` above —
+   * which is also why a reset restores the switches and clears the values.
+   *
+   * Applied at spawn (`resolveSpawn`), so a change costs a respawn and nothing
+   * else — these are env keys, and env is read once.
+   */
+  behavior?: AgentBehavior | null;
+  /**
+   * The env this id ships with, as this release defines it — **computed, never
+   * stored** (like `builtIn` on the API), and only present on the route's rows.
+   *
+   * Settings' env editor splits a row's env three ways and needs to tell a key
+   * the *profile* drives (`ANTHROPIC_API_KEY: {apiKey}`, seeded and still holding
+   * its placeholder) from one a person typed. Without a baseline every key has
+   * to be shown as free text, which is the box this replaced. Compared
+   * value-for-value: a seeded key somebody overwrote is theirs and lands in the
+   * editable half, which is the same distinction `behavior` makes between its
+   * declarations and its values.
+   */
+  seededEnv?: Record<string, string>;
   /**
    * The plain CLI to ask for the built-in model catalog a generated one is
    * modelled on (`model-catalog.ts`), for a runtime whose env template names
@@ -583,6 +613,57 @@ const AGENT_ICONS: Record<string, string> = {
   opencode:
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcBAMAAACAI8KnAAAAMFBMVEUTEBAAAADi4uLZ2Nj////r6+ucm5uioaELBgazsrJCQEBOTExRT09aWFju7u7f39/EmS9sAAAAUklEQVR4AWOgEDAKgoEAlCtkDAaKUK6ICxg44uIGGxubInETBQXFkLiFDAziyNyODmTurN27VyJx59y9e5ISLm6T3////w/IJewjhPfRA4cyAAABqjJorC1X4QAAAABJRU5ErkJggg==",
   daedalus: "app",
+};
+
+/* ── The runtime's own behaviour switches ──
+   Each is an env key `agent/src/env.ts` reads as a boolean, and each was until
+   now editable only by typing it into the row's raw `NAME=value` box — a text
+   editor standing in for the setting it describes. What makes it a *switch*
+   rather than a preference is that the key has exactly two meanings, so the
+   form can draw one control instead of asking somebody to spell `DAEDALUS_AGENT_
+   HOLD_ON_ERROR=0` correctly.
+
+   `fallback` is what the runtime does with the key absent, matched to
+   `env.ts`'s own defaults (every one of these is on unless it says `0`). A
+   switch nobody has touched writes nothing, which is what keeps a later seed
+   free to change a default without contradicting a value nobody chose.
+
+   Only keys the runtime reads *and* a person is likely to want are here. What
+   is not here is not an oversight: the model, the API key, the window and the
+   protocol are set by the profile — the one owner of credentials and catalogs —
+   and duplicating them as env switches would give the same fact two places to
+   disagree. These are the ones with no other home. */
+const BEHAVIOR: Record<string, AgentBehaviorSwitch[]> = {
+  daedalus: [
+    {
+      key: "DAEDALUS_AGENT_PROJECT_INSTRUCTIONS",
+      label: "Read the workspace's instructions",
+      description:
+        "Read AGENT.md, AGENTS.md, CLAUDE.md and CLAUDE.local.md from the project — nearest file last, stopping at the repository root. Off, the thread ignores the repo's own rules and takes only the harness's.",
+      fallback: true,
+    },
+    {
+      key: "DAEDALUS_AGENT_HOLD_ON_ERROR",
+      label: "Hold a failed turn",
+      description:
+        "When a step fails or the model stops short, hold the turn at that boundary with every settled step kept, and wait for a model change and a resume — instead of ending it. Off, a failure ends the turn as an error. A thread with nobody in front of it (a workflow step, a scheduled run) never holds either way.",
+      fallback: true,
+    },
+    {
+      key: "DAEDALUS_AGENT_PROMPT_CACHE_KEY",
+      label: "Send a prompt-cache key",
+      description:
+        "Send `prompt_cache_key` so a router keeps a thread on one backend, which is what makes the cached prefix actually hit. Off for a gateway that spreads requests and would rather not pin them.",
+      fallback: true,
+    },
+    {
+      key: "DAEDALUS_AGENT_TITLES",
+      label: "Name threads automatically",
+      description:
+        "Name a thread from its first message with the helper model. Off, a thread keeps the name it was given and never costs an extra call.",
+      fallback: true,
+    },
+  ],
 };
 
 type Seed20 = Pick<AgentDef, "workspaceLayout" | "builtinTools" | "catalogProbe" | "discovery" | "install" | "icon">;
@@ -1125,7 +1206,12 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // Seed 36 names its call door: the runtime sends the record itself (`acp`).
     // Seed 37 adds `{protocol}` (`DAEDALUS_AGENT_PROTOCOL`): the wire protocol the
     // profile's per-agent link picks, OpenAI chat or Anthropic messages.
-    since: 37,
+    // Seed 38 states the runtime's own on/off switches (`behavior`): the four
+    // env keys it reads as booleans, which until now could only be turned by
+    // typing a `NAME=value` line into the row's raw env box. Declared, not
+    // copied into the template — `resolveSpawn` writes only the ones a person
+    // changed, so an untouched switch is still the runtime's own default.
+    since: 38,
     introduced: 14,
     backfill: (existing) => ({
       ...backfill20(existing),
@@ -1146,6 +1232,12 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       },
       subagentModelsVia: existing.subagentModelsVia ?? "acp-env",
       rewindVia: existing.rewindVia ?? "acp-fork-point",
+      // Seed 38: the switches, and whatever the row already had turned stays
+      // turned — the values are the person's half of this field.
+      behavior: {
+        switches: BEHAVIOR.daedalus ?? [],
+        ...(existing.behavior?.values ? { values: existing.behavior.values } : {}),
+      },
     }),
     id: "daedalus",
     name: "Daedalus Agent",
@@ -1158,6 +1250,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     subagentModelsVia: "acp-env",
     rewindVia: "acp-fork-point",
     callsVia: CALLS_VIA.daedalus,
+    behavior: { switches: BEHAVIOR.daedalus ?? [] },
     env: {
       DAEDALUS_AGENT_API_KEY: "{apiKey}",
       DAEDALUS_AGENT_BASE_URL: "{gatewayUrl}",
@@ -1268,7 +1361,12 @@ export async function seedAgents(): Promise<void> {
 }
 
 export async function listAgents(): Promise<AgentDef[]> {
-  return await db.select().from(agentsTable);
+  const rows = await db.select().from(agentsTable);
+  /* `seededEnv` rides along, computed: Settings' env editor needs the baseline to
+     tell the profile's wiring from a person's own keys, and only this module
+     knows what a release ships. Never written back — `AgentInputSchema` has no
+     field for it, and `updateAgent` would ignore one. */
+  return rows.map((row) => ({ ...row, seededEnv: DEFAULT_AGENTS.find((a) => a.id === row.id)?.env }));
 }
 
 /**
@@ -1290,13 +1388,31 @@ export async function listAgents(): Promise<AgentDef[]> {
  * either from, which is the whole reason they moved out of the two id-keyed
  * tables they used to live in.
  */
+/* A variable name a process can actually receive. The spawn path would happily
+   carry `MY FLAG` through to `child_process`, which drops it — so a name that is
+   not this shape is a variable that silently does not exist, and the one place
+   that can say so is the save. `{placeholders}` live in *values*, never names,
+   which is why this is a plain env-name rule and not a template one. */
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 export const AgentInputSchema = z.object({
   name: z.string().min(1),
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
-  env: z.record(z.string().min(1), z.string()).default({}),
+  env: z
+    .record(
+      z.string().regex(ENV_NAME, "an environment name is letters, digits and underscores, and cannot start with a digit"),
+      z.string(),
+    )
+    .default({}),
   install: z.string().nullish(),
   icon: z.string().nullish(),
+  /** The behaviour switches a person has turned, by env key. Only *values*
+      travel: the declarations are the seed's, and a request that could rewrite
+      them would be a request that redefines what the runtime is. A key the row
+      does not declare is dropped, so a renamed switch cannot leave a value
+      behind that nothing reads. */
+  behaviorValues: z.record(z.string(), z.boolean()).optional(),
 });
 export type AgentInput = z.infer<typeof AgentInputSchema>;
 
@@ -1315,12 +1431,35 @@ async function evictProbeCache(id: string): Promise<void> {
 export async function updateAgent(id: string, input: AgentInput): Promise<AgentDef | undefined> {
   const existing = (await db.select().from(agentsTable).where(eq(agentsTable.id, id)).limit(1))[0];
   if (!existing) return undefined;
+  /* The switches are one field with two halves: the declarations are the row's
+     and stay, the values are what a person set. `behaviorValues` absent means
+     "this form did not touch them" (an older client, or the raw env editor), not
+     "turn them all off" — so absence keeps the row's own values rather than
+     clearing them. A key the row does not declare is dropped here, which is what
+     stops a renamed switch leaving a value behind that nothing reads. */
+  const { behaviorValues, ...rest } = input;
+  const declared = new Set((existing.behavior?.switches ?? []).map((s) => s.key));
+  const behavior: AgentBehavior | null = existing.behavior
+    ? {
+        switches: existing.behavior.switches,
+        ...(behaviorValues === undefined
+          ? existing.behavior.values
+            ? { values: existing.behavior.values }
+            : {}
+          : { values: Object.fromEntries(Object.entries(behaviorValues).filter(([key]) => declared.has(key))) }),
+      }
+    : null;
   /* `?? null` and not the spread's own `undefined`: Drizzle drops an undefined
      from a `.set()`, and a cleared install line or icon has to actually
      clear — an omitted key would silently keep the seed's. */
   await db
     .update(agentsTable)
-    .set({ ...input, install: input.install ?? null, icon: input.icon ?? null })
+    .set({
+      ...rest,
+      install: input.install ?? null,
+      icon: input.icon ?? null,
+      ...(behavior ? { behavior } : {}),
+    })
     .where(eq(agentsTable.id, id));
   evictProbeCache(id);
   return await getAgent(id);
@@ -1360,6 +1499,10 @@ export async function resetAgent(id: string): Promise<AgentDef | undefined> {
       callsVia: seed.callsVia ?? null,
       workspaceLayout: seed.workspaceLayout ?? null,
       builtinTools: seed.builtinTools ?? null,
+      /* Seed 38: a reset restores the switch *declarations* and clears the
+         values, which is the whole of "put it back the way it ships" for a
+         field whose other half is the person's — the same bargain as `icon`. */
+      behavior: seed.behavior ? { switches: seed.behavior.switches } : null,
       catalogProbe: seed.catalogProbe ?? null,
       discovery: seed.discovery ?? null,
       install: seed.install ?? null,
@@ -1741,6 +1884,18 @@ export function resolveSpawn(
   for (const [key, template] of Object.entries(agent.env)) {
     const value = resolveEnvValue(template, vars);
     if (value !== undefined) env[key] = value;
+  }
+  /* The row's behaviour switches, over the templates above for the same reason
+     they exist: these are env keys with a boolean shape, and a person turning
+     one off has to win over whatever the seed's template says. Only keys the
+     person actually changed are written — an untouched switch is the row's
+     `fallback`, which is what the runtime does with the key absent, so nothing
+     is written for it and a seed that later changes its default is not
+     contradicted by a value nobody chose. */
+  for (const [key, on] of Object.entries(agent.behavior?.values ?? {})) {
+    const declared = agent.behavior?.switches.find((s) => s.key === key);
+    if (!declared) continue;
+    env[key] = on ? (declared.on ?? "1") : (declared.off ?? "0");
   }
   return {
     command: agent.command,

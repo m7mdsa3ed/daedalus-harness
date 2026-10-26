@@ -92,52 +92,99 @@ function previousConfig(meta: SessionMeta, patch: ConfigPatch): ConfigPatch {
   }
 }
 
-/** One line naming what a pick changed — used by the transcript's
-    `PendingSettings` and by the restart toast's description. Ids are resolved
-    against the profile catalog where they have a name there. */
-export function describeConfig(
+/** Which setting a row of a staged change is about — what its glyph is drawn
+    from. The reader never matches on a label: labels are the agent's words for
+    its own options and change with the runtime. */
+export type ConfigChangeKind =
+  | "profile"
+  | "model"
+  | "effort"
+  | "suggestions"
+  | "ui"
+  | "helpers"
+  | "mode"
+  | "option"
+
+/** One setting a pick moved, as a row worth drawing: the setting's name, the
+    value it is being moved to, and which household it belongs to. */
+export type ConfigChange = {
+  kind: ConfigChangeKind
+  label: string
+  value: string
+  /** How it reads in a sentence, when that is not `label: value` — "Suggestions
+      off" and "Suggestions: a, b" are both things nobody writes as a pair. */
+  sentence?: string
+}
+
+/** What a pick changed, one row per setting. The transcript draws these as
+    tiles and `describeConfig` renders them as a line, so the two can never say
+    different things. Ids are resolved against the profile catalog where they
+    have a name there. */
+export function configChanges(
   patch: ConfigPatch,
   profiles: Profile[],
   /** What names a mode or an option — the agent's own list, which this module
       does not otherwise read. Without it an id stands in for its name. */
   thread?: ThreadState
-): string {
-  const parts: string[] = []
+): ConfigChange[] {
+  const rows: ConfigChange[] = []
   if (patch.profileId !== undefined) {
-    parts.push(`Profile: ${profiles.find((p) => p.id === patch.profileId)?.name ?? patch.profileId}`)
+    const name = profiles.find((p) => p.id === patch.profileId)?.name ?? patch.profileId
+    rows.push({ kind: "profile", label: "Profile", value: name })
   }
   if (patch.model !== undefined) {
-    const label = profiles
-      .flatMap((p) => p.models)
-      .find((m) => m.id === patch.model)?.label
-    parts.push(`Model: ${label ?? (patch.model || "profile default")}`)
+    const label = profiles.flatMap((p) => p.models).find((m) => m.id === patch.model)?.label
+    rows.push({ kind: "model", label: "Model", value: label ?? (patch.model || "profile default") })
   }
-  if (patch.effort !== undefined) parts.push(`Effort: ${patch.effort || "default"}`)
+  if (patch.effort !== undefined) {
+    rows.push({ kind: "effort", label: "Effort", value: patch.effort || "default" })
+  }
   if (patch.suggestKinds !== undefined) {
     const labels = SUGGEST_KINDS.filter((kind) => patch.suggestKinds?.includes(kind.id)).map((kind) => kind.label)
-    parts.push(labels.length > 0 ? `Suggestions: ${labels.join(", ")}` : "Suggestions off")
+    rows.push({
+      kind: "suggestions",
+      label: "Suggestions",
+      value: labels.length > 0 ? "on" : "off",
+      sentence: labels.length > 0 ? `Suggestions: ${labels.join(", ")}` : "Suggestions off",
+    })
   }
   if (patch.uiGroups !== undefined) {
-    parts.push(
-      patch.uiGroups.length === 0
-        ? "Drawn UI off"
-        : `Drawn UI: ${patch.uiGroups.length} of ${UI_GROUPS.length} groups`
-    )
+    rows.push({
+      kind: "ui",
+      label: "Drawn UI",
+      value: patch.uiGroups.length === 0 ? "off" : `${patch.uiGroups.length} of ${UI_GROUPS.length} groups`,
+      sentence:
+        patch.uiGroups.length === 0
+          ? "Drawn UI off"
+          : `Drawn UI: ${patch.uiGroups.length} of ${UI_GROUPS.length} groups`,
+    })
   }
   if (patch.helperModels !== undefined) {
     const named = patch.helperModels.map((h) => h.role).join(", ")
-    parts.push(`Helper models: ${named || "none"}`)
+    rows.push({ kind: "helpers", label: "Helper models", value: named || "none" })
   }
   if (patch.modeId !== undefined) {
     const mode = thread?.modes?.availableModes.find((m) => m.id === patch.modeId)
-    parts.push(`Mode: ${mode?.name ?? patch.modeId}`)
+    rows.push({ kind: "mode", label: "Mode", value: mode?.name ?? patch.modeId })
   }
   for (const [id, value] of Object.entries(patch.options ?? {})) {
     const option = thread?.configOptions.find((o) => o.id === id)
     const named = option ? currentChoiceLabel({ ...option, currentValue: value } as acp.SessionConfigOption) : String(value)
-    parts.push(`${option?.name ?? id}: ${named}`)
+    rows.push({ kind: "option", label: option?.name ?? id, value: named })
   }
-  return parts.join(" · ")
+  return rows
+}
+
+/** One line naming what a pick changed — used by the transcript's
+    `PendingSettings` and by the restart toast's description. */
+export function describeConfig(
+  patch: ConfigPatch,
+  profiles: Profile[],
+  thread?: ThreadState
+): string {
+  return configChanges(patch, profiles, thread)
+    .map((change) => change.sentence ?? `${change.label}: ${change.value}`)
+    .join(" · ")
 }
 
 export function configActions(core: ActionsCore) {

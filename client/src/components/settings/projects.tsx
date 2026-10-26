@@ -15,7 +15,7 @@ import {
 import { Navigate, useNavigate, useParams } from "react-router"
 import { captureError, inlineFromQuery, reportError, type InlineError } from "@/lib/errors"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-table"
 import type { ColumnDef } from "@/lib/table"
 import { Empty } from "@/components/empty"

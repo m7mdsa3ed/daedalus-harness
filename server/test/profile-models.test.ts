@@ -152,6 +152,50 @@ await test("a model's kind survives the write and the read-back", async () => {
   assert.equal(stored?.wire, "systemone");
 });
 
+await test("the save schema keeps a model's peak schedule", async () => {
+  /* Third time for the same stripping rule, and the one with the quietest
+     failure: a schedule dropped on save is a badge the composer simply never
+     draws, which reads as "this model has no peak pricing" rather than as a
+     bug. Free-form on purpose (`peak.ts`) — the sentence is the user's. */
+  const parsed = ProfileInputSchema.parse({
+    name: "deepseek",
+    agents: { daedalus: {} },
+    models: [
+      {
+        id: "deepseek-v4-pro",
+        label: "V4 Pro",
+        reasoningEfforts: [],
+        peak: { windows: "Mon-Fri 01:00-04:00, 06:00-10:00 UTC", when: "peak", multiplier: 2 },
+      },
+      { id: "flat", label: "Flat", reasoningEfforts: [] },
+    ],
+  });
+  assert.deepEqual(parsed.models[0]?.peak, {
+    windows: "Mon-Fri 01:00-04:00, 06:00-10:00 UTC",
+    when: "peak",
+    multiplier: 2,
+  });
+  assert.equal(parsed.models[1]?.peak, undefined, "absent stays absent, so a flat model is unchanged");
+});
+
+await test("a peak schedule survives the write and the read-back", async () => {
+  await addModel(seeded.id, { id: "peaky", label: "Peaky" });
+  const before = (await exportProfile(seeded.id, false))!;
+  const updated = await updateProfile(seeded.id, {
+    ...before,
+    apiKey: "",
+    models: before.models.map((m) =>
+      m.id === "peaky"
+        ? { ...m, peak: { windows: "22:00-08:00 Asia/Shanghai", when: "off-peak" as const, multiplier: 0.5 } }
+        : m,
+    ),
+  });
+  const stored = updated!.models.find((m) => m.id === "peaky");
+  assert.equal(stored?.peak?.windows, "22:00-08:00 Asia/Shanghai", "the sentence reached the jsonb column");
+  assert.equal(stored?.peak?.when, "off-peak");
+  assert.equal(stored?.peak?.multiplier, 0.5);
+});
+
 await test("the model test refuses a model whose kind is not chat", async () => {
   /* `/test-model` sends a chat completion. A decision model answers System One,
      and the gateway's own refusal ("ModelProtocolUnsupported") reads like a

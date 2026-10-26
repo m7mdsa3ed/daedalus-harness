@@ -42,8 +42,9 @@ export type PanelDescriptor =
       cwd?: string
     }
   /** The Preview panel: a project file (`workspace/file-preview.tsx`) or a
-      file's diff, and nothing else - it embeds no web page. */
-  | { kind: "web"; viewId: string; projectId: string; file?: string; diff?: WebDiff }
+      file's diff, and nothing else - it embeds no web page. `tabs` are the files
+      the panel has open (project-relative), `file` the one in front. */
+  | { kind: "web"; viewId: string; projectId: string; file?: string; diff?: WebDiff; tabs?: string[] }
   /** A board, beside the work it describes. One panel, not one per board: the
       board being read is a *place inside* it (`lib/tasks-location.ts`) the way
       a file is a place inside the IDE, so it travels in the params and moving
@@ -193,6 +194,7 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
       const viewId = str(p.viewId)
       const file = str(p.file)
       const diff = parseWebDiff(p.diff)
+      const tabs = Array.isArray(p.tabs) ? [...new Set(p.tabs.filter((t): t is string => !!str(t)))] : []
       if (!viewId || !projectId || "url" in p || "trust" in p) return null
       return {
         kind: "web",
@@ -200,6 +202,7 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
         projectId,
         ...(file ? { file } : {}),
         ...(diff ? { diff } : {}),
+        ...(tabs.length ? { tabs } : {}),
       }
     }
   }

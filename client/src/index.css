@@ -363,6 +363,25 @@
      tint rather than by a grey. */
   --shelf: color-mix(in oklch, var(--composer) 96%, var(--foreground) 4%);
 
+  /* ── The hue a shelf item wears ──
+     The shelf holds things of different *kinds* — a file riding along with the
+     message, a command menu, a shell command from the project, a file found in
+     the repo — and one flat ground behind all of them said they were the same
+     kind. Each kind now gets a hue, and every hue is one the palette already
+     chooses: `accent` is the message's own content, `positive` something found,
+     `caution` something that will run. `neutral` is the shelf's own grey, so a
+     kind with nothing to say is exactly the shelf it always was — and no theme
+     needs a token it did not already have.
+
+     A *variable*, not a class, because the strip sets it per item from a record
+     (`StripTone` in composer-strip.tsx) and one CSS rule mixes against whatever
+     it finds. `.dark` needs no override: each alias points at a token that
+     already has one. */
+  --shelf-tone-neutral: var(--shelf);
+  --shelf-tone-accent: var(--primary);
+  --shelf-tone-positive: var(--success);
+  --shelf-tone-caution: var(--warning);
+
   /* ── The main surface ──
      What the thread (and every page) sits on, inside the sidebar's tinted
      ground. Light: the card colour — white on most palettes — the way both
@@ -474,6 +493,12 @@
   --float-h: calc(100dvh - var(--safe-top) - var(--float-bottom));
   --float-w: calc(100vw - var(--safe-left) - var(--safe-right));
   --dialog-bottom: max(0px, calc(var(--safe-bottom) - var(--keyboard-inset)));
+
+  /* The tallest a menu-like popup (dropdown, select, context menu, menubar,
+     combobox) grows before it scrolls. It still never exceeds
+     `--available-height`; this only stops a long list from filling the screen.
+     Applied by the rule after "The float box, applied". */
+  --menu-max-height: 24rem;
 
   /* ── The transcript's three work accents ──
      One hue per act — a thought, a shell command, a tool call — worn by the
@@ -1145,6 +1170,52 @@
   transition: background-color var(--dur) var(--ease);
 }
 
+/* ── A card's hue ──
+   The front card carries a wash of its item's tone over the shelf's own ground,
+   so the thing you are looking at is identifiable before its words are read —
+   the rail's mark wears the same hue at full strength, which is what makes the
+   two tell the same story at two intensities rather than being two colours.
+
+   The tone arrives as a custom property the strip sets per card (`--strip-tone`,
+   from `StripTone` in composer-strip.tsx). Mixed against `--shelf` rather than
+   laid over it, so a theme's own shelf tint survives and a light palette does
+   not turn every card into a pastel block. `neutral` resolves to the shelf
+   itself, which is why a kind with no tone is a card with no wash at all. */
+[data-strip-tone] {
+  background-color: color-mix(in oklch, var(--shelf) 88%, var(--strip-tone, var(--shelf)) 12%);
+}
+
+/* ── A built-in MCP server's hue ──
+   The five servers the harness ships are a *known* set, so each is given a hue
+   once (`BUILTIN_MCP_HUES` in entity-icon.tsx) and the palette says how loudly
+   to wear it. The composer's chip stacks the picked servers as overlapping
+   discs and every one of them used to be the same grey glyph in the same grey
+   disc, so a thread carrying three tools looked like a thread carrying none
+   until you opened the menu.
+
+   Two rules, because the mark and the disc around it are different claims: the
+   glyph is the hue at full strength (a solid, readable tint — it is 14px and it
+   is an icon, not text), and the disc is the same hue held well back (a low
+   chroma at a lightness a step off the surface), so a stack of three reads as
+   three coloured discs even where the glyphs overlap without any of them
+   shouting from a row of controls.
+   `--mcp-hue` is a number the caller sets (`mcpHueStyle`); nothing here names a
+   server or a colour. The lightness and chroma are the mode's, because a hue
+   that carries on white disappears on black. */
+.mcp-hue-mark {
+  color: oklch(0.55 0.15 var(--mcp-hue));
+}
+.dark .mcp-hue-mark {
+  color: oklch(0.72 0.14 var(--mcp-hue));
+}
+
+[data-mcp-disc] {
+  background-color: oklch(0.94 0.045 var(--mcp-hue));
+}
+.dark [data-mcp-disc] {
+  background-color: oklch(0.32 0.06 var(--mcp-hue));
+}
+
 /* The row arriving in front. Attribute-driven, not mount-driven: the bodies
    stay mounted (their rows are what register the slivers), so what starts this
    is a hidden body becoming the front one — exactly the moment the animation is
@@ -1165,8 +1236,7 @@
   [data-strip-body][data-front] { animation: none; }
 }
 
-/* A live mark: a soft primary halo breathing behind a dot (plan entries). */
-@keyframes harness-node-pulse {
+/* A live mark: a soft primary halo breathing behind a dot (plan entries). */@keyframes harness-node-pulse {
   0%, 100% { box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 8%, transparent); }
   50% { box-shadow: 0 0 0 5px color-mix(in oklab, var(--primary) 14%, transparent); }
 }
@@ -1328,6 +1398,59 @@ html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
    `!important` because those rules are four-plus attributes deep. */
 [data-slot="sidebar"][data-collapsible="offcanvas"] [data-sidebar="sidebar"]:not([data-mobile="true"]) {
   background-color: var(--composer) !important;
+}
+
+/* ── The collapsed rail comes back on a hover of the edge ──
+   Reaching for the edge is how a collapsed rail is opened without the toggle in
+   the header, and the strip that catches it has to be there while the rail
+   itself is off-screen: pointing at it slides the (already `fixed`, translated
+   out) container back in as a floating overlay. The gap above stays `w-0`, so
+   nothing is pushed and the transcript never reflows to make room.
+
+   This lived in `ui/sidebar.tsx` as a `peer/hot` div and the classes on the
+   container; a component refresh rewrote that file and took it with it, which is
+   why it is app CSS now — the same reason `.harness-busy-ring` and the toast
+   inset are. Every rule keys off the attributes shadcn itself writes, so a
+   regenerated `ui/sidebar.tsx` still lands on it. */
+@media (width >= 48rem) {
+  /* The threshold. A pseudo-element rather than a node, so it costs no DOM and
+     is not tabbable; hovering it is a hover of the wrapper it belongs to. */
+  [data-slot="sidebar"][data-collapsible="offcanvas"][data-state="collapsed"]::after {
+    content: "";
+    position: fixed;
+    inset-block: 0;
+    z-index: 45;
+    width: 0.5rem;
+  }
+  [data-slot="sidebar"][data-collapsible="offcanvas"][data-state="collapsed"][data-side="left"]::after {
+    left: 0;
+  }
+  [data-slot="sidebar"][data-collapsible="offcanvas"][data-state="collapsed"][data-side="right"]::after {
+    right: 0;
+  }
+
+  /* The reveal. The container is a descendant of the wrapper, so a pointer
+     standing on the rail it just slid in still counts as hovering the wrapper
+     and it stays out until the pointer actually leaves. */
+  [data-slot="sidebar"][data-collapsible="offcanvas"][data-state="collapsed"]:hover
+    [data-slot="sidebar-container"],
+  [data-slot="sidebar"][data-collapsible="offcanvas"][data-state="collapsed"]:has([data-popup-open])
+    [data-slot="sidebar-container"] {
+    z-index: 45;
+    box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+  }
+  [data-slot="sidebar"][data-collapsible="offcanvas"][data-state="collapsed"][data-side="left"]:hover
+    [data-slot="sidebar-container"],
+  [data-slot="sidebar"][data-collapsible="offcanvas"][data-state="collapsed"][data-side="left"]:has([data-popup-open])
+    [data-slot="sidebar-container"] {
+    left: 0 !important;
+  }
+  [data-slot="sidebar"][data-collapsible="offcanvas"][data-state="collapsed"][data-side="right"]:hover
+    [data-slot="sidebar-container"],
+  [data-slot="sidebar"][data-collapsible="offcanvas"][data-state="collapsed"][data-side="right"]:has([data-popup-open])
+    [data-slot="sidebar-container"] {
+    right: 0 !important;
+  }
 }
 
 /* ── The sidebar slides ──
@@ -2161,12 +2284,12 @@ html[data-window-controls-overlay="true"] {
   color: var(--muted-foreground);
 }
 
-/* Folded thoughts show three lines and fade the final line as a continuation cue. */
-.thought-preview .prose {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+/* A folded thought shows three lines and fades the final one as a continuation
+   cue. The box is the clip's height (three line boxes, measured from the prose
+   in `ThoughtBlock`), so nothing here clamps text: the mask is what softens the
+   cut, and it has to fade over the third line rather than across the whole box
+   or the first two would grey out too. */
+.thought-fold {
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 66%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 66%, transparent 100%);
 }
@@ -2210,6 +2333,19 @@ html[data-window-controls-overlay="true"] {
 .prose :where(h3) { @apply mt-[1.2em] mb-[0.4em] text-[1.08em] leading-snug font-semibold; }
 .prose :where(h4, h5, h6) { @apply mt-[1.1em] mb-[0.4em] text-[1em] leading-snug font-semibold; }
 .prose > :where(h1, h2, h3, h4, h5, h6):first-child { @apply mt-0; }
+
+/* ── A markdown file read as a document ──
+   The scale above is tuned for a chat turn. A file in the Preview panel
+   (`MarkdownDocument`) is a whole outline, so its levels separate further, an
+   h2 is a section break with a rule under it, and a jump from a table of
+   contents lands the heading just below the panel's edge, not under it. */
+.harness-doc :where(h1) { @apply mb-[0.8em] text-[1.75em] leading-tight; }
+.harness-doc :where(h2) { @apply mt-[2em] mb-[0.75em] border-b pb-[0.3em] text-[1.4em]; }
+.harness-doc :where(h3) { @apply mt-[1.75em] text-[1.15em]; }
+.harness-doc :where(h4) { @apply mt-[1.4em]; }
+.harness-doc :where(h1, h2, h3, h4, h5, h6) { scroll-margin-top: 1rem; }
+.harness-doc :where(hr) { @apply my-[2.25em]; }
+.harness-doc > :where(h1, h2, h3, h4, h5, h6):first-child { @apply mt-0; }
 
 /* The plugin punctuates blockquotes with real quotation marks via ::before.
    An agent quoting a log line gets a stray “ that is not in the text. */
@@ -2325,6 +2461,13 @@ html .dv-tabs-and-actions-container {
      the chip, `panel-tab.tsx`), so the strip adds none: a gap here and an
      inset there were two numbers for one distance. */
   gap: 0;
+}
+
+/* Sidebar-only navigation hides the outer workspace dock's strips without
+   changing Dockview's panels or saved layout. The group marker is written by
+   dock-header.ts; nested thread docks deliberately never receive it. */
+html[data-workspace-tabs="hidden"] .dv-groupview[data-workspace-dock] > .dv-tabs-and-actions-container {
+  display: none;
 }
 
 /* The strip clears the floating app header (app-shell.tsx) when its group is at
@@ -3657,6 +3800,23 @@ html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
   text-decoration: line-through;
 }
 
+/* ── Menu height cap ──
+   The `components/ui/` menus size themselves with `max-h-(--available-height)`,
+   i.e. the whole free height of the screen. Those files are shadcn's, so the cap
+   is applied here instead: unlayered, so it beats the utility layer, and
+   `--menu-max-height` (:root) is the one knob. Never taller than
+   `--available-height`, so a short viewport still wins. */
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="select-content"],
+[data-slot="context-menu-content"],
+[data-slot="context-menu-sub-content"],
+[data-slot="menubar-content"],
+[data-slot="menubar-sub-content"],
+[data-slot="combobox-content"] {
+  max-height: min(var(--available-height, 100dvh), var(--menu-max-height));
+}
+
 /* ── The float box, applied ──
    Every Base UI surface — menu, select, combobox, tooltip, popover, hover
    card, dialog — is portaled into a `<div data-base-ui-portal>` on `<body>`,
@@ -3800,12 +3960,17 @@ html[data-tab-rows="1"] {
   --dock-tab-h: var(--dock-chip-h);
 }
 
-/* "Compact rows" on (Settings › Appearance › Sidebar): thread rows drop from
-   h-8 to h-6, and their hover controls re-centre in the shorter row (ACTION
-   places them for h-8). Keyed on the thread row's own `data-thread-id` so the
-   nav, the folders and the footer keep their size. Written on <html> by the
-   shell. */
-html[data-sidebar-density="compact"] [data-sidebar="menu-button"][data-thread-id] {
+/* "Compact rows" on (Settings › Appearance › Sidebar): list rows drop from
+   h-9 to h-6, and their hover controls re-centre in the shorter row (ACTION
+   places them for h-9). Keyed on the row marking itself a list row — a
+   thread's `data-thread-id`, a settings section's `data-nav-row` — so the
+   folders, the group labels and the footer keep their size. The settings nav
+   is the same list in the same sidebar, so it follows the same switch: it used
+   to key on `data-thread-id` alone, which only threads carry, so choosing
+   Compact rows and then opening Settings was a list that grew back.
+   Written on <html> by the shell. */
+html[data-sidebar-density="compact"]
+  [data-sidebar="menu-button"]:is([data-thread-id], [data-nav-row]) {
   height: calc(var(--spacing) * 6);
 }
 html[data-sidebar-density="compact"] [data-sidebar="menu-item"]:has(> [data-thread-id]) > [data-sidebar="menu-action"] {

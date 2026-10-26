@@ -55,6 +55,7 @@ import { resolveStreamEffect, useLayoutOptionsContext } from "@/lib/layout-optio
 import { shortPath, toolHeading, type TaskNotification, type TodoEntry } from "@/lib/tools"
 import type { TurnSources } from "@/lib/sources"
 import { stripPromptSuggestions } from "@/lib/suggestions"
+import { dominantTextDir } from "@/lib/text-direction"
 import { cn } from "@/lib/utils"
 import { autonomyLine } from "@/lib/autonomy-text"
 import type { AutonomyItem, CompactionItem, PlanItem, ShellItem, ThreadItem, VoiceItem } from "@/lib/store"
@@ -705,7 +706,7 @@ export const VoiceStep = React.memo(function VoiceStep({
       <MessageContent>
         <Bubble variant={user ? "tinted" : "muted"} align={user ? "end" : undefined}>
           <BubbleContent
-            dir="auto"
+            dir={dominantTextDir(item.text)}
             title={user ? "Said by voice" : "Voice"}
           >
             <p className="text-pretty whitespace-pre-wrap">{item.text}</p>
@@ -719,8 +720,14 @@ export const VoiceStep = React.memo(function VoiceStep({
 VoiceStep.displayName = "VoiceStep"
 
 /** The ground a `!` row stands on: the execute kind's tint at a wash, in the
-    parallel group's geometry — one shape for "this stretch is marked". */
-const SHELL_WASH = "-mx-2 rounded-xl bg-emerald-500/[0.06] px-2 py-1"
+    parallel group's geometry — one shape for "this stretch is marked".
+
+    `px-1`, not `px-2`: the StepRow inside carries `-mx-1 px-1`, and the frame
+    supplies exactly that 4px, so the row's content lands on the transcript's
+    column instead of 4px right of every step beside it. No bleed for the same
+    reason — beside cards and rules that all sit on that column, a box 8px
+    outside it reads as an edge that does not line up. */
+const SHELL_WASH = "rounded-xl bg-emerald-500/[0.06] px-1 py-1"
 
 /**
  * A `!` command the reader ran against the thread's project, in the transcript

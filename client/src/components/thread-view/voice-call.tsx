@@ -20,6 +20,7 @@ import { Hand, LoaderCircle, Mic, MicOff } from "lucide-react"
 import type * as acp from "@daedalus/acp"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { dominantTextDir } from "@/lib/text-direction"
 import { ErrorNote } from "@/components/error-note"
 import type { Actions } from "@/lib/actions"
 import { elicitationFields, isFormElicitation } from "@/lib/elicitation"
@@ -610,7 +611,7 @@ export function VoiceCall({
             {caption ? "Voice" : "You"}
           </span>
           <p
-            dir="auto"
+            dir={dominantTextDir(caption || heard)}
             className={cn(
               "line-clamp-3 rounded-3xl px-3.5 py-2.5 text-start text-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-200 motion-reduce:animate-none",
               caption ? "bg-muted" : "bg-primary/10"

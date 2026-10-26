@@ -144,6 +144,9 @@ export function ComposerAttachments({
         icon: PaperclipIcon,
         label,
         badge: attachments.length,
+        /* Something riding along with the message: the message's own content,
+           so it wears the message's hue. */
+        tone: "accent",
       }}
       className={cn(SHELF_PAD, "py-3")}
     >

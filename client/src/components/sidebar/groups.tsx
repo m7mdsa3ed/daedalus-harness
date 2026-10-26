@@ -1,4 +1,4 @@
-/* ── Folders and foldable tiers ── the group primitives the sidebar stacks. */
+/* ── Sections and foldable tiers ── the group primitives the sidebar stacks. */
 import * as React from "react"
 import { ChevronRight, FolderIcon, Loader2, PanelsTopLeft, Plus } from "lucide-react"
 import { useLocation } from "react-router"
@@ -24,17 +24,31 @@ import { projectPath } from "@/lib/router"
 import { startRouteDrag } from "@/lib/workspace/route-drag"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { cn } from "@/lib/utils"
-import { NEST, PROJECT_PAGE_SIZE } from "./scale"
+import { PROJECT_PAGE_SIZE, SECTION_BODY } from "./scale"
 import { Badge } from "@/components/ui/badge"
 import { useSidebarEnv } from "./env"
 import { ThreadList } from "./thread-list"
 import { useFold } from "./fold"
 
-/** A project as a folder row: chevron, name, thread count; its threads
-    indented under it when open, and a + on hover that starts a thread in it.
-    Fold state is remembered under the project's id — the same key the older
-    project groups used, so nothing anyone folded comes back open. */
-export function ProjectFolder({
+/** A project, as a section of the flat list rather than a folder: a heading
+    with the project's own mark, its name and how much of it is moving, over its
+    threads — one level, indented no more than a row's own text. "By project"
+    used to draw one foldable folder per project with its threads beneath it,
+    which made a long list a tree three deep (project → thread → its sub
+    threads) and buried every project after the first behind one already open.
+    A section says the same thing on one level: the name is the heading, and
+    what is under it is what is in it.
+
+    The heading keeps what the folder row carried — the rollups, the + for a new
+    thread here, the way into the project's page, the hover card and the drag
+    payload — because those were the folder's and are still what a project
+    needs. What it does not keep is a fold: a section is always open, and what
+    bounds it is its body's own scroll (`SECTION_BODY`).
+
+    Spec: a project's set of threads is *not* listed here — the list under the
+    heading is the project's own threads, newest activity first, and offers
+    "Show more" past `PROJECT_PAGE_SIZE` exactly as a folder did. */
+export function ProjectSection({
   id,
   name,
   logoUrl,
@@ -47,7 +61,7 @@ export function ProjectFolder({
   id: string
   name: string
   logoUrl?: string
-  /** Where the project lives — the folder's hover card names it. Absent for
+  /** Where the project lives — the heading's hover card names it. Absent for
       "Other", which stands for projects the catalog no longer has. */
   cwd?: string
   /** The project's own note, when it has one. */
@@ -58,10 +72,9 @@ export function ProjectFolder({
   /** Opens the project's own page. Absent for "Other", for the same reason. */
   onOpenProject?: () => void
 }) {
-  const [open, toggle] = useFold(id, true)
-  /* Rollups: what the folder holds that is moving or asking, said on the
-     folder itself so a closed one is still a reading. Same words as the
-     filter ("Needs you" is waiting *and* failed). */
+  /* Rollups: what the project holds that is moving or asking, said on the
+     heading so a section scrolled to the top is still a reading. Same words as
+     the filter ("Needs you" is waiting *and* failed). */
   const { status } = useSidebarEnv()
   let running = 0
   let needsYou = 0
@@ -71,17 +84,15 @@ export function ProjectFolder({
     else if (state === "waiting" || state === "failed") needsYou++
   }
   const location = useLocation()
-  /* The project's own page is *about* this folder, so the folder is where you
-     are — open or closed, unlike the thread case below. */
+  /* The project's own page is *about* this section, so the heading is where you
+     are while you are on it. */
   const onProjectPage = location.pathname === projectPath(id)
   const isMobile = useIsMobile()
   const page = onOpenProject ? projectPath(id) : null
-  /* A folder's own click is a fold, so the two things it stands for — a thread
-     started here, and the page itself — live beside it: one hover control each,
-     and the same rows here, where a right-click (or a long press) is the way in
-     on a narrow screen that has no hover. The last two shapes are the ones every
-     place-shaped row in the chrome offers (`open-in-menu`): a tab of its own,
-     and a column beside this one. */
+  /* A heading is not a control that folds, so the two things the project stands
+     for — a thread started here, and the page itself — are its hover controls
+     and its right-click (long press) rows, the same two shapes every
+     place-shaped row in the chrome offers (`open-in-menu`). */
   const menu: MenuItemSpec[] = [
     ...(onNewThread
       ? ([{ label: "New thread here", icon: <Plus />, onClick: () => onNewThread() }] satisfies MenuItemSpec[])
@@ -95,9 +106,8 @@ export function ProjectFolder({
       : []),
   ]
 
-  /* Hovering a folder says what the folder's one line cannot: where the
-     project lives, what it holds and when it last spoke. The name alone was a
-     repeat of the row, so the pointer had nothing to offer. */
+  /* Hovering a heading says what its one line cannot: where the project lives,
+     what it holds and when it last spoke. */
   const lastActive = sessions.reduce((at, session) => Math.max(at, activityAt(session)), 0)
   const readingRows: [string, React.ReactNode][] = []
   if (description)
@@ -134,61 +144,43 @@ export function ProjectFolder({
     />
   )
 
-  const folderRow = (
-    <CollapsibleTrigger
-      render={
-        <SidebarMenuButton
-          tooltip={name}
-          isActive={onProjectPage}
-          /* Dragged into the dock, the folder is the page it opens: a tab on
-             the strip it lands on, or a column beside that group. */
-          draggable={!!page && !isMobile}
-          onDragStart={
-            !page || isMobile ? undefined : (event) => startRouteDrag(event, page)
-          }
-          /* Two hover controls need twice the gutter the primitive
-             reserves for one. `!` because the primitive's own `pr-8`
-             arrives from a `group-has-…/menu-item:` variant, a two-class
-             specificity that beats a plain `pr-14`. */
-          className={cn(
-            /* A folder is a heading over rows, not a row: medium weight,
-               so a column of them reads apart from the threads beneath. */
-            "font-medium",
-            onOpenProject && "pr-14!"
-          )}
-        />
-      }
+  const heading = (
+    <SidebarMenuButton
+      tooltip={name}
+      isActive={onProjectPage}
+      /* Dragged into the dock, the heading is the page it opens: a tab on the
+         strip it lands on, or a column beside that group. */
+      draggable={!!page && !isMobile}
+      onDragStart={!page || isMobile ? undefined : (event) => startRouteDrag(event, page)}
+      /* Two hover controls need twice the gutter the primitive reserves for
+         one. `!` because the primitive's own `pr-8` arrives from a
+         `group-has-…/menu-item:` variant, a two-class specificity that beats a
+         plain `pr-14`. */
+      className={cn(
+        /* A heading over rows, not a row: medium weight and the label's own
+           quiet colour, so a column of them reads as the sections it is. */
+        "font-medium",
+        onOpenProject && "pr-14!"
+      )}
     >
-      {/* Chevron leads, as in a file tree: it is the fold control, and
-          leading keeps the trailing corner free for the count and the
-          hover +. */}
-      <ChevronRight
-        aria-hidden
-        className={cn(
-          "text-muted-foreground transition-transform duration-200",
-          open && "rotate-90"
-        )}
-      />
-      {/* The project's mark — the same one the pickers and the settings
-          list draw, so a project is recognisable by its picture wherever
-          it is named. "Other" has no project to draw. */}
+      {/* The project's mark leads — the same one the pickers and the settings
+          list draw, so a project is recognisable by its picture wherever it is
+          named. "Other" has no project to draw. */}
       {onNewThread ? (
         <ProjectIcon project={{ name, logoUrl }} className="size-4" />
       ) : (
         <FolderIcon className="text-muted-foreground" />
       )}
       <span className="min-w-0 flex-1 truncate">{name}</span>
-      {/* The words ride along for a screen reader only: the number is a
-          tally beside a mark, and the hover card says both in full — the
-          badge's own `title` was a second tooltip on a row that now has a
-          card, two popovers in the same corner of the screen. */}
-      {!open && needsYou > 0 && (
+      {/* The words ride along for a screen reader only: the number is a tally
+          beside a mark, and the hover card says both in full. */}
+      {needsYou > 0 && (
         <Badge className="bg-warning/10 text-warning tabular-nums">
           {needsYou}
           <span className="sr-only"> need you</span>
         </Badge>
       )}
-      {!open && running > 0 && (
+      {running > 0 && (
         <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground tabular-nums">
           <Loader2 aria-hidden className="size-3! animate-spin" />
           {running}
@@ -200,26 +192,22 @@ export function ProjectFolder({
           {sessions.length}
         </span>
       )}
-    </CollapsibleTrigger>
+    </SidebarMenuButton>
   )
 
-  /* The folder's hover group must NOT enclose its threads: a thread row's ⋯
-     and the folder's + both show on `group-hover/menu-item`, and a named
-     group matches *any* ancestor, so a folder that was itself the
-     `SidebarMenuItem` lit up every child's ⋯ (and its own +) the moment the
-     pointer entered the folder. The outer <li> is therefore a plain list
-     item and the group is a div around just the folder's own row, with the
-     nested list a sibling of that div. */
   return (
-    <li data-slot="sidebar-menu-item" data-sidebar="menu-item" className="relative">
-      <Collapsible open={open} onOpenChange={toggle}>
-        <div className="group/menu-item relative">
+    <SidebarGroup data-project-section={id}>
+      {/* The group's own `p-2` is the section's gutter; the heading and its
+          rows share it, so the rows line up under the name rather than under
+          the mark — one level, and the indentation says "these belong to that
+          heading" without a rail, a chevron or a second list. */}
+      <div className="group/menu-item relative">
         {/* The card wraps the right-click menu rather than the other way round:
             `ItemContextMenu` merges its handlers onto its single child through
             `render`, and a hover-card root renders no DOM to merge onto. */}
         <HoverCard>
           <ItemContextMenu items={menu}>
-            {isMobile ? folderRow : <HoverCardTrigger delay={400} closeDelay={120} render={folderRow} />}
+            {isMobile ? heading : <HoverCardTrigger delay={400} closeDelay={120} render={heading} />}
           </ItemContextMenu>
           {!isMobile && (
             <HoverCardContent
@@ -232,52 +220,41 @@ export function ProjectFolder({
             </HoverCardContent>
           )}
         </HoverCard>
-        {/* The folder's own row opens and closes it — a click on the name is a
-            fold, as in every file tree — so the way *into* the project is a
-            control of its own, beside the +. */}
         {onOpenProject && (
-          <SidebarMenuAction
-            showOnHover
-            title={`Open ${name}`}
-            onClick={onOpenProject}
-            className="right-7"
-          >
+          <SidebarMenuAction showOnHover title={`Open ${name}`} onClick={onOpenProject} className="right-7">
             <PanelsTopLeft />
             <span className="sr-only">Open {name}</span>
           </SidebarMenuAction>
         )}
         {onNewThread && (
-          <SidebarMenuAction
-            showOnHover
-            title={`New thread in ${name}`}
-            onClick={onNewThread}
-          >
+          <SidebarMenuAction showOnHover title={`New thread in ${name}`} onClick={onNewThread}>
             <Plus />
             <span className="sr-only">New thread in {name}</span>
           </SidebarMenuAction>
         )}
-        </div>
-        <CollapsibleContent className="harness-collapse">
-          <div className={NEST}>
-            {sessions.length === 0 ? (
-              <p className="flex h-9 items-center px-3 text-xs text-muted-foreground">
-                {onNewThread ? "No threads yet" : "Empty"}
-              </p>
-            ) : (
-              <ThreadList
-                sessions={sessions}
-                limit={PROJECT_PAGE_SIZE}
-                /* A folder is the whole history of one project, so it reads by
-                   period — Today, Yesterday, Previous 7 days — the way the
-                   flat tiers above it do not need to, being short by
-                   construction. */
-                grouped
-              />
-            )}
+      </div>
+      <SidebarGroupContent>
+        {sessions.length === 0 ? (
+          <p className="flex h-9 items-center px-3 text-xs text-muted-foreground">
+            {onNewThread ? "No threads yet" : "Empty"}
+          </p>
+        ) : (
+          <div className={SECTION_BODY}>
+            <ThreadList
+              sessions={sessions}
+              limit={PROJECT_PAGE_SIZE}
+              /* One level, and the level is the project: the heading above says
+                 whose threads these are, so a period heading inside would be a
+                 second tier in a list that is filed by project, and the rows
+                 would repeat the name they already sit under. The flat list
+                 groups by period because it has no heading to file under; this
+                 one does. */
+              showProject={false}
+            />
           </div>
-        </CollapsibleContent>
-      </Collapsible>
-    </li>
+        )}
+      </SidebarGroupContent>
+    </SidebarGroup>
   )
 }
 

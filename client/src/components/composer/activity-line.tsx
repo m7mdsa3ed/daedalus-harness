@@ -3,6 +3,8 @@
    draws that sentence (and the six the connection ladder reaches it with);
    `ThreadStatus` is the turn's caller. Not a reading in the footer's
    cluster — this one lives in the transcript, where the turn is. */
+import type { ReactNode } from "react"
+
 import { Logo } from "@/components/ui/logo"
 import { runningAgents } from "@/components/composer/agents-indicator"
 import { toolHeading, toolKindOf } from "@/lib/tools"
@@ -153,13 +155,21 @@ export function PhaseLine({
   still = false,
   tone = "normal",
   label,
+  mark,
 }: {
   text: string
   /** Nothing is moving — a held turn or a stopped connection. */
   still?: boolean
   /** A connection failure uses the same transcript line with destructive color. */
-  tone?: "normal" | "error"
+  tone?: "normal" | "warn" | "error"
   label: string
+  /** What the line wears at its head, in place of the app's own mark. The
+      caller that knows what the sentence means owns this: the foot of a
+      transcript swaps it per reading (`thread-status.tsx`), so a thread
+      waiting on you and a thread reconnecting are told apart before the
+      sentence is read. Absent keeps the Daedalus mark, which is the honest
+      answer for "the harness itself is doing this". */
+  mark?: ReactNode
 }) {
   return (
     <div
@@ -169,14 +179,20 @@ export function PhaseLine({
       // heading (a whole bash command, a long path) ran off the transcript.
       className={cn(
         "flex min-w-0 max-w-full items-center gap-2",
-        tone === "error" ? "text-destructive" : still ? "text-muted-foreground" : "text-primary",
+        tone === "error"
+          ? "text-destructive"
+          : tone === "warn"
+            ? "text-warning"
+            : still
+              ? "text-muted-foreground"
+              : "text-primary",
       )}
       role="status"
     >
-      {/* The step row's mark slot (20 wide, one 24px line box), so the Logo
+      {/* The step row's mark slot (20 wide, one 24px line box), so the mark
           stands in the column every step's mark does. */}
       <span className="flex h-6 w-5 shrink-0 items-center justify-center">
-        <Logo working={!still && tone === "normal"} className="size-4" />
+        {mark ?? <Logo working={!still && tone === "normal"} className="size-4" />}
       </span>
       {/* The app's one busy sweep (`harness-shimmer`, an animation) beside the
           sentence swap (`harness-phase-swap`, a transition) — the two never

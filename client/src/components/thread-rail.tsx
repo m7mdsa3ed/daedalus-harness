@@ -46,6 +46,7 @@ import { useCoarsePointer } from "@/hooks/use-device"
 import type { TurnTick } from "@daedalus/protocol"
 import type { ThreadItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
+import { dominantTextDir } from "@/lib/text-direction"
 
 /** Vertical pitch, in px — mark plus gap, packed dense so the column reads
     as a ruler rather than a dotted list and a long thread still fits the
@@ -480,11 +481,11 @@ export const ThreadRail = React.memo(function ThreadRail({
               </span>
               {preview.id === null && <span className="font-normal">loads on jump</span>}
             </div>
-            <p dir="auto" className="line-clamp-3 font-medium text-foreground">
+            <p dir={dominantTextDir(preview.text)} className="line-clamp-3 font-medium text-foreground">
               {preview.text.trim() || <span className="italic text-muted-foreground">no text</span>}
             </p>
             {preview.reply.trim() && (
-              <p dir="auto" className="line-clamp-3 border-s-2 border-border ps-2 text-muted-foreground">
+              <p dir={dominantTextDir(preview.reply)} className="line-clamp-3 border-s-2 border-border ps-2 text-muted-foreground">
                 {preview.reply}
               </p>
             )}

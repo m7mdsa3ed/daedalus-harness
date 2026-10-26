@@ -149,17 +149,52 @@ export function useLinkFace(url: string): ChipFace {
 export const linesLabel = (lines: number) =>
   `${lines.toLocaleString()} line${lines === 1 ? "" : "s"}`
 
-/** The popover under a paste or quote chip: a caption, a Copy, the body. */
-export function ChipPreview({ caption, text }: { caption?: string; text: string }) {
+/* The transcript's own markdown pass, reached on demand. `components/prose.tsx`
+   imports this module (`LinkChip`) and `thread-items/user-chips.tsx` (the chip
+   registry), so a static import here would close the cycle; scheduling it keeps
+   the popover out of it, and costs nothing in practice — a bubble on screen has
+   already loaded the module. */
+const Markdown = React.lazy(() =>
+  import("@/components/prose").then((module) => ({ default: module.Prose }))
+)
+
+/* The body verbatim: still the answer for a quote or a block of what the agent
+   was sent, where the characters are the point. */
+const raw = (text: string) => (
+  <pre className="max-h-72 overflow-auto p-3 font-mono text-xs whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+    {text}
+  </pre>
+)
+
+/** The popover under a paste or quote chip: a caption, a Copy, the body.
+ *
+ * `markdown` reads the body the way the thread reads one — a pasted brief is a
+ * document, and its headings, lists, tables and fences are what it said. The
+ * Copy still hands over the characters as they were pasted. */
+export function ChipPreview({
+  caption,
+  text,
+  markdown = false,
+}: {
+  caption?: string
+  text: string
+  markdown?: boolean
+}) {
   return (
     <>
       <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5 text-xs text-muted-foreground">
         <span>{caption}</span>
         <CopyButton text={text} />
       </div>
-      <pre className="max-h-72 overflow-auto p-3 font-mono text-xs whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
-        {text}
-      </pre>
+      {markdown ? (
+        /* The raw body is the fallback, so the popover is never empty while the
+           pass loads — and it is what was drawn there before it existed. */
+        <React.Suspense fallback={raw(text)}>
+          <Markdown text={text} className="max-h-72 overflow-auto p-3" />
+        </React.Suspense>
+      ) : (
+        raw(text)
+      )}
     </>
   )
 }

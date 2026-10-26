@@ -50,7 +50,7 @@ import { ErrorNote } from "@/components/error-note"
 import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { Empty } from "@/components/empty"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,

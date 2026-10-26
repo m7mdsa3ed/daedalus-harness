@@ -43,7 +43,7 @@ export const FILTER_LABELS: Record<SidebarFilter, string> = {
   running: "Running",
   waiting: "Needs you",
   unread: "Unread",
-  hidden: "Hidden",
+  trash: "Trash",
 }
 export const SUBS_LABELS: Record<SidebarSubs, string> = {
   all: "All sub threads",
@@ -92,19 +92,27 @@ function ChoiceSub<T extends string>({
 /** Sort and filter, in one small menu on the Threads label — the controls
     Claude Code desktop puts at the top of its session list. The trigger
     lights up while a filter is on so a short list is never mistaken for an
-    empty install. */
+    empty install.
+
+    **Hiding is not a filter.** It used to be a fifth position of `Show`, so
+    reading the hidden threads cost you the list you were reading — but hiding
+    is something the list *stops* doing, not a way of reading it. It is a
+    checkbox now (`sidebarShowHidden`), and what it brings back is a group of
+    their own under the list. */
 export function ViewMenu({
   sort,
   filter,
   within,
   subs,
   compact,
+  showHidden,
 }: {
   sort: SidebarSort
   filter: SidebarFilter
   within: SidebarWithin
   subs: SidebarSubs
   compact: boolean
+  showHidden: boolean
 }) {
   const navigate = useNavigate()
   const filtered = filter !== "all" || within !== "any" || subs !== "all"
@@ -125,8 +133,8 @@ export function ViewMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" align="start" className={MENU_WIDTH}>
         {/* One submenu per reading, its current value on the trigger, so the
-            top level stays four rows and a filter that is on can be seen
-            without opening anything. */}
+            top level stays short and a filter that is on can be seen without
+            opening anything. */}
         <ChoiceSub
           title="Sort"
           labels={SORT_LABELS}
@@ -152,6 +160,11 @@ export function ViewMenu({
           onChange={(value) => setLayoutOption("sidebarSubThreads", value)}
         />
         <DropdownMenuSeparator />
+        {/* A switch, not a position: picked anywhere it adds the group, so a
+            hidden thread is found without leaving the list you were reading. */}
+        <DropdownMenuCheckboxItem checked={showHidden} onCheckedChange={(checked) => setLayoutOption("sidebarShowHidden", checked)}>
+          Hidden threads
+        </DropdownMenuCheckboxItem>
         <DropdownMenuCheckboxItem checked={compact} onCheckedChange={(checked) => setLayoutOption("sidebarCompact", checked)}>
           Compact rows
         </DropdownMenuCheckboxItem>

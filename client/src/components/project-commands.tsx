@@ -1,7 +1,7 @@
 import * as React from "react"
 import { BookmarkPlus, FileCode, History, SquareTerminal, TriangleAlert } from "lucide-react"
 import { HelperForm } from "@/components/helper-form"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -247,6 +247,10 @@ export function ProjectCommandMenu({
           icon: SquareTerminal,
           label: `${state.matches.length} project command${state.matches.length === 1 ? "" : "s"}`,
           urgent: true,
+          /* Picking one runs a shell command in the project: the shelf's one
+             row that acts on the machine rather than on the message, so it is
+             the one that warns. */
+          tone: "caution",
         }
       : null
   )

@@ -65,6 +65,14 @@ import type { Toast as ToastPrimitive } from "@base-ui/react/toast"
 const VIEWPORT_TOP =
   "top-[max(0.75rem,env(safe-area-inset-top))] bottom-auto sm:top-[max(1rem,env(safe-area-inset-top))] sm:bottom-auto"
 
+/* The bottom inset, restated at the call site. The registry's `bottom-4` reads
+   as "four from the window's edge", which on a phone is four from *under* the
+   home indicator — the last card in the stack sat beneath it. `--safe-bottom`
+   is the one place that inset is defined (index.css), so the pile clears it.
+   This was a line in `ui/toast.tsx` and a component refresh took it back out;
+   the registry file is not ours to hold behaviour in. */
+const VIEWPORT_BOTTOM = "bottom-[max(1rem,var(--safe-bottom))]"
+
 /* A shallower pile: the registry's 0.75rem gap and peek are the one piece of
    spacing that lives on the card rather than inside it. */
 const TOAST_TIGHT = "[--gap:0.5rem] [--peek:0.5rem]"
@@ -145,7 +153,7 @@ export function AppToaster({
     <ToastProvider toastManager={toastManager} {...props}>
       {children}
       <ToastPortal>
-        <ToastViewport className={top ? VIEWPORT_TOP : undefined}>
+        <ToastViewport className={top ? VIEWPORT_TOP : VIEWPORT_BOTTOM}>
           <ToastList top={top} />
         </ToastViewport>
       </ToastPortal>

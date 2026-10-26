@@ -13,6 +13,9 @@ import type { FileRange } from "@/lib/tools"
 import { toolVariantOf, useLayoutOptionsContext, type ToolLayout, type ToolVariant } from "@/lib/layout-options"
 import { cn } from "@/lib/utils"
 import { useRowState } from "@/lib/row-open"
+import { dominantTextDir, textDir } from "@/lib/text-direction"
+
+export { textDir } from "@/lib/text-direction"
 
 /* Right-clicking text the user has selected keeps the browser's own menu —
    native Copy works there. Ours only claims clicks on unselected content.
@@ -45,15 +48,6 @@ export function copyText(text: string) {
    gives every step inside it one direction (`StepDirContext`), so its rail
    stays on one side. The literal caption (a command, a path) keeps its own
    direction and only aligns with the row. */
-const RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/
-const STRONG_CHAR = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/
-
-/** The direction of the first strongly-directional character, as `dir="auto"` picks it. */
-export function textDir(text: string | undefined | null): "rtl" | "ltr" {
-  const first = text?.match(STRONG_CHAR)?.[0]
-  return first && RTL_CHAR.test(first) ? "rtl" : "ltr"
-}
-
 export const StepDirContext = React.createContext<"rtl" | "ltr" | null>(null)
 
 /* ── One call of a fan-out, marked ──
@@ -69,11 +63,18 @@ export const StepDirContext = React.createContext<"rtl" | "ltr" | null>(null)
    command has to look like the things beside it, or it reads as a decoration
    that arrived from somewhere else. `tabular-nums` so 1/10 and 2/3 are the
    same width and a column of them lines up. */
+/** The batch's tint on the app's chip — the ONE spelling, worn by the group's
+    "n in parallel" chip and by every call's place, so the two can never differ
+    by a shade or a size again. */
+export const BATCH_CHIP = "shrink-0 bg-primary/10 font-medium tabular-nums text-primary"
+
 export function StepMarker({ label }: { label: string }) {
   return (
     <span
       title={`Call ${label} — one of the calls this request made together`}
-      className={cn(CHIP, "shrink-0 bg-primary/12 font-medium tabular-nums text-primary")}
+      /* A fixed minimum and centred, so "1/2" and "10/12" take the same column
+         and every title in the batch starts on one line. */
+      className={cn(CHIP, BATCH_CHIP, "min-w-9 justify-center")}
     >
       {label}
     </span>
@@ -194,7 +195,6 @@ export const StepRow = React.memo(function StepRow({
   metric,
   control,
   detail,
-  foldedTarget,
   plainBody,
   below,
   firstRow,
@@ -257,13 +257,11 @@ export const StepRow = React.memo(function StepRow({
       takes the row's gap instead of a separator dot in front of it. */
   control?: React.ReactNode
   detail?: React.ReactNode
-  /** Alternate folded content shown beneath the headline. */
-  foldedTarget?: React.ReactNode
   /** The plain shape's body, as a function of disclosure state — so the SAME
-      nodes are mounted on both sides of the fold. `foldedTarget`/`detail` swap
-      two elements, and a swap is a remount: whatever animates a fold (a
-      thought's height, say) never sees the transition at all. Replaces both of
-      them in the plain shape, and makes the row expandable on its own. */
+      nodes are mounted on both sides of the fold. Rendering two different
+      elements for the two states is a swap, and a swap is a remount: whatever
+      animates a fold (a thought's block, say) never sees the transition at
+      all. Supplying this makes the row expandable on its own. */
   plainBody?: (open: boolean) => React.ReactNode
   /** Content beside the title, on its first row rather than underneath. */
   firstRow?: React.ReactNode
@@ -399,7 +397,7 @@ export const StepRow = React.memo(function StepRow({
       ? Math.max(0, endedAt - startedAt - (waitedMs ?? 0))
       : null
   const runDir = React.useContext(StepDirContext)
-  const d = runDir ?? dir ?? textDir(typeof target === "string" ? target : caption)
+  const d = runDir ?? dir ?? dominantTextDir(typeof target === "string" ? target : caption)
   /* This step's place in the batch it went out with, when it went out with one
      (`StepMarkerContext`): a step outside a batch has no key to look up and a
      batch has none for a row it did not send, so both answer nothing. */
@@ -526,11 +524,7 @@ export const StepRow = React.memo(function StepRow({
           )}
           {plain ? (
             <div className="min-w-0 flex-1 text-start text-sm leading-relaxed text-muted-foreground">
-              {plainBody
-                ? plainBody(open)
-                : !open && foldedTarget
-                  ? foldedTarget
-                  : detail}
+              {plainBody ? plainBody(open) : detail}
             </div>
           ) : (
             <span className="flex min-w-0 flex-1 flex-col">
@@ -551,10 +545,10 @@ export const StepRow = React.memo(function StepRow({
               </div>
               {caption && (
                 <span
-                  dir="auto"
+                  dir={dominantTextDir(caption)}
                   className={cn(
                     "harness-part-in [--part-i:2] -mt-1 min-w-0 truncate text-xs leading-5 text-muted-foreground",
-                    d === "rtl" ? "text-right" : "text-left",
+                    dominantTextDir(caption) === "rtl" ? "text-right" : "text-left",
                     mono && "font-mono"
                   )}
                 >

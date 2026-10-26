@@ -3,7 +3,7 @@ import { uuid } from "@/lib/uuid"
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Input } from "@/components/ui/input"
 import { ChoiceTiles, FIELD_GRID, Field, Section, Segmented } from "@/components/settings/primitives"
 import { Textarea } from "@/components/ui/textarea"

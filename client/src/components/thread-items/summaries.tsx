@@ -69,6 +69,19 @@ export const pluralNoun = (noun: string, count: number) =>
 const mcpOf = (item: ToolItem): McpCall | null =>
   toolViewOf(item) === "mcp" ? extractMcpCall(item) : null
 
+/** The key one call folds under, shared by the sentence and the mark stack so
+    they can never disagree about what a run holds: an MCP call by the
+    integration that took it, the web's two acts apart from the `fetch` kind they
+    share, and everything else by its kind. */
+function callKeyOf(item: ToolItem): string {
+  const mcp = mcpOf(item)
+  if (mcp) return `mcp:${mcpServerKey(mcp.server)}`
+  const web = webInput(item)
+  if (web?.query) return "websearch"
+  if (web?.url) return "webfetch"
+  return toolKindOf(item)
+}
+
 /** What the run actually did: "reading 10 files, running 28 shell commands", in the
     order the groups first appeared. */
 export function summarise(items: ToolItem[]): { verb: string; noun: string; count: number }[] {
@@ -84,14 +97,7 @@ export function summarise(items: ToolItem[]): { verb: string; noun: string; coun
     // The web's two acts are named apart from the `fetch` kind they share:
     // "searching the web 3 times, reading 2 pages" says what a run of
     // globe-icon rows did; "fetching 5 fetches" did not.
-    const web = webInput(item)
-    const key = mcp
-      ? `mcp:${mcpServerKey(mcp.server)}`
-      : web?.query
-        ? "websearch"
-        : web?.url
-          ? "webfetch"
-          : toolKindOf(item)
+    const key = callKeyOf(item)
     const group =
       groups.get(key) ??
       (mcp
@@ -108,37 +114,46 @@ export function summarise(items: ToolItem[]): { verb: string; noun: string; coun
 }
 
 /** What the source strip does for pages, this does for calls: one small mark
-    per tool in arrival order, overlapped like avatars, with overflow folded
-    into a count. The tool's kind and tint match its step row. */
+    per distinct act in first-seen order, overlapped like avatars, with overflow
+    folded into a count. The tool's kind and tint match its step row. */
 const RUN_AVATARS = 6
 
-/** One circular mark per call, in arrival order, like the web source stack —
-    except an MCP call, which wears its *integration's* mark and appears once per
-    server however many calls went to it. Four BugSnag calls and two GitHub ones
-    were six identical wrenches; the question a folded run raises is which
-    integrations it talked to, and one logo each answers it. Remaining marks
-    collapse into a `+N` avatar. */
+/** One circular mark per *distinct* thing the run did — never one per call. A
+    run of five `Bash` calls drew five identical terminals beside a sentence that
+    already said "Running 5 shell commands": the stack repeated the count and
+    said nothing new. Marks are keyed by `callKeyOf`, the same key the sentence
+    groups by, so the stack is a legend for the summary beside it — one mark for
+    the kind, one logo per MCP integration — and its overflow counts the acts
+    that did not fit, not the calls. */
 export function RunAvatarStack({ items, single }: { items: RunItem[]; single?: boolean }) {
   const servers = useMcpServers()
-  /* One mark per call: a run holds calls and setting changes, and a setting
-     change is a rule in the list rather than an act to draw a mark for. */
+  /* A run holds calls and setting changes, and a setting change is a rule in
+     the list rather than an act to draw a mark for. */
+  const calls = items.filter((item): item is ToolItem => item.kind === "tool")
+  /* Each call's key with the call it stands for, counted per key so a mark's
+     tooltip can say how many went to it. */
+  const counts = new Map<string, number>()
+  for (const item of calls) {
+    const key = callKeyOf(item)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
   const marks: { key: string; title: string; disc: string; node: React.ReactNode }[] = []
-  const integrations = new Set<string>()
-  for (const item of items) {
-    if (item.kind !== "tool") continue
+  const seen = new Set<string>()
+  for (const item of calls) {
+    const key = callKeyOf(item)
+    if (seen.has(key)) continue
+    seen.add(key)
+    const count = counts.get(key) ?? 1
     const mcp = mcpOf(item)
     if (mcp) {
-      const key = mcpServerKey(mcp.server)
-      if (integrations.has(key)) continue
-      integrations.add(key)
-      const server = servers.find((entry) => mcpServerKey(entry.name) === key) ?? null
+      const server = servers.find((entry) => mcpServerKey(entry.name) === mcpServerKey(mcp.server)) ?? null
       /* The wash is the integration's own colour (`mcpTint`), which is what
          tells two servers apart in a stack this small — the logos are 12px and
          their art is often monochrome. It rides the inner circle, not the disc:
          the discs overlap, so the disc itself has to stay opaque. */
       marks.push({
-        key: `mcp:${key}`,
-        title: mcpServerLabel(mcp.server),
+        key,
+        title: `${mcpServerLabel(mcp.server)} — ${count} ${pluralNoun("call", count)}`,
         disc: "bg-background ring-1 ring-background group-hover/fold:bg-muted group-hover/fold:ring-muted",
         node: (
           <span
@@ -154,12 +169,13 @@ export function RunAvatarStack({ items, single }: { items: RunItem[]; single?: b
       continue
     }
     const kind = toolKindOf(item)
-    const webSearch = toolViewOf(item) === "websearch"
-    const colorKind = webSearch ? "search" : kind
+    const colorKind = key === "websearch" ? "search" : kind
     const Icon = KIND_ICONS[kind] ?? WrenchIcon
+    const verb = KIND_VERBS[key] ?? KIND_VERBS.other
+    const noun = KIND_NOUNS[key] ?? KIND_NOUNS.other
     marks.push({
-      key: item.id,
-      title: item.title,
+      key,
+      title: `${verb.charAt(0).toUpperCase() + verb.slice(1)} ${count} ${pluralNoun(noun, count)}`,
       disc: "bg-background ring-1 ring-background group-hover/fold:bg-muted group-hover/fold:ring-muted",
       node: (
         <span

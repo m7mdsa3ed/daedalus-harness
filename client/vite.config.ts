@@ -188,6 +188,10 @@ export default defineConfig({
          over on `caught_up` — one function, so the live figure and the
          persisted one cannot disagree. */
       "@daedalus/tps": path.resolve(import.meta.dirname, "../server/src/tps.ts"),
+      /* The peak-schedule grammar, run at both ends for the same reason `tps`
+         is: the composer's badge and any server reading of one schedule must
+         not be two implementations. */
+      "@daedalus/peak": path.resolve(import.meta.dirname, "../server/src/peak.ts"),
     },
   },
 });

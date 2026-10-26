@@ -283,23 +283,28 @@ function toolsEndedAt(row: Row): number | undefined {
     steps of a run, and this is the one it cannot, since prose ends the run it
     follows. Undefined when either end has no honest stamp.
 
-    **The wait is measured to the last call, not to the row directly above it.**
+    **A thought above the reply ends the wait, it does not sit inside it.**
     Reasoning that ends a step — a request whose last act was thinking, with no
     call after it — leaves its thought standing between the run and the reply,
     because a trailing thought is the live tail rather than part of the fold
-    (`groupToolRuns`). Reading only `rows[index - 1]` then found a thought where
-    it wanted a call and said nothing at all, so the whole wait — the thinking
-    included — went unmeasured on exactly the steps where it was longest. The
-    chain of thoughts is walked back to the run it followed, and the gap is the
-    wall clock across it: the thought is part of the wait, and it says its own
-    duration separately. Undefined when that walk reaches anything that is not a
-    settled call, so a message from the person between them still breaks it. */
+    (`groupToolRuns`). Measuring from the run's last call then counted the
+    thinking a second time: the thought's own line above already says how long it
+    thought, and the figure under it claimed the same seconds again — sometimes
+    *fewer* of them, because a call settles when its arguments are done rather
+    than when the reasoning began. So the walk stops at the thought and takes its
+    end (`endedAt`, else its arrival), and the gap is what was left after the
+    thinking stopped. Undefined when that walk reaches anything that has no
+    honest stamp — a message from the person between them, or a thought rebuilt
+    from a replay — so a break is never measured across. */
 export function proseGapAfter(rows: Row[], index: number): number | undefined {
   const row = rows[index]
   if (!row || row.kind !== "agent" || row.parentId || row.at === undefined) return undefined
   for (let i = index - 1; i >= 0; i--) {
     const above = lastInnerRow(rows[i])
-    if (above.kind === "thought" && !above.parentId) continue
+    if (above.kind === "thought") {
+      if (above.parentId || above.at === undefined) return undefined
+      return row.at - (above.endedAt ?? above.at)
+    }
     const end = toolsEndedAt(above)
     return end === undefined ? undefined : row.at - end
   }

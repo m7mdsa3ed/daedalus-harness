@@ -120,6 +120,7 @@
     "recharts": "3.8.0",
     "remark-gfm": "^4.0.1",
     "shadcn": "^4.21.0",
+    "shiki": "^4.5.0",
     "tailwind-merge": "^3.7.0",
     "tailwindcss": "^4.3.3",
     "tiptap-markdown": "^0.9.0",

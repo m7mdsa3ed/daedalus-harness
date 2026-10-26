@@ -753,17 +753,22 @@ async function pumpStream(
   const silenced = new Map<string, ToolMeta>();
   const silent = (m: ToolMeta): boolean => subagentsRfd && m.announcesOwnSession === true;
 
-  const flushBlock = () => {
-    if (!block.kind || !block.buffer) {
-      block = { kind: "", buffer: "" };
-      return;
+  /* `keepOpen` journals what has been written and leaves the block (and its
+     `messageId`) standing. A tool call's `tool-input-start` is not the end of
+     the prose around it: some gateways open a call while the text block is
+     still streaming, and the deltas that follow belong to the same message.
+     Closing there left them with no block to land in — streamed live, never
+     journaled — and a `session/load` replayed the message cut short. The
+     journal keeps the call between the two halves, as the live stream did. */
+  const flushBlock = (keepOpen = false) => {
+    if (block.kind && block.buffer) {
+      emit.record({
+        sessionUpdate: block.kind === "text" ? "agent_message_chunk" : "agent_thought_chunk",
+        content: { type: "text", text: block.buffer },
+        messageId,
+      });
     }
-    emit.record({
-      sessionUpdate: block.kind === "text" ? "agent_message_chunk" : "agent_thought_chunk",
-      content: { type: "text", text: block.buffer },
-      messageId,
-    });
-    block = { kind: "", buffer: "" };
+    block = keepOpen && block.kind ? { kind: block.kind, buffer: "" } : { kind: "", buffer: "" };
   };
 
   try {
@@ -815,7 +820,7 @@ async function pumpStream(
           break;
         case "tool-input-start": {
           output();
-          flushBlock();
+          flushBlock(true);
           const m = metaFor(meta, part.toolName);
           if (silent(m)) {
             silenced.set(part.id, m);

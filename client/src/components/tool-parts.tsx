@@ -185,21 +185,22 @@ export const PANE_MAX_H = "max-h-[min(calc(var(--panel-h,100svh)*0.6),28rem)]"
    panel's **width** — `@panel-sm:`, the container query, not `sm:`, because a
    chat squeezed beside a terminal is narrow for the same reason a phone is.
 
-   Deliberately *tight*: the box is a live view, not a reading pane — it is open
-   only while the thought streams (see `ThoughtDetail` in
-   `thread-items/rows.tsx`, and `autoOpen` on `StepRow`) and folds to one line
-   the moment it settles, so it should not eat the turn it sits in. A short
-   panel gets less of it (0.3), a roomy one more (0.42, still ceilinged so a tall
-   monitor does not turn a thought into a page).
+   Deliberately *tight*: the box is a live view, not a reading pane — it opens
+   only while the thought streams (see `ThoughtReading` in
+   `thread-items/rows.tsx`, and `autoOpen` on `StepRow`) and folds the moment it
+   settles, so it should not eat the turn it sits in. A short panel gets less of
+   it (0.3), a roomy one more (0.42, still ceilinged so a tall monitor does not
+   turn a thought into a page).
 
-   The box follows its own newest text while the thought streams — see
-   `ThoughtDetail` — because the transcript's `useFollowStream` measures the
+   The box follows its own newest text while the thought streams (see
+   `ThoughtReading`) because the transcript's `useFollowStream` measures the
    *content*, and a capped box stops growing: the newest thinking would be
    exactly what falls out of view.
 
-   This is the OPEN cap only. The folded shape is the card's own preview — three
-   lines, clamped and faded by `.thought-preview .prose` — so this ceiling is
-   what the opened one is held to. */
+   This is the OPEN ceiling only — and since a scroller's height is
+   min(content, max-height), it is also the height `ThoughtBlock` measures for
+   its open clip. The folded shape is the same box cut to three line boxes and
+   faded by `.thought-fold`. */
 export const THOUGHT_MAX_H =
   "max-h-[calc(var(--panel-h,100svh)*0.3)] @panel-sm:max-h-[min(calc(var(--panel-h,100svh)*0.42),20rem)]"
 

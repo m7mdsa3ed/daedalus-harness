@@ -80,6 +80,18 @@ export function syncHeaderOverlap(api: DockviewApi): void {
 
   for (const group of api.groups) {
     const element = group.element
+    /* Marks only the outer workspace dock. Its tab-strip preference must not
+       hide the separate tabs inside a thread's own pane dock. */
+    element.setAttribute("data-workspace-dock", "")
+    /* A hidden strip must not leave the header's measured reservation behind. */
+    const hidden = element.ownerDocument.documentElement.dataset.workspaceTabs === "hidden"
+    if (hidden) {
+      element.style.setProperty(HEADER_OVERLAP, "0px")
+      element.style.setProperty(BAND_LEFT, "0px")
+      element.style.setProperty(BAND_RIGHT, "0px")
+      element.removeAttribute("data-header-band")
+      continue
+    }
     /* A popped-out group is in another window, where this document's header
        covers nothing. Measuring it against a rect from a different viewport is
        how a second monitor would inherit a phone's notch. */

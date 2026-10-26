@@ -22,7 +22,8 @@ import {
 import { flattenSelectOptions, recommendedValue } from "@/lib/session-options"
 import { normalizeSuggestKinds, SUGGEST_KINDS } from "@/lib/suggestions"
 import { DEFAULT_UI_GROUPS, normalizeUiGroups, UI_GROUPS } from "@/lib/openui/groups"
-import type { ModelRole } from "@/lib/settings"
+import type { ModelOption, ModelRole } from "@/lib/settings"
+import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 import { EffortMeter, ModeIcon } from "@/components/composer/option-icons"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -36,6 +37,8 @@ export interface Choice {
   /** Optional group label — choices with the same group are rendered under a
       shared heading in the submenu. */
   group?: string
+  /** Compact facts shown below the name, useful for model choices. */
+  details?: string[]
   /** The agent marks this one as its recommendation (ACP `_meta`, read in
       `selectChoices`) — drawn as a muted suffix, never selected for you. */
   recommended?: boolean
@@ -84,14 +87,14 @@ const SEARCH_THRESHOLD = 8
     paths, where a subsequence match is mostly noise. Exported because the
     strip's own picker (`PickerMenu`) filters the same way over a different
     row shape — one rule for what "search" means in a menu. */
-export function menuFilter<T extends { value: string; name: string; group?: string; hint?: string }>(
+export function menuFilter<T extends { value: string; name: string; group?: string; hint?: string; details?: string[] }>(
   items: T[],
   query: string
 ): T[] {
   const q = query.trim().toLowerCase()
   if (!q) return items
   return items.filter((item) =>
-    [item.name, item.value, item.group ?? "", item.hint ?? ""].some((field) =>
+    [item.name, item.value, item.group ?? "", item.hint ?? "", ...(item.details ?? [])].some((field) =>
       field.toLowerCase().includes(q)
     )
   )
@@ -135,6 +138,24 @@ export function MenuSearchInput({
 }
 
 const MENU_KEYS = ["ArrowDown", "ArrowUp", "Enter", "Escape", "Tab", "Home", "End"]
+
+/** Metadata that helps distinguish models before choosing one. Keep the
+    catalogue's facts verbatim in meaning; unknown fields stay omitted. */
+export function modelChoiceDetails(model: ModelOption): string[] {
+  const facts = [
+    model.contextWindow ? `${formatTokens(model.contextWindow)} context` : null,
+    model.maxOutputTokens ? `${formatTokens(model.maxOutputTokens)} max output` : null,
+    model.pricing
+      ? `$${model.pricing.input}/$${model.pricing.output} per 1M tokens (in/out)`
+      : null,
+    model.modalities?.length ? model.modalities.join(", ") : null,
+    model.reasoningEfforts.length ? `Effort: ${model.reasoningEfforts.join(", ")}` : null,
+  ].filter((fact): fact is string => !!fact)
+
+  return [facts.length ? facts.join(" · ") : undefined, model.description].filter(
+    (detail): detail is string => !!detail,
+  )
+}
 
 /** The add row at the foot of a menu, for the pickers that can grow their own
     catalog. Same shape in a submenu and in the strip's picker.
@@ -189,6 +210,11 @@ export function MenuRow({
       {choice.icon}
       <span className="flex min-w-0 flex-col">
         <span className="truncate">{choice.name}</span>
+        {choice.details?.map((detail) => (
+          <span key={detail} className="truncate text-xs text-muted-foreground">
+            {detail}
+          </span>
+        ))}
       </span>
       {(choice.note || choice.recommended) && (
         <span

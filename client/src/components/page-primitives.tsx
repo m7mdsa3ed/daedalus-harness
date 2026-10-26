@@ -144,6 +144,47 @@ export function SurfaceHeader({
   )
 }
 
+/** A row of `MetaCell`s for a header's `meta` slot: full width, wrapping, with
+    a hairline above so it reads as the page's spec sheet and not as more
+    description. */
+export function MetaCells({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <dl
+      className={cn(
+        "mt-1 flex w-full flex-wrap items-center gap-x-8 gap-y-3 border-t border-dashed pt-4 text-sm text-foreground",
+        className,
+      )}
+    >
+      {children}
+    </dl>
+  )
+}
+
+/** One labelled fact: its mark, a small-caps name over the value. Unlike
+    `MetaFact` the reader never has to guess what an icon stands for. */
+export function MetaCell({
+  label,
+  icon,
+  children,
+  className,
+}: {
+  label: string
+  /** An entity's own mark, already sized (`size-5`). */
+  icon?: React.ReactNode
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div className={cn("flex min-w-0 items-center gap-2.5", className)}>
+      {icon && <span className="flex shrink-0 items-center">{icon}</span>}
+      <div className="min-w-0">
+        <dt className="text-[11px] leading-4 font-medium tracking-wider text-muted-foreground uppercase">{label}</dt>
+        <dd className="max-w-[24rem] truncate leading-5">{children}</dd>
+      </div>
+    </div>
+  )
+}
+
 /** One fact about the page's subject, with an icon beside its name. */
 export function MetaFact({
   icon: Icon,

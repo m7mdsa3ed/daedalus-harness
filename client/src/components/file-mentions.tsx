@@ -383,6 +383,8 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
               ? "No matches"
               : `${state.matches.length} match${state.matches.length === 1 ? "" : "es"}`,
           urgent: true,
+          /* Files found in the repo: something found, and only found. */
+          tone: "positive",
         }
       : null
   )

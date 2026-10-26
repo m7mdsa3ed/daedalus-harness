@@ -76,6 +76,7 @@ import { InteractiveFlowchart } from "@/lib/openui/interactive-flowchart"
 import { usePlacePhoto, type PlacePhoto } from "@/lib/openui/place-photo"
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
+import { dominantTextDir } from "@/lib/text-direction"
 import { BODY, Box, BoxHeader, chartColor, FLOW, LABEL, META, PAD, PAD_ROW, SurfaceContext, TITLE, TONE_BAR, TONE_DOT, ToneChip, WELL_PAD } from "@/lib/openui/kit"
 import { UI_GROUPS } from "@/lib/openui/groups"
 import { FileTree } from "@/lib/openui/components/FileTree"
@@ -735,11 +736,11 @@ const Rows = defineComponent({
                   underline={false}
                   className="flex min-w-0 items-start gap-1 text-sm leading-snug underline-offset-2 hover:underline"
                 >
-                  <span className="min-w-0 break-words">{item.title}</span>
+                  <span dir={dominantTextDir(item.title)} className="min-w-0 break-words text-start">{item.title}</span>
                   <ArrowUpRight className="mt-0.5 size-3.5 shrink-0" />
                 </LinkAnchor>
               ) : (
-                <span className="min-w-0 text-sm leading-snug font-medium break-words text-foreground">
+                <span dir={dominantTextDir(item.title)} className="min-w-0 text-start text-sm leading-snug font-medium break-words text-foreground">
                   <RichText text={item.title} />
                 </span>
               )}
@@ -750,12 +751,12 @@ const Rows = defineComponent({
               )}
             </div>
             {facts && (
-              <p className={cn(META, "text-pretty")}>
+              <p dir={dominantTextDir(facts)} className={cn(META, "text-start text-pretty")}>
                 <RichText text={facts} />
               </p>
             )}
             {item.text && (
-              <p className={cn(BODY, "text-pretty")}>
+              <p dir={dominantTextDir(item.text)} className={cn(BODY, "text-start text-pretty")}>
                 <RichText text={item.text} />
               </p>
             )}

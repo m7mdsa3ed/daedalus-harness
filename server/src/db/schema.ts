@@ -16,6 +16,7 @@ import type { AuthorizationServerMetadata } from "@modelcontextprotocol/sdk/shar
 
 import type * as acp from "../acp.js";
 import type { AutonomyPolicy } from "../autonomy.js";
+import type { PeakSchedule } from "../peak.js";
 import type { CallDoor, ToolUse } from "../protocol.js";
 
 /*
@@ -45,6 +46,44 @@ import type { CallDoor, ToolUse } from "../protocol.js";
 export const MODEL_KINDS = ["chat", "decision", "completion"] as const;
 export type ModelKind = (typeof MODEL_KINDS)[number];
 
+/** The peak-schedule row shape, named here so a model's `peak` and the parser
+    that reads it cannot describe different objects. */
+export type ModelPeak = PeakSchedule;
+
+/** One on/off switch a runtime owns, and the env key it becomes at spawn
+    (`AgentDef.behavior`).
+ *
+ * Some of what a runtime does is a *behaviour* rather than a preference: whether
+ * it reads the workspace's own AGENTS.md, whether it holds a failed turn
+ * instead of ending it, whether it sends a prompt-cache key so a router keeps a
+ * thread on one backend. Those are all env keys — `DAEDALUS_AGENT_*` for ours —
+ * and until this they were editable only as a raw `NAME=value` textarea, which
+ * is a text editor standing in for a settings page.
+ *
+ * The row is the *switch*, not the abilibility: `name`, `label`, `description`
+ * and both value spellings are the runtime's own words, co-located with the
+ * seed that ships it, so a second runtime adds its switches in its own seed and
+ * the form draws them from the row. Nothing in the client names a key. */
+export interface AgentBehaviorSwitch {
+  /** The env key at spawn, e.g. `DAEDALUS_AGENT_PROJECT_INSTRUCTIONS`. */
+  key: string;
+  label: string;
+  description: string;
+  /** What `on` and `off` become in the env. Defaults `"1"`/`"0"` — the runtimes
+      that read a `0`/`false`/`off` family take a bare `0` for off. */
+  on?: string;
+  off?: string;
+  /** What the runtime does with the key absent. `true` = on, and is what lets a
+      cleared switch mean "the default" rather than "off". */
+  fallback: boolean;
+}
+/** The switches on a row, plus the values a person has changed. Values whose key
+    is absent from the map are the runtime's default (`fallback`). */
+export interface AgentBehavior {
+  switches: AgentBehaviorSwitch[];
+  values?: Record<string, boolean>;
+}
+
 /** How a non-chat kind is called — the wire is a column, exactly as
     `AgentDef.quotaProbe.kind` is, so a protocol is never guessed from an id.
     Declared and saved; nothing calls one yet (no adapter ships with this
@@ -71,8 +110,15 @@ export interface ModelDef {
   reasoningEfforts: string[];
   /** One-line capability blurb, when known. */
   description?: string;
-  /** USD per million tokens, at full price. */
+  /** USD per million tokens, at full price — the number a provider prints on
+      its rate card outside any discount. */
   pricing?: { input: number; output: number };
+  /** When that price is not what a request costs, and by how much.
+      Free-form because providers do not agree on the shape: DeepSeek raises
+      inside two weekday UTC windows, Alibaba discounts a Beijing night. Read by
+      `peak.ts`, which is the one place the grammar lives — so the composer's
+      badge and anything the server says about the same schedule cannot drift. */
+  peak?: ModelPeak;
   /** Input modalities, e.g. ["text", "image"]. */
   modalities?: string[];
   /** Provenance when enriched: "providerId/modelId" in models.dev, so the
@@ -277,6 +323,10 @@ export const agents = pgTable("agents", {
   /** The runtime's own tools a harness MCP server replaces, and how to switch
       them off. Null = its built-ins stay on beside ours. */
   builtinTools: jsonb("builtin_tools").$type<BuiltinToolOverrides>(),
+  /** The runtime's own on/off behaviour switches, and which ones a person has
+      changed (`AgentBehavior`). Null = this runtime declares none, which is
+      every runtime whose behaviour is not ours to turn. */
+  behavior: jsonb("behavior").$type<AgentBehavior>(),
   /** How to ask this runtime's plain CLI for the built-in model catalog a
       generated one is modelled on. Null = no catalog is generated for it. */
   catalogProbe: jsonb("catalog_probe").$type<CatalogProbe>(),

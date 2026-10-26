@@ -110,9 +110,42 @@ export function ChipBadge({
   )
 }
 
+/* ── The hue an item wears ──
+   The shelf holds four different *kinds* of thing — a file riding along with
+   the message, a command menu, a shell command from the project, a file found
+   in the repo — and one flat ground behind all of them said they were the same
+   kind. A rail of three items in one grey was read by its words alone, which is
+   the one thing a shelf you glance at while typing cannot afford.
+
+   The vocabulary is the app's, never a palette of its own: `accent` is the
+   message's own content, `positive` something found, `caution` something that
+   will *run* — and `neutral` the rows with nothing to say beyond their words.
+   So a theme needs no new token — every hue here is one it already chooses
+   (see `.dark` in index.css, where each is dialled up a step and `--step-*` is
+   re-picked). A row with nothing to say yet wears `neutral` and is exactly the
+   grey the shelf always was, so a quiet shelf is unchanged. */
+export type StripTone = "neutral" | "accent" | "positive" | "caution"
+
+/** The mark's colour, per tone. The words stay the row's own text colour: a hue
+    on the mark is what the transcript already does for a step, and colouring
+    the label too would make the rail a row of four coloured stickers. */
+const TONE_MARK: Record<StripTone, string> = {
+  neutral: "text-current",
+  accent: "text-primary",
+  positive: "text-success",
+  caution: "text-warning",
+}
+
+/** The class an item's mark wears for its tone. */
+function stripToneMark(tone: StripTone = "neutral"): string {
+  return TONE_MARK[tone]
+}
+
 /** What a row tells the strip about itself, so the strip can speak for it. */
 type StripSummary = {
   id: string
+  /** The hue this kind of item wears — see `StripTone`. Absent is `neutral`. */
+  tone?: StripTone
   /** The words on the row's sliver — as its `title` and its accessible name,
       since the sliver itself is only wide enough for the icon. */
   label: string
@@ -220,11 +253,12 @@ export function useStripSummary(summary: StripSummary | null) {
   const icon = summary?.icon
   const urgent = summary?.urgent
   const badge = summary?.badge
+  const tone = summary?.tone
 
   React.useEffect(() => {
     if (!strip || !id) return
-    strip.register({ id, label: label ?? "", icon, urgent, badge, slot })
-  }, [strip, id, label, icon, urgent, badge, slot])
+    strip.register({ id, label: label ?? "", icon, urgent, badge, tone, slot })
+  }, [strip, id, label, icon, urgent, badge, tone, slot])
 
   /* Unregistering is its own effect keyed on the id alone: folded into the one
      above it would drop the card off the pile and re-add it on every label
@@ -291,6 +325,7 @@ export function ComposerStrip({
         current.icon === entry.icon &&
         current.urgent === entry.urgent &&
         current.badge === entry.badge &&
+        current.tone === entry.tone &&
         current.slot === entry.slot
       ) {
         return prev
@@ -375,10 +410,45 @@ export function ComposerStrip({
      is part of the box's height, and it changes with the row inside it (a
      project name wrapping, the ring appearing on the first usage report). */
   const footerRef = React.useRef<HTMLDivElement>(null)
-  const [footerHeight, setFooterHeight] = React.useState(0)
+  const [measured, setFooterHeight] = React.useState(0)
+  /* A footer that goes away (the mini composer) is kept drawn while the shelf
+     folds down over it, then let go: unmounting it at once would leave an empty
+     ground shrinking, where it should be the row sliding out. Keyed on whether
+     there is one, never on the element — a caller builds a new element every
+     render, and an effect on it cancelled its own timer. */
+  const hasFooter = !!footer
+  const lastFooter = React.useRef<React.ReactNode>(footer)
+  if (footer) lastFooter.current = footer
+  const [leaving, setLeaving] = React.useState(false)
+  const hadFooterForLeave = React.useRef(hasFooter)
+  React.useEffect(() => {
+    if (hasFooter) {
+      hadFooterForLeave.current = true
+      setLeaving(false)
+      return
+    }
+    if (!hadFooterForLeave.current) return
+    hadFooterForLeave.current = false
+    setLeaving(true)
+    const timer = setTimeout(() => setLeaving(false), STOW_MS)
+    return () => clearTimeout(timer)
+  }, [hasFooter])
+  const drawnFooter = footer || (leaving ? lastFooter.current : null)
+  const footerHeight = footer ? measured : 0
+  /* The shelf is clipped while the footer folds in or out, so the row is
+     revealed by the height rather than spilling over the transcript. */
+  const [settling, setSettling] = React.useState(false)
+  const hadFooter = React.useRef(hasFooter)
+  React.useEffect(() => {
+    if (hadFooter.current === hasFooter) return
+    hadFooter.current = hasFooter
+    setSettling(true)
+    const timer = setTimeout(() => setSettling(false), STOW_MS)
+    return () => clearTimeout(timer)
+  }, [hasFooter])
   React.useLayoutEffect(() => {
     const el = footerRef.current
-    if (!el) {
+    if (!el || !hasFooter) {
       setFooterHeight(0)
       return
     }
@@ -387,7 +457,7 @@ export function ComposerStrip({
     const observer = new ResizeObserver(read)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [!!footer])
+  }, [hasFooter])
 
   /* Nothing to draw at all. A shelf with a footer is never this: the footer is
      the reason the shelf exists between turns, so it neither folds nor stows. */
@@ -442,12 +512,24 @@ export function ComposerStrip({
         aria-labelledby={many && entry ? `composer-strip-tab-${entry.id}` : undefined}
         data-strip-slot=""
         data-front={front ? "" : undefined}
+        /* The hue this card carries. Set on the element rather than as a class
+           so it resolves per item — `[data-strip-tone]` in index.css mixes the
+           shelf against whatever this points at, and a `neutral` item points at
+           the shelf itself, which is a card with no wash. */
+        data-strip-tone={entry?.tone ?? "neutral"}
+        style={{
+          top: railHeight,
+          bottom: footerHeight + tuck,
+          "--strip-tone": `var(--shelf-tone-${entry?.tone ?? "neutral"})`,
+        } as React.CSSProperties}
         hidden={!front}
         className={cn(
           "harness-strip-card absolute inset-x-0 overflow-hidden rounded-t-composer",
-          front && cn("backdrop-blur-[var(--app-blur)]", ground)
+          /* The wash is the card's, not the class's: `[data-strip-tone]` paints
+             it, so only the blur is conditional here. A `neutral` card is the
+             shelf exactly. */
+          front && "backdrop-blur-[var(--app-blur)]"
         )}
-        style={{ top: railHeight, bottom: footerHeight + tuck }}
       >
         <div
           ref={front ? bodyRef : undefined}
@@ -500,7 +582,7 @@ export function ComposerStrip({
           // the way down. Without it the composer would jump rather than slide.
           // Never with a footer: that surface is already down there, and a
           // second one over it would wash the row it is under.
-          empty && !stowed && cn("overflow-hidden rounded-t-composer", ground),
+          ((empty && !stowed) || settling) && cn("overflow-hidden rounded-t-composer", ground),
           // Nothing registered and the fold finished: no pile, no shelf.
           stowed && empty && "hidden",
           className
@@ -522,6 +604,7 @@ export function ComposerStrip({
             {entries.map((entry) => {
               const Icon = entry.icon
               const selected = entry.id === activeId
+              const tone = entry.tone ?? "neutral"
               return (
                 <button
                   key={entry.id}
@@ -535,13 +618,19 @@ export function ComposerStrip({
                   className={cn(
                     "inline-flex h-8 min-w-0 shrink-0 items-center gap-2 rounded-full px-2 text-left text-xs font-medium transition-colors",
                     wideLayout && "w-full justify-start",
+                    /* The words are the tab's, not the tone's: a tinted *label*
+                       beside a tinted mark is two colours for one fact, and the
+                       rail has to stay readable at `text-xs`. The mark below is
+                       the only thing that carries the hue. */
                     selected
                       ? "bg-composer text-foreground ring-1 ring-foreground/10"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground",
                     "outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   )}
                 >
-                  {Icon && <Icon className="size-4 shrink-0" />}
+                  {/* The hue, at full strength: the rail is scanned rather than
+                      read, so this is the one place a kind is said plainly. */}
+                  {Icon && <Icon className={cn("size-4 shrink-0", stripToneMark(tone))} />}
                   <span className="max-w-36 truncate">{entry.label}</span>
                   {entry.badge != null && entry.badge > 0 && (
                     <ChipBadge>{formatCount(entry.badge, 99)}</ChipBadge>
@@ -557,10 +646,12 @@ export function ComposerStrip({
             corner under a card's square one is a notch of transcript showing
             through the seam. It carries the tuck (`pb-4`) the cards give up,
             so the shelf still ends behind the composer. */}
-        {footer && (
+        {drawnFooter && (
           <div
             ref={footerRef}
             data-strip-footer=""
+            aria-hidden={footer ? undefined : true}
+            inert={footer ? undefined : true}
             className={cn(
               "absolute inset-x-0 bottom-0 pb-4",
               /* `--shelf`, never the composer's `--composer`: the strip is a
@@ -577,7 +668,7 @@ export function ComposerStrip({
               entries.length === 0 && "rounded-t-composer"
             )}
           >
-            {footer}
+            {drawnFooter}
           </div>
         )}
       </div>

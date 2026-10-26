@@ -7,7 +7,7 @@ import * as React from "react"
 import { BellRingIcon, HourglassIcon, MoonIcon, SendIcon, ShieldQuestionIcon } from "lucide-react"
 
 import { useElapsed } from "@/components/step-row"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover"
 import { Textarea } from "@/components/ui/textarea"

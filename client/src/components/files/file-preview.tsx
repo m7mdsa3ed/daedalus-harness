@@ -40,7 +40,7 @@ import { Thumb } from "@/components/files/file-items"
 import { mimeIcon } from "@/components/files/mime-icon"
 import { copyText } from "@/components/step-row"
 import { Highlighted } from "@/components/tool-parts"
-import { Prose } from "@/components/prose"
+import { MarkdownDocument } from "@/components/prose"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -283,7 +283,7 @@ function TextViewer({ file, text, kind }: { file: FileRecord; text: string; kind
       </Bar>
       <div className="min-h-0 flex-1 overflow-auto">
         {mode === "rendered" && kind === "markdown" ? (
-          <Prose text={text} className="mx-auto max-w-3xl p-6" />
+          <MarkdownDocument text={text} className="mx-auto max-w-3xl p-6" />
         ) : mode === "rendered" && kind === "html" ? (
           <iframe
             srcDoc={text}

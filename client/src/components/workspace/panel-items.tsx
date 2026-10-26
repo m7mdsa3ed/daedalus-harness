@@ -57,7 +57,6 @@ const OPENABLE: { kind: PanelKind; label: string; hint: string; shortcut?: Short
     shortcut: "terminal",
   },
   { kind: "tasks", label: "Tasks", hint: "A board beside the work" },
-  { kind: "web", label: "Preview", hint: "This project's files, beside a preview" },
 ]
 
 /** One row, in the one shape every row of this menu has. */

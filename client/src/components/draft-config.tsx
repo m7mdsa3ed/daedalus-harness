@@ -42,6 +42,7 @@ import {
   SessionSettingsSub,
   MenuSearchInput,
   menuFilter,
+  modelChoiceDetails,
   selectChoices,
   type MenuAdd,
 } from "@/components/config-menu";
@@ -210,7 +211,7 @@ export function DraftScopeRow({
       >
         {editable ? (
           <PickerMenu
-            icon={<ProjectIcon project={project} className={READING_MARK} />}
+            icon={<ProjectIcon project={project} className={cn(READING_MARK, "text-primary")} />}
             label={project?.name ?? "No project"}
             title="Project"
             /* The directory still matters — it is where the work lands — so it
@@ -240,7 +241,7 @@ export function DraftScopeRow({
           >
             <ReadingFace
               always
-              icon={<ProjectIcon project={project} className={READING_MARK} />}
+              icon={<ProjectIcon project={project} className={cn(READING_MARK, "text-primary")} />}
               label={project?.name ?? "No project"}
               labelClass="max-w-40"
             />
@@ -296,7 +297,7 @@ function WorktreeChip({
     enabled: editable && !!meta.projectId,
     staleTime: 60_000,
   });
-  const mark = <GitBranchIcon aria-hidden className={READING_MARK} />;
+  const mark = <GitBranchIcon aria-hidden className={cn(READING_MARK, "text-step-tool")} />;
   if (!editable) {
     if (!meta.worktree) return null;
     const gone = meta.worktree.exists === false;
@@ -684,6 +685,7 @@ export function DraftConfigPopover({
             name: m.label,
             icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
             group: m.group || undefined,
+            details: modelChoiceDetails(m),
           })),
         ],
         onSelect: (value) =>

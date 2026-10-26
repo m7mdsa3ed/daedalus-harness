@@ -64,6 +64,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   session,
   state,
   trash,
+  active,
   unread,
   pinned,
   showProject,
@@ -81,6 +82,11 @@ export const ThreadRow = React.memo(function ThreadRow({
   session: SessionMeta
   state: ThreadStatus
   trash: boolean
+  /** The thread whose tab is in front (`useActiveChat`), so the row says which
+      one you are reading. Read by the list from the dock's published state and
+      handed down as a prop, which keeps the row memoized on a boolean instead
+      of a store subscription per row. */
+  active: boolean
   /** A turn ended here after the reader last looked (the sidebar's
       `useUnreadIds`). The title is what says it — one weight up — rather than
       a mark beside it: the thing that changed is the thread, and a dot at the
@@ -219,6 +225,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   const button = (
     <SidebarMenuButton
       data-thread-id={session.id}
+      isActive={active}
       onClick={() => onOpen(session)}
       /* Dragged into the dock, a row is the place it stands for: it lands as
          a tab on a strip, or makes a column beside the group it is dropped
@@ -244,9 +251,12 @@ export const ThreadRow = React.memo(function ThreadRow({
            instead of sitting under the ⋯. */
         isMobile && (fold && onClose ? "pr-19!" : fold || onClose ? "pr-12!" : "pr-7!"),
         /* A faint wash over the whole row for the two states addressed to
-           the reader, a step stronger on hover. */
-        !trash && state === "waiting" && "bg-warning/10 hover:bg-warning/15",
-        !trash && state === "failed" && "bg-destructive/10 hover:bg-destructive/15",
+           the reader, a step stronger on hover. The active row keeps its own
+           selected ground: the wash and the selection are the same slot, and
+           "you are reading this" is the fact that outranks "this needs you",
+           which the title's colour and the status still say. */
+        !trash && !active && state === "waiting" && "bg-warning/10 hover:bg-warning/15",
+        !trash && !active && state === "failed" && "bg-destructive/10 hover:bg-destructive/15",
         isMobile && "select-none [-webkit-touch-callout:none]"
       )}
     >

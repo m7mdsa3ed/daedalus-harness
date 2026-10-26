@@ -42,6 +42,7 @@ import {
   type ChipFace,
 } from "@/components/inline-chip"
 import { pasteToken, type Paste } from "@/lib/pastes"
+import { readsAsMarkdown } from "@/lib/paste-markdown"
 import { cn } from "@/lib/utils"
 import {
   blocksToText,
@@ -128,6 +129,7 @@ function PasteChipView({ node, deleteNode, selected }: NodeViewProps) {
               : "This paste is no longer on this device."
           }
           text={paste?.text ?? ""}
+          markdown={paste !== undefined && readsAsMarkdown(paste.text)}
         />
       }
     />
@@ -424,6 +426,10 @@ export function ComposerEditor({
     immediatelyRender: true,
     extensions: [
       StarterKit.configure({
+        // Each line takes its own direction from its first strong character, so
+        // Arabic/Hebrew lines run and align right-to-left and English ones stay
+        // left-to-right in the same message (the bubbles do the same).
+        paragraph: { HTMLAttributes: { dir: "auto" } },
         blockquote: false,
         bold: false,
         bulletList: false,

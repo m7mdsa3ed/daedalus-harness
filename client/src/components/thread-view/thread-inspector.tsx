@@ -1,5 +1,5 @@
 /* ── The thread inspector ── the column beside a transcript (`ThreadView`),
-   with the thread's readings in full: Changes, Plan, Agents, Details. */
+   with the thread's readings in full: Changes, Agents, Details. */
 import * as React from "react"
 import {
   ActivityIcon,
@@ -24,8 +24,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useTranscriptJump } from "@/components/thread-view/dormant"
 import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { Empty } from "@/components/empty"
-import { TodoChecklist } from "@/components/todo-checklist"
-import { threadTodos } from "@/components/composer/todo-indicator"
 import {
   INSPECTOR_DEFAULT,
   INSPECTOR_MAX,
@@ -500,7 +498,7 @@ const TracePanel = React.lazy(() => import("@/components/thread-view/trace-panel
 
 /**
  * The thread inspector — the column beside the transcript that reads the thread
- * without scrolling it: what the last turn wrote, the plan, the subagents, and
+ * without scrolling it: what the last turn wrote, the subagents, and
  * what the thread runs on.
  *
  * **It is the chat panel's, never a dock split** — opening a panel never splits
@@ -549,10 +547,7 @@ export function ThreadInspector({
     [thread.items, thread.turnActive, thread.background]
   )
   const groups = React.useMemo(() => activityGroups(rows), [rows])
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
-  const todos = React.useMemo(() => threadTodos(thread), [thread.items])
   const running = groups.filter((group) => group.active).length
-  const done = todos?.filter((todo) => todo.status === "completed").length ?? 0
 
   /* The divider: the width is the device's (`lib/inspector.ts`), held here
      while dragging and written once on release — the IDE side view's bargain. */
@@ -625,10 +620,6 @@ export function ThreadInspector({
               Source Control
               {changes && changes.files.length > 0 && <Count>{changes.files.length}</Count>}
             </TabsTrigger>
-            <TabsTrigger value="plan">
-              Plan
-              {todos && <Count>{`${done}/${todos.length}`}</Count>}
-            </TabsTrigger>
             <TabsTrigger value="agents">
               Agents
               {groups.length > 0 && (
@@ -651,7 +642,7 @@ export function ThreadInspector({
           </Button>
         </header>
 
-        {(["changes", "plan", "agents", "details", "trace"] as const).map((section) => (
+        {(["changes", "agents", "details", "trace"] as const).map((section) => (
           <TabsContent key={section} value={section} className="flex min-h-0 flex-1 flex-col">
             <ThreadSection section={section} thread={thread} meta={meta} onJump={onJump} />
           </TabsContent>
@@ -664,7 +655,7 @@ export function ThreadInspector({
 /** One of the inspector's readings on its own — a tab of the sheet here, a
     panel of its own in the thread dock (`workspace/thread-dock.tsx`), where
     each can be moved and resized beside the transcript. */
-export type ThreadSectionKind = "changes" | "plan" | "agents" | "details" | "trace"
+export type ThreadSectionKind = "changes" | "agents" | "details" | "trace"
 
 export function ThreadSection({
   section,
@@ -683,8 +674,6 @@ export function ThreadSection({
     [thread.items, thread.turnActive, thread.background]
   )
   const groups = React.useMemo(() => activityGroups(rows), [rows])
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
-  const todos = React.useMemo(() => threadTodos(thread), [thread.items])
 
   if (section === "changes")
     return !meta.projectId ? (
@@ -698,12 +687,6 @@ export function ThreadSection({
           repo={meta.worktree?.path}
         />
       </React.Suspense>
-    )
-  if (section === "plan")
-    return (
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {todos ? <TodoChecklist items={todos} /> : <Empty>The agent has not written a plan in this thread.</Empty>}
-      </div>
     )
   if (section === "agents") return <AgentsTab thread={thread} groups={groups} onJump={onJump} />
   if (section === "trace")

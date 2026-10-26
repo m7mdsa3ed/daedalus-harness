@@ -14,24 +14,34 @@
    - Word and Excel (`lib/office-preview.ts`) are converted to a page in an
      empty-sandbox frame; PowerPoint is drawn as slides in a scriptless frame;
    - CSV/TSV is a table in the same empty-sandbox frame;
-   - markdown is the transcript's own `Prose`; anything else is highlighted
-     text, or a line saying why there is none. */
+   - markdown is `MarkdownDocument`, the transcript's own pass with heading
+     ids and in-panel anchor links; anything else is highlighted
+     text, or a line saying why there is none.
+
+   A text file can be edited where it is drawn: the pencil swaps the viewer for
+   `FileEditor` (Monaco), and an unsaved edit is shown here too rather than the
+   stale text on disk. The viewer follows the disk — an event on its path
+   re-reads the file silently, so a file an agent is writing does not need a
+   reload. */
 import * as React from "react"
-import { ArrowLeftIcon, CopyIcon, FileIcon } from "lucide-react"
+import { ArrowLeftIcon, CopyIcon, FileIcon, PencilIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Empty } from "@/components/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CodeLinesSkeleton } from "@/components/ui/skeletons"
 import { Highlighted } from "@/components/tool-parts"
-import { Prose } from "@/components/prose"
+import { MarkdownDocument } from "@/components/prose"
 import { copyText } from "@/components/step-row"
+import { FileEditor } from "@/components/workspace/file-editor"
 import { PanelToolbar } from "@/components/workspace/primitives"
 import { ErrorNote } from "@/components/error-note"
 import { captureError, type InlineError } from "@/lib/errors"
 import { previewKind } from "@/lib/file-preview"
 import { csvHtml, officeHtml, renderSlides } from "@/lib/office-preview"
+import { isDirty, useDraft } from "@/lib/workspace/edit-drafts"
 import { readFile, readFileBytes, type WorkspaceFile } from "@/lib/workspace/fs-api"
+import { watchProject } from "@/lib/workspace/watch"
 
 const VIDEO_MIME: Record<string, string> = { mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", ogv: "video/ogg" }
 
@@ -48,6 +58,9 @@ export function FilePreview({
   path,
   onBack,
   leading,
+  editing = false,
+  onEditingChange,
+  line,
 }: {
   projectId: string
   path: string
@@ -56,15 +69,30 @@ export function FilePreview({
   /** Drawn first in the toolbar, ahead of the file's own mark — the Preview
       panel's explorer toggle. */
   leading?: React.ReactNode
+  /** The file is open in the editor rather than the viewer. */
+  editing?: boolean
+  /** Absent where nothing can be edited; the pencil is not drawn. */
+  onEditingChange?: (editing: boolean) => void
+  /** A line to land on when the editor opens. */
+  line?: number
 }) {
   const kind = previewKind(path)
   const [loaded, setLoaded] = React.useState<Loaded>({ state: "loading" })
+  /* Bumped by the watch stream: a re-read that keeps what is on screen until
+     the new text lands, where a path change starts from the skeleton. */
+  const [reads, setReads] = React.useState(0)
+  const draft = useDraft(projectId, path)
+  const shown = React.useRef("")
 
   React.useEffect(() => {
+    if (editing) return
     const controller = new AbortController()
     let url: string | null = null
-    setLoaded({ state: "loading" })
-    const bytes = kind === "image" || kind === "video" || kind === "pdf" || kind === "office"
+    if (shown.current !== `${projectId}\0${path}`) {
+      shown.current = `${projectId}\0${path}`
+      setLoaded({ state: "loading" })
+    }
+    const bytes = bytesKind(kind)
     ;(bytes
       ? readFileBytes(projectId, path, controller.signal).then(async (data): Promise<Loaded> => {
           if (kind === "office") {
@@ -90,9 +118,27 @@ export function FilePreview({
       controller.abort()
       if (url) URL.revokeObjectURL(url)
     }
-  }, [projectId, path, kind])
+  }, [projectId, path, kind, reads, editing])
+
+  /* The disk moving under the viewer. Only a text file is followed: re-reading
+     a video or a PDF on every write to it would restart the player. */
+  React.useEffect(() => {
+    if (editing || bytesKind(kind)) return
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const stop = watchProject(projectId, (batch) => {
+      if (!batch.overflow && !batch.events.some((event) => event.path === path)) return
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => setReads((n) => n + 1), 250)
+    })
+    return () => {
+      if (timer) clearTimeout(timer)
+      stop()
+    }
+  }, [projectId, path, kind, editing])
 
   const name = path.slice(path.lastIndexOf("/") + 1)
+  const editable = !!onEditingChange && !bytesKind(kind)
+  const unsaved = isDirty(draft)
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PanelToolbar>
@@ -107,16 +153,42 @@ export function FilePreview({
           <span className="text-foreground">{name}</span>
           {name !== path && <span className="ml-2 text-muted-foreground">{path.slice(0, -name.length - 1)}</span>}
         </span>
+        {unsaved && !editing && <span className="shrink-0 text-xs text-warning">Unsaved edits</span>}
         <Button size="icon-xs" variant="ghost" aria-label="Copy path" title="Copy path" onClick={() => void copyText(path)}>
           <CopyIcon />
         </Button>
+        {editable && (
+          <Button
+            size="icon-xs"
+            variant={editing ? "secondary" : "ghost"}
+            aria-pressed={editing}
+            aria-label={editing ? "Back to the viewer" : "Edit this file"}
+            title={editing ? "Back to the viewer" : "Edit this file"}
+            onClick={() => onEditingChange(!editing)}
+          >
+            <PencilIcon />
+          </Button>
+        )}
       </PanelToolbar>
-      <div className="min-h-0 flex-1 overflow-auto bg-muted/50">
-        <Body kind={kind} loaded={loaded} name={name} ext={name.slice(name.lastIndexOf(".") + 1)} />
+      <div className={editing ? "min-h-0 flex-1 overflow-hidden" : "min-h-0 flex-1 overflow-auto bg-muted/50"}>
+        {editing ? (
+          <FileEditor projectId={projectId} path={path} line={line} />
+        ) : (
+          <Body
+            kind={kind}
+            loaded={unsaved && draft && loaded.state === "text" ? { state: "text", file: { ...loaded.file, content: draft.text } } : loaded}
+            name={name}
+            ext={name.slice(name.lastIndexOf(".") + 1)}
+          />
+        )}
       </div>
     </div>
   )
 }
+
+/** The kinds read as bytes — drawn by the browser or by a converter, never edited. */
+const bytesKind = (kind: ReturnType<typeof previewKind>) =>
+  kind === "image" || kind === "video" || kind === "pdf" || kind === "office"
 
 function Body({ kind, loaded, name, ext }: { kind: ReturnType<typeof previewKind>; loaded: Loaded; name: string; ext: string }) {
   if (loaded.state === "loading")
@@ -167,7 +239,7 @@ function Body({ kind, loaded, name, ext }: { kind: ReturnType<typeof previewKind
     )
   if (kind === "csv")
     return <iframe srcDoc={csvHtml(file.content, /\.tsv$/i.test(name))} title={name} sandbox="" className="h-full w-full border-0 bg-white" />
-  if (kind === "markdown") return <Prose text={file.content} className="mx-auto max-w-3xl p-6" />
+  if (kind === "markdown") return <MarkdownDocument text={file.content} className="mx-auto max-w-3xl p-6" />
   return <Highlighted code={file.content} language={ext} className="p-3" />
 }
 

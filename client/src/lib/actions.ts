@@ -39,7 +39,8 @@ import { lifecycleActions } from "./actions/lifecycle"
 import { linkActions } from "./actions/links"
 
 export type { ConfigPatch } from "./actions/config"
-export { describeConfig } from "./actions/config"
+export { configChanges, describeConfig } from "./actions/config"
+export type { ConfigChange, ConfigChangeKind } from "./actions/config"
 export type { LinkKey } from "./actions/links"
 
 /** Side-effectful operations: REST calls + ACP thread lifecycle. */

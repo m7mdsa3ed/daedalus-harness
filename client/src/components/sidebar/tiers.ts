@@ -8,6 +8,10 @@ export interface TierInput {
   sessions: SessionMeta[]
   inSpace: (session: SessionMeta) => boolean
   filter: SidebarFilter
+  /** Draw the threads hiding took out of the list, in place. Off, they are out
+      of every reading — which is what hiding is — and this is the one switch
+      that brings them back. */
+  showHidden?: boolean
   /** Only threads with a turn this recent. */
   within?: SidebarWithin
   /** How `filed` is ordered; `project` is the activity order, filed by folder. */
@@ -27,6 +31,10 @@ export interface Tiers {
   live: SessionMeta[]
   trashed: SessionMeta[]
   pinned: SessionMeta[]
+  /** The threads `showHidden` put back among the rest, drawn in a group of
+      their own so a list that stopped showing them can say how many there are
+      without a filter that swaps the whole list for them. */
+  hidden: SessionMeta[]
   /** Every live thread in the chosen order (newest activity first unless the
       sort says otherwise) — what the folders file. */
   filed: SessionMeta[]
@@ -36,6 +44,7 @@ export function deriveTiers({
   sessions,
   inSpace,
   filter,
+  showHidden = false,
   within = "any",
   sort = "recent",
   unread,
@@ -45,18 +54,20 @@ export function deriveTiers({
   query = "",
   projectNames,
 }: TierInput): Tiers {
-  // Deleting is reversible, so a deleted thread leaves the tiers above but
-  // not the sidebar: it drops into Trash until it is restored or purged.
+  // Deleting is reversible, so a deleted thread stays out of the ordinary
+  // list and is shown only when Trash is the selected filter.
   const needle = query.trim().toLowerCase()
   const scoped = sessions.filter((session) => isListed(session) && inSpace(session))
   const trashed = scoped
     .filter((session) => !!session.deletedAt)
     .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
-  const live = scoped.filter((session) => {
+  const live = (filter === "trash" ? trashed : scoped).filter((session) => {
+    if (filter === "trash") return !needle || matches(session, needle, projectNames)
     if (session.deletedAt) return false
-    /* A hidden thread is out of every list but its own: "Hidden" shows exactly
-       those, every other reading shows none of them. */
-    if (!!session.hiddenAt !== (filter === "hidden")) return false
+    /* A hidden thread is out of every list unless the list was told to draw
+       them — and then it is drawn in the group of its own below, never among
+       the threads nobody hid. */
+    if (session.hiddenAt && !showHidden) return false
     if (needle && !matches(session, needle, projectNames)) return false
     if (within !== "any" && activityAt(session) < now - WITHIN_MS[within]) return false
     if (filter === "unread") return unread?.has(session.id) ?? false
@@ -71,15 +82,22 @@ export function deriveTiers({
     return true
   })
 
+  /* Trash is its own sorted set and holds nothing to hide; every other
+     reading draws what is left once the hidden ones are taken out of it. */
+  const shown = filter === "trash" ? live : live.filter((session) => !session.hiddenAt)
+
   /* By last activity, not by creation: a thread is recent because something
      was said in it, so picking up an old one brings it back to the top. */
-  const filed = [...live].sort(
-    sort === "created"
-      ? (a, b) => b.createdAt - a.createdAt
-      : sort === "title"
-        ? (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true })
-        : (a, b) => activityAt(b) - activityAt(a)
-  )
+  const filed =
+    filter === "trash"
+      ? [...live].sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
+      : [...shown].sort(
+          sort === "created"
+            ? (a, b) => b.createdAt - a.createdAt
+            : sort === "title"
+              ? (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true })
+              : (a, b) => activityAt(b) - activityAt(a)
+        )
   const byId = new Map(filed.map((session) => [session.id, session]))
 
   // Pinned keeps the order pins were added in, not the order threads were created.
@@ -88,7 +106,13 @@ export function deriveTiers({
     return session ? [session] : []
   })
 
-  return { live, trashed, pinned, filed }
+  /* The group under the list: what hiding took out of it, newest activity
+     first. Drawn only when the list was asked for them, and never while Trash
+     is the reading — a deleted thread is not a hidden one. */
+  const hidden = filter === "trash" || !showHidden ? [] : live.filter((session) => !!session.hiddenAt)
+  hidden.sort((a, b) => activityAt(b) - activityAt(a))
+
+  return { live, trashed, pinned, hidden, filed }
 }
 
 /** Title, project, agent or model, every word of the query somewhere in them. */

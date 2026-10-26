@@ -24,7 +24,7 @@ import * as React from "react"
 import { PencilEdit02Icon, SparklesIcon, Tick02Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { ActionIcon, actionClass, type ActionPhase } from "@/components/ui/action-state"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"

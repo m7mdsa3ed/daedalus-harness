@@ -1,6 +1,6 @@
 /* ── The thread dock ──
    A chat tab on a wide screen is a dock of its own: the transcript and every
-   panel that is about *this* thread — Changes, Plan, Agents, Details, its
+   panel that is about *this* thread — Changes, Agents, Details, its
    shell, its preview — moved, split and resized inside the tab.
    **On a phone it is the same dock, stacked**: no room for a split, so every
    panel is a tab beside the transcript's own, and nothing drags.
@@ -33,12 +33,12 @@ import {
 import {
   AppWindowIcon,
   BotIcon,
+  FolderTreeIcon,
   GitCompareIcon,
   ActivityIcon,
   InfoIcon,
   Maximize2Icon,
   Minimize2Icon,
-  ListChecksIcon,
   PlusIcon,
   SquareTerminalIcon,
   XIcon,
@@ -97,7 +97,6 @@ const WebPanel = React.lazy(async () => ({
 const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }> = {
   transcript: { title: "Thread", icon: null },
   changes: { title: "Source Control", icon: GitCompareIcon },
-  plan: { title: "Plan", icon: ListChecksIcon },
   agents: { title: "Agents", icon: BotIcon },
   details: { title: "Details", icon: InfoIcon },
   trace: { title: "Trace", icon: ActivityIcon },
@@ -106,7 +105,7 @@ const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }>
 }
 
 /** The readings — one panel each, the id is the kind. */
-const SECTIONS: ThreadSectionKind[] = ["changes", "plan", "agents", "details", "trace"]
+const SECTIONS: ThreadSectionKind[] = ["changes", "agents", "details", "trace"]
 
 /* ── Where each kind lives ──
    A panel opens at its kind's own place, not wherever the focus happens to be:
@@ -115,7 +114,6 @@ const SECTIONS: ThreadSectionKind[] = ["changes", "plan", "agents", "details", "
 type Slot = "side" | "beside" | "below"
 const SLOT: Record<Exclude<ThreadPanelKind, "transcript">, Slot> = {
   changes: "side",
-  plan: "side",
   agents: "side",
   details: "side",
   trace: "side",
@@ -264,6 +262,18 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
           return
         }
         if (kind === "transcript") return api.getPanel("transcript")?.api.setActive()
+        if (kind === "web") {
+          /* The thread's own files. One Preview per project in this dock, under
+             the id a mention or a source-control row already opens — so `Files`
+             shows that one rather than a second, empty explorer beside it, and
+             a file already being read stays on screen: asking for the panel is
+             not asking for it to forget where it was pointed. */
+          const panel: PanelDescriptor = { kind: "web", viewId: "default", projectId }
+          const open = api.getPanel(panelId(panel))
+          if (open) return open.api.setActive()
+          add(panelId(panel), "web", panel)
+          return
+        }
         add(kind, kind)
       },
     }
@@ -604,6 +614,13 @@ function ThreadPanelsMenu() {
         <DropdownMenuContent align="end" className={MENU_WIDTH}>
           {SECTIONS.filter((kind) => kind !== "trace" || modelCalls).map((kind) => row(kind))}
           <DropdownMenuSeparator />
+          {/* The thread's own files, beside the transcript. Labelled "Files"
+              because with nothing open that is exactly what it is; the tab takes
+              the name of the file once one is opened, and keeps the Preview's
+              own mark (`KINDS.web`) because it is that one panel. */}
+          <DropdownMenuItem onClick={() => ctx.handle.open("web", true)}>
+            <FolderTreeIcon /> Files
+          </DropdownMenuItem>
           {row("terminal", "New terminal")}
         </DropdownMenuContent>
       </DropdownMenu>

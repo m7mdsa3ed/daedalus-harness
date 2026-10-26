@@ -90,13 +90,19 @@ function LandingComposer({ actions }: { actions: Actions }) {
      not a statement about every thread you start after it — and it is only the
      *starting* project either way: the composer's own scope row moves it. */
   const wantedProject = useSearchParams()[0].get("project")
-  // Memoized for `loadThreadDefaults`, which is a localStorage read and a parse.
+  /* Read once, on arrival. Picking a project in the scope row writes this same
+     default (`saveThreadDefaults`), and the next projects-cache refresh (every
+     agent or model pick publishes one) would re-run the memo below with the
+     *new* value, change `projectId`, and so re-mint the draft — a new session
+     id, an empty composer, and the pick that caused it lost with the old row.
+     The remembered project is where the console starts, not where it follows. */
+  const [rememberedProject] = React.useState(() => loadThreadDefaults().projectId)
   const projectId = React.useMemo(
     () =>
       projects.find((p) => p.id === wantedProject)?.id ??
-      projects.find((p) => p.id === loadThreadDefaults().projectId)?.id ??
+      projects.find((p) => p.id === rememberedProject)?.id ??
       projects[0]?.id,
-    [projects, wantedProject]
+    [projects, wantedProject, rememberedProject]
   )
 
   /* A thread that has been sent is not this page's to forget. The send is what

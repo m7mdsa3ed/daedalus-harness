@@ -36,6 +36,7 @@ import type { Actions } from "@/lib/actions"
 import { navigateTo } from "@/lib/router"
 import { MOBILE_BREAKPOINT, useIsMobile } from "@/hooks/use-device"
 import { useTheme } from "@/lib/theme"
+import { useLayoutOptions } from "@/lib/layout-options"
 import { PANEL_KINDS } from "@/lib/workspace/panels"
 
 /* The terminal and board carry libraries the rest of the app does not. The
@@ -324,6 +325,7 @@ export function WorkspaceDock({
   dock: DockController
   onReady: (api: DockviewApi) => void
 }) {
+  const { hideWorkspaceTabs } = useLayoutOptions()
   /* ── One group on a phone ──
      Two panels side by side in 390px is two panels nobody can read, so below
      `md` the dock is one stack of tabs: every group folds into the active one
@@ -337,6 +339,10 @@ export function WorkspaceDock({
     if (isMobile) dock.stackAll()
   }, [isMobile, dock])
   const apiRef = React.useRef<DockviewApi | undefined>(undefined)
+  React.useEffect(() => {
+    document.documentElement.dataset.workspaceTabs = hideWorkspaceTabs ? "hidden" : "shown"
+    if (apiRef.current) syncHeaderOverlap(apiRef.current)
+  }, [hideWorkspaceTabs])
   useTabSwipe(isMobile, dock.cycleTab, () => apiRef.current)
   /* Every kind gets an entry, including the ones this build has not written
      yet: Dockview throws on an unknown component name, so a layout saved by a

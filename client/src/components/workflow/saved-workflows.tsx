@@ -9,7 +9,7 @@ import { PlayIcon, Trash2Icon, WorkflowIcon } from "lucide-react"
 import { ErrorNote } from "@/components/error-note"
 import { Notice } from "@/components/notice"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,

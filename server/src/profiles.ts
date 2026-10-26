@@ -40,6 +40,16 @@ export const ProfileInputSchema = z.object({
         // payloads from before they existed still parse.
         description: z.string().optional(),
         pricing: z.object({ input: z.number().min(0), output: z.number().min(0) }).optional(),
+        /* When that price is not what a request costs (`peak.ts`). Declared
+           here for the reason `group` is: Zod strips what it does not know, and
+           a schedule silently dropped on save is a badge that never appears. */
+        peak: z
+          .object({
+            windows: z.string(),
+            when: z.enum(["peak", "off-peak"]).optional(),
+            multiplier: z.number().positive().optional(),
+          })
+          .optional(),
         modalities: z.array(z.string()).optional(),
         devRef: z.string().optional(),
         iconUrl: z.string().optional(),

@@ -22,12 +22,26 @@
    too; the tools menu keeps its own header where the picks are made. */
 import { useState } from "react"
 import { Spinner } from "@/components/ui/spinner"
-import { CheckIcon, ClockIcon, XIcon } from "lucide-react"
+import {
+  BlocksIcon,
+  CheckIcon,
+  ClockIcon,
+  CpuIcon,
+  GaugeIcon,
+  LayoutGridIcon,
+  PlugIcon,
+  ShieldIcon,
+  SlidersHorizontalIcon,
+  SparklesIcon,
+  SquareTerminalIcon,
+  UsersIcon,
+  XIcon,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Actions } from "@/lib/actions"
-import { describeConfig } from "@/lib/actions"
+import { configChanges, type ConfigChange } from "@/lib/actions"
 import { useCommands, useMcpServers, useProfiles, useSkills } from "@/lib/queries/catalog"
 import { reportError } from "@/lib/errors"
 import type { ThreadState } from "@/lib/store"
@@ -40,6 +54,40 @@ function toolNames(items: { id: string; name: string }[], ids: string[] | undefi
   return ids.map((id) => items.find((item) => item.id === id)?.name ?? id).join(", ")
 }
 
+/** The glyph a changed setting wears. A stage of the agent's own options has no
+    name of ours, so it takes the settings glyph rather than a per-runtime guess. */
+const CHANGE_ICONS: Record<ConfigChange["kind"], typeof CpuIcon> = {
+  profile: PlugIcon,
+  model: CpuIcon,
+  effort: GaugeIcon,
+  suggestions: SparklesIcon,
+  ui: LayoutGridIcon,
+  helpers: UsersIcon,
+  mode: ShieldIcon,
+  option: SlidersHorizontalIcon,
+}
+
+/** The staged links, which are not `ConfigPatch` settings but travel in the same
+    patch — drawn as tiles for the same reason. */
+const LINK_ICONS = {
+  mcpServerIds: BlocksIcon,
+  skillIds: SparklesIcon,
+  commandIds: SquareTerminalIcon,
+} as const
+
+function ChangeTile({ icon: Icon, label, value }: { icon: typeof CpuIcon; label: string; value: string }) {
+  return (
+    <div
+      className="flex min-w-0 items-center gap-1.5 rounded-lg border border-border/60 bg-background/60 px-2 py-1"
+      title={`${label}: ${value}`}
+    >
+      <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <span className="min-w-0 truncate text-xs text-foreground">{value}</span>
+      <span className="sr-only">{label}</span>
+    </div>
+  )
+}
+
 export function PendingSettings({
   thread,
   sessionId,
@@ -50,7 +98,7 @@ export function PendingSettings({
   actions: Actions
 }) {
   const profiles = useProfiles()
-  /* The tool catalogs, because `describeConfig` speaks only for the session
+  /* The tool catalogs, because `configChanges` speaks only for the session
      row's own settings — a staged tool link is a change this card must be able
      to name too, or a tools-only change would draw it blank. */
   const mcpServers = useMcpServers()
@@ -70,14 +118,12 @@ export function PendingSettings({
   if (!patch) return null
   const applying = pending !== null || applyingNow
   const action = thread.turnActive ? "Steer now" : "Apply now"
-  const tools = [
-    patch.mcpServerIds !== undefined && `MCP: ${toolNames(mcpServers, patch.mcpServerIds)}`,
-    patch.skillIds !== undefined && `Skills: ${toolNames(skills, patch.skillIds)}`,
-    patch.commandIds !== undefined && `Commands: ${toolNames(commands, patch.commandIds)}`,
-  ]
-    .filter(Boolean)
-    .join(" · ")
-  const description = [describeConfig(patch, profiles, thread), tools].filter(Boolean).join(" · ")
+  const changes = configChanges(patch, profiles, thread)
+  const links = [
+    { icon: LINK_ICONS.mcpServerIds, label: "MCP", value: toolNames(mcpServers, patch.mcpServerIds) },
+    { icon: LINK_ICONS.skillIds, label: "Skills", value: toolNames(skills, patch.skillIds) },
+    { icon: LINK_ICONS.commandIds, label: "Commands", value: toolNames(commands, patch.commandIds) },
+  ].filter((link): link is { icon: typeof CpuIcon; label: string; value: string } => link.value !== null)
 
   return (
     <section aria-label="Pending settings change">
@@ -94,11 +140,25 @@ export function PendingSettings({
       <div
         className={cn("rounded-xl border bg-muted/50 px-3 py-2", applying && "border-primary/30")}
       >
-        <p className="min-w-0 break-words text-sm text-foreground">{description}</p>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <div className="flex flex-wrap gap-1.5">
+          {changes.map((change) => (
+            <ChangeTile
+              key={`${change.kind}-${change.label}`}
+              icon={CHANGE_ICONS[change.kind]}
+              label={change.label}
+              value={change.value}
+            />
+          ))}
+          {links.map((link) => (
+            <ChangeTile key={link.label} icon={link.icon} label={link.label} value={link.value} />
+          ))}
+        </div>
+        <p className="mt-1.5 text-xs text-muted-foreground">
           {applying
-            ? "A change that costs the process restarts the agent; one that does not moves on the running turn. Either way nothing is lost — the conversation comes back through a load."
-            : `Picks are held until a turn starts — or a spawn, for what only a restart can place. Nothing is applied before you ask. ${action} takes what the running agent can take as it is${thread.turnActive ? ", and the rest waits for the next turn" : ""}.`}
+            ? "Nothing is lost — the conversation comes back through a load."
+            : thread.turnActive
+              ? `Held until the turn ends. ${action} takes what the agent can take as it is now.`
+              : `Applies on the next send. ${action} takes it now.`}
         </p>
         {!applying && (
           <div className="mt-2 flex gap-2">

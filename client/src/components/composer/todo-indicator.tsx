@@ -14,7 +14,6 @@ import {
   ReadingBubble,
   ReadingFace,
   Ring,
-  OpenInInspector,
   READING_LIST,
   ReadingPopoverContent,
 } from "@/components/composer/indicator"
@@ -91,7 +90,7 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
           <Button
             variant="ghost"
             size="icon-xs"
-            className={cn(READING_TRIGGER, "text-primary hover:text-primary")}
+            className={cn(READING_TRIGGER, "text-step-think hover:text-step-think")}
             title={`Checklist — ${completed} of ${total} done${current ? ` · ${current.content}` : ""}`}
             aria-label="Checklist"
           >
@@ -111,7 +110,6 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
       <ReadingPopoverContent
         heading="Checklist"
         meta={`${completed}/${total}`}
-        action={<OpenInInspector tab="plan" onOpen={() => setOpen(false)} />}
       >
         {/* The fixed popover owns the scroll; long checklists never take room
             from the transcript, and the same row design appears in plan details. */}

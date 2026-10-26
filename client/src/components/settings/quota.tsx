@@ -43,7 +43,7 @@
 import * as React from "react"
 import { CoinsIcon, GaugeIcon, RefreshCwIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
@@ -60,6 +60,7 @@ import { inlineFromQuery } from "@/lib/errors"
 import type { Profile } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import {
+  accountsByProvider,
   formatAmount,
   formatDuration,
   formatReset,
@@ -108,19 +109,30 @@ function RefreshAction({ busy, onClick, label }: { busy: boolean; onClick: () =>
   )
 }
 
-/** One row of a usage table: a window, or — for an account that reported none —
-    the account alone with the state it gave. `provider` is the group the row is
-    filed under (undefined = above every group: windows no account claims). */
+/** One row of a usage table.
+ *
+ * A plain reading — one plan, one flat set of windows — is one row per window.
+ * A *gateway's* reading is one row per **account** instead, carrying every
+ * window that account reported, because the account is the thing a person acts
+ * on: sixteen connections behind one endpoint at three windows each is forty
+ * rows saying one account's name over and over, and the account that is
+ * exhausted is then a row among forty. The provider is the group the rows are
+ * filed under, and the account's own windows fold open beneath it. `provider` is
+ * undefined above every group — a window no account claims. */
 interface UsageRow {
   id: string
+  /** The row's headline reading: the window itself on a flat reading, the
+      account's *fullest* one on a gateway's — the limit that gates it. */
   window: QuotaWindow | null
   account: QuotaAccount | null
   provider?: string
-  /** What a window-less account says in the meter's place. */
+  /** Every window this row stands for, drawn in its fold. One on a flat
+      reading; all of the account's on a gateway's. */
+  windows: QuotaWindow[]
+  /** What an account that reported nothing says in the meter's place. */
   note?: string
 }
 
-const OTHER = "Other"
 
 /** The kit's tone for a spend, and the meter fill that goes with it. The app
     has no success/warning tokens, so a fill is a theme token: the two ends are
@@ -195,20 +207,50 @@ function ResetText({ window }: { window: QuotaWindow }) {
   )
 }
 
-/** The table's columns. With accounts the title is the account and the window
-    is a column of its own; without, the window is the title and its amount the
-    line under it. Stable per shape: the table memoises rows against them. */
+/** Every window this row stands for, one line each: its own name, its own meter
+    and its own reset, side by side so the column of bars reads down.
+
+    This is the whole of the gateway rendering. An account's windows are not
+    interchangeable — a 5-hour window still carrying headroom sits a line above
+    a weekly one that is nearly gone — so no number here stands for the account
+    as a whole; they are listed, fullest first, and the row's own badge says
+    what the fullest one means. */
+function WindowLines({ windows }: { windows: QuotaWindow[] }) {
+  return (
+    <div className="grid gap-1.5">
+      {windows.map((window) => (
+        <div key={window.id} className="flex min-w-0 items-center gap-3">
+          <span className="w-36 shrink-0 truncate text-sm text-muted-foreground" title={window.label}>
+            {window.label}
+          </span>
+          <Meter window={window} className="min-w-0 flex-1" />
+          <span className="hidden w-32 shrink-0 text-right text-xs @panel-md:block">
+            <ResetText window={window} />
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** The table's columns. A flat reading is one row per window: the window is the
+    title and its amount the line under it. A gateway's reading is one row per
+    *account*, filed under its provider by the table's grouping — the account is
+    the title, and every window it reported is a line in the cell beside it.
+    Stable per shape: the table memoises rows against them. */
 function usageColumns(withAccounts: boolean): ColumnDef<UsageRow, unknown>[] {
   const windowCol: ColumnDef<UsageRow, unknown> = {
     id: "window",
-    header: "Window",
+    header: "Windows",
     meta: { title: !withAccounts } satisfies DataTableColumnMeta,
     cell: ({ row }) => {
-      const { window, account } = row.original
+      const { window, account, windows, note } = row.original
       /* A window-less account is named by the Account column when there is one. */
       if (!window) return withAccounts || !account ? null : <TitleCell title={account.name} subtitle={account.plan} />
       return withAccounts ? (
-        <span className="block truncate text-sm">{window.label}</span>
+        windows.length > 0 ? <WindowLines windows={windows} /> : (
+          <span className="block truncate text-sm text-muted-foreground">{note}</span>
+        )
       ) : (
         <TitleCell title={window.label} subtitle={readWindow(window).amount} />
       )
@@ -219,15 +261,32 @@ function usageColumns(withAccounts: boolean): ColumnDef<UsageRow, unknown>[] {
     header: "Account",
     meta: { title: true } satisfies DataTableColumnMeta,
     cell: ({ row }) => {
-      const { account, provider } = row.original
+      /* The provider is the group the row is filed under, so repeating it here
+         would say it twice in two adjacent cells. What is left is what a
+         person needs to tell two logins of one provider apart: the plan, and
+         whether it is even being spent. */
+      const { account } = row.original
       return (
         <TitleCell
           title={account?.name ?? "All accounts"}
-          subtitle={[account?.plan, account?.disabled ? "Off" : null, !account ? null : provider].filter(Boolean).join(" · ") || undefined}
+          subtitle={[account?.plan, account?.disabled ? "Off" : null].filter(Boolean).join(" · ") || undefined}
         />
       )
     },
   }
+  const statusCol: ColumnDef<UsageRow, unknown> = {
+    id: "status",
+    header: "Status",
+    meta: { align: "end", className: "w-24" } satisfies DataTableColumnMeta,
+    cell: ({ row }) => {
+      const status = statusOf(row.original)
+      return <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+    },
+  }
+  if (withAccounts) return [accountCol, windowCol, statusCol]
+  /* A flat reading's own three columns: the meter, what it came from, and when
+     it rolls over. An account row draws all three inside its windows cell
+     instead, beside each window's own name. */
   const rest: ColumnDef<UsageRow, unknown>[] = [
     {
       id: "used",
@@ -256,22 +315,17 @@ function usageColumns(withAccounts: boolean): ColumnDef<UsageRow, unknown>[] {
       meta: { className: "w-32 whitespace-nowrap text-sm" } satisfies DataTableColumnMeta,
       cell: ({ row }) => (row.original.window ? <ResetText window={row.original.window} /> : null),
     },
-    {
-      id: "status",
-      header: "Status",
-      meta: { align: "end", className: "w-24" } satisfies DataTableColumnMeta,
-      cell: ({ row }) => {
-        const status = statusOf(row.original)
-        return <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
-      },
-    },
+    statusCol,
   ]
-  return withAccounts ? [accountCol, windowCol, ...rest] : [windowCol, ...rest]
+  return [windowCol, ...rest]
 }
 
-/** The narrow row: the window and who it belongs to, the meter, and the reset. */
+/** The narrow row: who or what it is, the meter for its fullest window, and the
+    reset. On a gateway's reading the account heads the card and the rest of its
+    windows follow as one line each — a fold would cost a tap per account to
+    learn the same three numbers, and a card has the room. */
 function renderUsageRow(row: UsageRow) {
-  const { window, account, note } = row
+  const { window, account, note, windows } = row
   if (!window) {
     return (
       <div className="min-w-0">
@@ -280,15 +334,36 @@ function renderUsageRow(row: UsageRow) {
       </div>
     )
   }
-  const { amount } = readWindow(window)
   const status = statusOf(row)
+  /* An account's card heads with the account and lists every window under it —
+     the reset column has nowhere to sit on a narrow panel, so each line puts
+     its own reset under its meter instead. */
+  if (account) {
+    return (
+      <div className="min-w-0 space-y-1.5">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{account.name}</span>
+          <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+        </div>
+        {windows.map((w) => (
+          <div key={w.id} className="space-y-0.5">
+            <div className="flex min-w-0 items-baseline justify-between gap-2 text-xs text-muted-foreground">
+              <span className="min-w-0 truncate">{w.label}</span>
+              <span className="shrink-0 tabular-nums">
+                <ResetText window={w} />
+              </span>
+            </div>
+            <Meter window={w} />
+          </div>
+        ))}
+      </div>
+    )
+  }
+  const { amount } = readWindow(window)
   return (
     <div className="min-w-0 space-y-1.5">
       <div className="flex min-w-0 items-baseline gap-2">
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">
-          {window.label}
-          {account && <span className="font-normal text-muted-foreground"> · {account.name}</span>}
-        </span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{window.label}</span>
         <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
       </div>
       <Meter window={window} />
@@ -314,47 +389,58 @@ const markOf = (row: UsageRow) => {
   return <span aria-hidden className={cn("size-2.5 rounded-full", dot)} />
 }
 
-/** A reading's rows. Accounts are filed under their provider — every
-    Antigravity login together, every Command Code seat together — in
-    first-seen order, which is the gateway's (the order it will spend them in),
-    keyed case-folded so `Codex` and `codex` are one group. Each account finds
-    its windows by `group`; windows no account claims lead, ungrouped. */
+/** A reading's rows.
+ *
+ * One row per window on an ordinary plan. One row per **account** on a
+ * gateway's: the gateway is many subscriptions behind one endpoint, so the
+ * account — not the window — is the thing a person acts on, and its windows
+ * ride along on the row (headline the fullest, the rest in the fold). They are
+ * filed under their provider in first-seen order, which for 9Router is the
+ * gateway's own priority order — the order it will spend them in. Windows no
+ * account claims lead, ungrouped, which is a case only a broken fold produces
+ * and is drawn rather than dropped. */
 function usageRows(quota: QuotaSnapshot): UsageRow[] {
   const accounts = quota.accounts ?? []
   if (accounts.length === 0) {
-    return quota.windows.map((window) => ({ id: window.id, window, account: null }))
+    return quota.windows.map((window) => ({ id: window.id, window, account: null, windows: [window] }))
   }
   const groupOf = (window: QuotaWindow) => window.group?.trim() || ""
   const rows: UsageRow[] = quota.windows
     .filter((window) => !groupOf(window))
-    .map((window) => ({ id: window.id, window, account: null }))
-  const byProvider = new Map<string, [string, QuotaAccount[]]>()
-  for (const account of accounts) {
-    const key = account.provider?.trim() ?? ""
-    const held = byProvider.get(key.toLowerCase())
-    if (held) held[1].push(account)
-    else byProvider.set(key.toLowerCase(), [key, [account]])
-  }
-  for (const [provider, members] of byProvider.values()) {
-    for (const account of members) {
+    .map((window) => ({ id: window.id, window, account: null, windows: [window] }))
+  for (const group of accountsByProvider(accounts)) {
+    for (const account of group.accounts) {
       const windows = quota.windows.filter((window) => groupOf(window) === account.group)
-      if (windows.length === 0) {
-        rows.push({ id: `account:${account.id}`, window: null, account, provider: provider || OTHER, note: accountNote(account) })
-      }
-      for (const window of windows) {
-        rows.push({ id: `${account.id}:${window.id}`, window, account, provider: provider || OTHER })
-      }
+      /* The fullest of them is the row's reading: a five-hour window still
+         carrying headroom is not what stops the next turn, the weekly one at
+         96% is. Ties keep the gateway's order. */
+      const peak = windows.reduce<QuotaWindow | null>(
+        (worst, window) => (!worst || window.usedPercent > worst.usedPercent ? window : worst),
+        null,
+      )
+      rows.push({
+        id: `account:${account.id}`,
+        window: peak,
+        account,
+        provider: group.label,
+        windows: peak ? [...windows].sort((a, b) => b.usedPercent - a.usedPercent) : [],
+        note: peak ? undefined : accountNote(account),
+      })
     }
   }
   return rows
 }
 
-/** The heading of one group of accounts. */
-function ProviderHead({ provider, accounts }: { provider: string; accounts: number }) {
+/** The heading of one provider's accounts: what it is, and how many seats are
+    in it. The count is a real fact about a gateway — three Claude logins are
+    three chances to be throttled — so it is drawn rather than left to be
+    counted by eye. */
+function ProviderHead({ provider, accounts, note }: { provider: string; accounts: number; note?: string }) {
   return (
-    <div className="flex items-baseline gap-2 text-xs font-medium text-muted-foreground">
-      {provider}
-      <span className="font-normal tabular-nums">{accounts === 1 ? "1 account" : `${accounts} accounts`}</span>
+    <div className="flex min-w-0 items-baseline gap-2 text-xs font-medium text-muted-foreground">
+      <span className="truncate">{provider}</span>
+      <span className="shrink-0 font-normal tabular-nums">{accounts === 1 ? "1 account" : `${accounts} accounts`}</span>
+      {note && <span className="shrink-0 font-normal tabular-nums text-muted-foreground/70">· {note}</span>}
     </div>
   )
 }
@@ -365,11 +451,26 @@ function UsageTable({ quota, loading }: { quota: QuotaSnapshot | null; loading?:
   const rows = React.useMemo(() => (quota ? usageRows(quota) : []), [quota])
   const withAccounts = (quota?.accounts?.length ?? 0) > 0
   const f = useTableFilter(rows, {
+    /* Every window's name, not just the headline one: an account is searched by
+       "Spark (Weekly)" whether or not that is the window currently gating it. */
     matches: (row, needle) =>
-      [row.window?.label, row.account?.name, row.account?.plan, row.provider].some((text) => text?.toLowerCase().includes(needle)),
+      [row.account?.name, row.account?.plan, row.account?.state, row.provider, ...row.windows.map((w) => w.label)].some((text) =>
+        text?.toLowerCase().includes(needle),
+      ),
     placeholder: "Search quotas…",
     fields: [{ id: "provider", label: "Provider", of: (row) => row.provider }],
   })
+  /* The gate the account splits on, for the heading's own line: how many seats
+     are actually being spent. Counting them per group costs one pass and turns
+     "4 accounts" into what it means. */
+  const offIn = React.useMemo(() => {
+    const seen = new Map<string, number>()
+    for (const row of rows) {
+      if (!row.provider || !row.account?.disabled) continue
+      seen.set(row.provider, (seen.get(row.provider) ?? 0) + 1)
+    }
+    return seen
+  }, [rows])
   /* Accounts per provider, for the group heading. */
   const counts = React.useMemo(() => {
     const seen = new Map<string, Set<string>>()
@@ -386,11 +487,11 @@ function UsageTable({ quota, loading }: { quota: QuotaSnapshot | null; loading?:
       withAccounts
         ? {
             by: (row) => row.provider,
-            renderHeader: (key) => <ProviderHead provider={key} accounts={counts.get(key)?.size ?? 0} />,
-            renderMobileHeader: (key) => <ProviderHead provider={key} accounts={counts.get(key)?.size ?? 0} />,
+            renderHeader: (key) => <ProviderHead provider={key} accounts={counts.get(key)?.size ?? 0} note={offNote(offIn.get(key))} />,
+            renderMobileHeader: (key) => <ProviderHead provider={key} accounts={counts.get(key)?.size ?? 0} note={offNote(offIn.get(key))} />,
           }
         : undefined,
-    [withAccounts, counts]
+    [withAccounts, counts, offIn]
   )
   return (
     <DataTable
@@ -409,6 +510,10 @@ function UsageTable({ quota, loading }: { quota: QuotaSnapshot | null; loading?:
     />
   )
 }
+
+/** `1 off` beside a provider's account count, or nothing when all of them are
+    being spent. */
+const offNote = (off: number | undefined) => (off ? `${off} off` : undefined)
 
 const MOBILE: DataTableMobile<UsageRow> = { renderRow: renderUsageRow }
 

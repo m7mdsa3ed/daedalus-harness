@@ -196,16 +196,23 @@ assert.equal(kinds(buildRows([tool("a"), tool("b")], true)), "run", "two calls f
   assert.strictEqual(shared[2].items[0], c, "beside the old one")
 }
 
-// The wait before a reply is measured from the last call, through any reasoning
-// that ended the step: a trailing thought is the live tail, not part of the fold,
-// so it stands between the run and the prose and used to hide the gap entirely.
+// The wait before a reply is measured from where the step above stopped being
+// written. A trailing thought is the live tail, not part of the fold, so it
+// stands between the run and the prose — and the thinking it reports is not the
+// wait after it, which is why the walk stops at the thought and not at the call
+// above (counting from the call said the same seconds twice, under a label that
+// sat *below* the thinking).
 {
   const timed = (id, startedAt, endedAt) => ({ ...tool(id), startedAt, endedAt })
-  const thinking = (id, at) => ({ ...thought(id), at })
+  const thinking = (id, at, endedAt) => ({ ...thought(id), at, endedAt })
   const said = (id, at) => ({ ...prose(id), at })
   const out = buildRows([timed("a", 0, 1000), thinking("t", 1000), said("p", 5000)], true)
   assert.equal(kinds(out), "tool,thought,agent", `the tail thought stays put, got ${kinds(out)}`)
-  assert.equal(proseGapAfter(out, 2), 4000, "the wait runs from the call, across the thought")
+  assert.equal(proseGapAfter(out, 2), 4000, "the wait runs from the thought's arrival")
+  const measured = buildRows([timed("a", 0, 1000), thinking("t", 1000, 4000), said("p", 5000)], true)
+  assert.equal(proseGapAfter(measured, 2), 1000, "the thinking is not counted twice")
+  // A thought with no honest arrival is a break, like a message from the person.
+  assert.equal(proseGapAfter(buildRows([timed("a", 0, 1000), thinking("t", undefined), said("p", 5000)], true), 2), undefined)
 
   // Anything a person sent in between is a break, not a wait to measure across.
   const spoken = buildRows([timed("a", 0, 1000), { kind: "user", id: "u", text: "hi", at: 3000 }, said("p", 5000)], true)

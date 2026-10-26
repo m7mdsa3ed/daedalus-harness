@@ -12,7 +12,7 @@ import { ScrollToEnd } from "@/components/thread-view/scroll-to-end"
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import { ArrowUpRightIcon, ChevronUp } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { ComposerQueue } from "@/components/composer-queue"
 import { useAttachmentDelivery, wentInline } from "@/components/composer-attachments"
 import {
@@ -903,10 +903,14 @@ export function ThreadView({
               "thread-transcript mx-auto w-full gap-0.5 px-4 py-4",
                 options.compactDensity && "gap-0 py-2",
                 options.wideTranscript ? "max-w-[82rem]" : "max-w-[var(--harness-chat-width)]",
-                /* Scrollable reserve matching the measured dock height, plus a
-                   breath of room, so the last message rests above the glass
-                   instead of behind it. */
-                !centred && "pb-[calc(var(--composer-dock-h,13rem)+1rem)]",
+                /* Scrollable reserve — the measured dock height and no more.
+                   It used to carry a spare `+1rem` on top, which no other
+                   reading of the dock had (`scroll-padding-bottom` and the
+                   scroll-to-end lift are both the height alone), so the foot of
+                   a live thread rested 16px clear of the shelf with nothing
+                   between them to explain it. The last item is already a `py-1`
+                   wrapper in the foot, and that is the gap. */
+                !centred && "pb-[var(--composer-dock-h,13rem)]",
               )}
             >
               {/* A stand-in while the transcript is being read — and only then:
@@ -1290,16 +1294,17 @@ export function ThreadView({
           voiceCall
           autoFocus={landing ? true : undefined}
           beforeSend={landing?.beforeSend}
-          /* Scroll, and the box gets out of the way: `follow.pinned` is false
-             once a gesture has taken the reader away from the tail — the same
-             state the scroll-to-end button draws — and reaching the bottom
-             re-pins, so the composer is back without a control of its own. It
-             used to be a collapse of the composer's own, triggered by a narrow
-             panel or a short window, which took the box away from somebody who
-             was typing with no gesture behind it. An empty thread cannot be
-             unpinned (there is nothing to scroll), so a new thread's composer
-             is never the one that leaves. The mini window and the landing
-             console are the same rule: the console has no scroller to ask. */
+          /* Once the thread has started the box is the mini one by default
+             (`compact`), and the reader opens the advanced form with its toggle.
+             Scroll away from the tail and an advanced box folds back to mini:
+             `follow.pinned` is false once a gesture has taken the reader away —
+             the same state the scroll-to-end button draws — and reaching the
+             bottom re-pins. Nothing is ever hidden behind a button of its own,
+             and it never collapses on a narrow panel or a short window, which
+             took the box from somebody who was typing. An empty thread (a
+             draft, the landing console, which has no scroller to ask) is the
+             full box: that is where the first message is written. */
+          compact={!empty}
           collapsed={!follow.pinned}
           onSend={options.autoScroll ? follow.follow : undefined}
         />

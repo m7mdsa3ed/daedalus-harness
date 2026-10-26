@@ -31,7 +31,8 @@ import {
 import { Logo } from "@/components/ui/logo"
 import { useAgents, useMcpCatalog } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
-import type { McpServerDef } from "@/lib/settings"
+import type { McpServerBuiltin, McpServerDef } from "@/lib/settings"
+import { hueOf } from "@/lib/hue"
 
 /** `AgentDef.icon` for the harness's own runtime: its mark is the app's, drawn
     in currentColor so it themes with everything else rather than being a
@@ -140,6 +141,53 @@ const BUILTIN_MCP_MARKS = {
   browser: AppWindowIcon,
 } as const
 
+/* ── The hue each of the harness's own servers wears ──
+   The composer's chip stacks the picked servers as overlapping discs, and five
+   of them were five identical grey glyphs in five identical grey discs — a
+   cluster you had to open to read. A built-in is a *known* facet of the
+   harness, so it can be given a hue once, here, beside the mark it colours,
+   rather than hashed off a name the way a project's initial is (two servers a
+   user adds should not have to look different, but the harness's own five
+   always will).
+
+   Hues are well apart on the wheel so the discs tell apart at 14px, and the
+   lightness and chroma live in index.css (`.mcp-hue-mark`, `[data-mcp-disc]`)
+   — one rule per mode — because a hue is data and how strongly it is said at
+   14px is not.
+   `browser` keeps a mark but has no declared hue: the built-in was removed and
+   a row an old server still sends should look like the placeholder it is.
+
+   A server the user added takes a hue hashed off its *name* (`hueOf`), which is
+   the other half of the same problem: an http row usually resolves a favicon,
+   but a stdio row has nothing to fetch (`resolveMcpLogo` is only asked for a
+   URL), so it drew one grey `TerminalIcon` — and two stdio servers in the chip
+   were two identical discs. Hashing is right here precisely because nothing
+   knows what the server is: the colour is a property of its name, so it is the
+   same on every device with no column to store, and renaming it re-tints it. */
+const BUILTIN_MCP_HUES: Record<McpServerBuiltin["builtin"], number> = {
+  "web-search": 243,
+  knowledge: 152,
+  workflow: 285,
+  agents: 38,
+  harness: 330,
+}
+
+/** The hue a server's mark wears: the declared one for a built-in, a hash of the
+    name for a row the user added. Null only for a server with no identity to
+    speak of — an absent row, or a built-in this build dropped, which is drawn
+    as the placeholder it is rather than given a colour it never had. */
+export function mcpHue(server?: McpServerDef | null): number | null {
+  if (!server) return null
+  if (server.type === "builtin") return BUILTIN_MCP_HUES[server.builtin] ?? null
+  return hueOf(server.name)
+}
+
+/** The style that hands a hue to the two CSS rules that read it. */
+export function mcpHueStyle(server?: McpServerDef | null): React.CSSProperties | undefined {
+  const hue = mcpHue(server)
+  return hue == null ? undefined : ({ "--mcp-hue": String(hue) } as React.CSSProperties)
+}
+
 /** A server's own image when supplied, otherwise the one the harness fetched
     for it (`mcp-logo.ts`, inline in the listing — the browser asks nobody);
     transport and built-in marks remain the fallback.
@@ -167,11 +215,21 @@ export function McpIcon({
     : server?.type === "http"
       ? GlobeIcon
       : TerminalIcon
+  /* A built-in's glyph wears its own hue (`BUILTIN_MCP_HUES`); everything else
+     — a server the user added, a transport with no identity of its own — stays
+     the palette's muted grey, because nothing here knows what it is. */
+  const hue = mcpHue(server)
   return (
     <EntityIcon
       src={server?.type === "builtin" ? undefined : server?.logoUrl || listed?.serverInfo?.icon}
       className={className}
-      fallback={<Icon aria-hidden="true" className={cn("shrink-0 text-muted-foreground", className)} />}
+      fallback={
+        <Icon
+          aria-hidden="true"
+          style={mcpHueStyle(server)}
+          className={cn("shrink-0", hue == null ? "text-muted-foreground" : "mcp-hue-mark", className)}
+        />
+      }
     />
   )
 }
@@ -213,9 +271,7 @@ export function ProjectIcon({
     project is the same colour on every device and every screen. */
 function InitialMark({ name, className }: { name: string; className?: string }) {
   const letter = name.trim().charAt(0).toUpperCase() || "?"
-  let hash = 0
-  for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
-  const hue = hash % 360
+  const hue = hueOf(name)
   return (
     <span
       aria-hidden="true"

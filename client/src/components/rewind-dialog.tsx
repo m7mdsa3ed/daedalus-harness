@@ -1,6 +1,7 @@
 import * as React from "react"
 import { History } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
+import { dominantTextDir } from "@/lib/text-direction"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import {
@@ -83,7 +84,7 @@ export function RewindDialog({
           {turnPreview.trim() ? (
             <>
               <span className="text-muted-foreground">From </span>
-              <span dir="auto" className="line-clamp-2 font-medium text-foreground">
+              <span dir={dominantTextDir(turnPreview)} className="line-clamp-2 font-medium text-foreground">
                 “{turnPreview.trim().slice(0, 160)}”
               </span>{" "}
               <span className="text-muted-foreground">onward, everything is discarded.</span>

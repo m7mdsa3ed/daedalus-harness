@@ -9,7 +9,7 @@ import * as React from "react"
 import { toast } from "@/lib/toast"
 import { reportPromise } from "@/lib/errors"
 import { useConfirm } from "@/components/confirm-dialog"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { promptInstall, useInstallStatus } from "@/lib/install"
 import {
   clearAllSiteData,

@@ -1,4 +1,5 @@
 import type { ModelDef, ProfileUsageKind } from "./db/index.js";
+import type { PeakSchedule } from "./peak.js";
 import { searchModelsDev, toCandidate, type ModelsDevCandidate } from "./models-dev.js";
 
 /*
@@ -73,6 +74,10 @@ export interface ProfilePreset {
   /** The usage reader. `none` for a plan whose provider exposes no account API;
       the row is still worth a preset for the URLs alone. */
   usage: ProfileUsageKind;
+  /** A time-of-day rate card the plan bills by, stamped onto every model the
+      preset fills (`peak.ts`). The listed `pricing` is the off-peak rate, so
+      the schedule says when it doubles. */
+  peak?: PeakSchedule;
 }
 
 /** What `GET /api/profile-presets` answers: the preset plus its catalog. A
@@ -120,6 +125,15 @@ export const PROFILE_PRESETS: ProfilePreset[] = [
     modelsDevProvider: "zai-coding-plan",
     defaultModel: "glm-5.3",
     usage: "zai",
+    /* Peak is Mon-Fri 14:00-18:00 Singapore time and everything else — nights,
+       weekends, holidays — bills at 50% of the standard credit rate. Written in
+       the zone the notice is published in rather than converted to UTC, so a
+       reader comparing it with the docs sees the same numbers. */
+    peak: {
+      windows: "Mon-Fri 14:00-18:00 Asia/Singapore",
+      when: "peak",
+      multiplier: 2,
+    },
   },
   {
     id: "zhipu-coding-plan",
@@ -133,6 +147,13 @@ export const PROFILE_PRESETS: ProfilePreset[] = [
     modelsDevProvider: "zhipuai-coding-plan",
     defaultModel: "glm-5.3",
     usage: "zai",
+    /* The same plan, the same windows (docs.z.ai and bigmodel.cn publish one
+       schedule), read against the global platform's endpoints. */
+    peak: {
+      windows: "Mon-Fri 14:00-18:00 Asia/Singapore",
+      when: "peak",
+      multiplier: 2,
+    },
   },
   {
     id: "minimax-coding-plan",
@@ -217,7 +238,7 @@ export const PROFILE_PRESETS: ProfilePreset[] = [
     id: "deepseek",
     name: "DeepSeek",
     description:
-      "DeepSeek's own platform. Pay-as-you-go, so no windows — the reading is the account balance, from the documented balance route.",
+      "DeepSeek's own platform. Pay-as-you-go, billed by the clock: the listed rate is off-peak and doubles inside two weekday UTC windows. The reading is the account balance, from the documented balance route.",
     keyUrl: "https://platform.deepseek.com/api_keys",
     logoUrl: logo("deepseek"),
     baseUrl: "https://api.deepseek.com",
@@ -225,6 +246,14 @@ export const PROFILE_PRESETS: ProfilePreset[] = [
     modelsDevProvider: "deepseek",
     defaultModel: "deepseek-v4-pro",
     usage: "deepseek",
+    /* models.dev lists the off-peak rate, so the schedule is the multiplier on
+       top of it. Peak windows are 01:00-04:00 and 06:00-10:00 UTC, Monday to
+       Friday; weekends and Chinese public holidays are off-peak all day. */
+    peak: {
+      windows: "Mon-Fri 01:00-04:00, 06:00-10:00 UTC",
+      when: "peak",
+      multiplier: 2,
+    },
   },
   {
     id: "openrouter",
@@ -285,6 +314,8 @@ export const PROFILE_PRESETS: ProfilePreset[] = [
         kind: "completion",
         wire: "openai-completions",
         description: "Fill-in-the-middle completion: prompt + suffix.",
+        /* The same rate card as the chat endpoint — one provider, one clock. */
+        peak: { windows: "Mon-Fri 01:00-04:00, 06:00-10:00 UTC", when: "peak", multiplier: 2 },
       },
     ],
     defaultModel: "deepseek-v4-pro",
@@ -317,7 +348,11 @@ export async function resolveProfilePresets(): Promise<ResolvedProfilePreset[]> 
         }
       }
       const seeded = new Set(seeds.map((model) => model.id));
-      const models = [...seeds, ...hits.filter((hit) => !seeded.has(hit.id))];
+      const models = [...seeds, ...hits.filter((hit) => !seeded.has(hit.id))].map((model) =>
+        /* The plan's rate card is the plan's, not models.dev's: stamped here so
+           a preset-filled profile badges without the user retyping it. */
+        preset.peak ? { ...model, peak: preset.peak } : model,
+      );
       return {
         ...preset,
         models,

@@ -41,7 +41,7 @@ export function RepoIndicator({ meta }: { meta: SessionMeta }) {
           <Button
             variant="ghost"
             size="icon-xs"
-            className={cn(READING_TRIGGER, "text-muted-foreground hover:text-foreground")}
+            className={cn(READING_TRIGGER, "text-step-tool hover:text-step-tool")}
             title={repos.length > 1 ? `${repos.length} repositories` : `On ${label}`}
             aria-label={`Branch — ${label}`}
           >

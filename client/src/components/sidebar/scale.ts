@@ -18,5 +18,12 @@ export const FLOAT_ROW = "pr-3!"
 export const FLOAT_ACTION = "bg-sidebar-accent hover:bg-sidebar-border"
 export const NEST = "ml-2.5 border-l border-sidebar-border pl-0 py-1"
 
-/** Rows a long-tail list (a project folder, Trash) shows before "Show more". */
+/** A project section's body: its rows sit on the list's own column, and it
+    scrolls inside itself once it outgrows the cap, so one long project cannot
+    push the next section's heading off the foot of the sidebar. Deliberately a
+    scroll box and not a shorter list: the
+    rows below the fold are the reader's own history, not something to hide. */
+export const SECTION_BODY = "max-h-[min(20rem,45vh)] overflow-y-auto overscroll-contain"
+
+/** Rows a long project list shows before "Show more". */
 export const PROJECT_PAGE_SIZE = 6

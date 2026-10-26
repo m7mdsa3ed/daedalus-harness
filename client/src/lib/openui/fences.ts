@@ -10,7 +10,9 @@ export interface OpenuiFence {
 const CLOSED_RE =
   /(^|\n)[ \t]*```+[ \t]*(?:openui(?:-lang)?|ui-lang)[ \t]*\r?\n([\s\S]*?)```+[ \t]*(?=\n|$)/g
 
-/* A trailing fence is a program in progress only while the row is streaming. */
+/* A trailing fence can remain unterminated when generation is interrupted. Keep
+   recognizing it after the row settles too: the renderer can draw a complete
+   program, or report a parse failure and show the source for a partial one. */
 const OPEN_RE = /(^|\n)[ \t]*```+[ \t]*(?:openui(?:-lang)?|ui-lang)[ \t]*\r?\n([\s\S]*)$/
 
 /** Split prose from OpenUI fences, including a trailing open fence while streaming. */
@@ -25,11 +27,11 @@ export function splitOpenuiFences(text: string, streaming: boolean): (string | O
     cut = end
   }
   const rest = text.slice(cut)
-  const pending = streaming ? OPEN_RE.exec(rest) : null
+  const pending = OPEN_RE.exec(rest)
   if (pending) {
     const start = cut + pending.index + pending[1].length
     if (start > cut) parts.push(text.slice(cut, start))
-    parts.push({ start, end: text.length, code: pending[2], open: true })
+    parts.push({ start, end: text.length, code: pending[2], open: streaming })
   } else if (rest) {
     parts.push(rest)
   }

@@ -1154,6 +1154,38 @@ export function nineRouterHost(profile: Profile, usage: ProfileUsage): string {
     active: an installation that predates the column has no turned-off ones. */
 const nineRouterActive = (connection: NineRouterConnection): boolean => connection.isActive !== false;
 
+/** What to call a provider where it *heads* a group. A connection's `provider`
+    is the gateway's internal slug, and its own name for one is not always the
+    slug tidied up: `commandcode` is two words and `vercel-ai-gateway` is not a
+    hyphenated word at all. So the few the slug mangles are named here, and
+    anything else falls back to the slug with its separators opened up — a
+    provider 9Router adds tomorrow still heads a readable group instead of
+    vanishing, which is the same bargain `nineRouterLabel` makes for a window. */
+const NINEROUTER_PROVIDER_LABELS: Record<string, string> = {
+  commandcode: "Command Code",
+  github: "GitHub",
+  "opencode-go": "OpenCode Go",
+  "vercel-ai-gateway": "Vercel AI Gateway",
+  glm: "GLM",
+  zai: "Z.AI",
+  openrouter: "OpenRouter",
+  "google-vertex": "Google Vertex",
+};
+
+/** The provider as words: the name above where one is known, else the slug with
+    its hyphens and underscores read as spaces and its first letter raised. The
+    rest of the word is left alone — `antigravity` is one word, and
+    title-casing every word would spell it `Anti Gravity`. */
+function nineRouterProviderLabel(provider: string): string {
+  const slug = provider.trim().toLowerCase();
+  if (!slug) return "";
+  const known = NINEROUTER_PROVIDER_LABELS[slug];
+  if (known) return known;
+  const words = slug.split(/[-_]+/).filter(Boolean);
+  if (words.length > 1) return words.map((w) => w[0]!.toUpperCase() + w.slice(1)).join(" ");
+  return slug[0]!.toUpperCase() + slug.slice(1);
+}
+
 /** What to call an account in a label and an id: the name the gateway shows,
     else the login it belongs to, else what it is. */
 function nineRouterWho(connection: NineRouterConnection): string {
@@ -1434,11 +1466,13 @@ export function foldNineRouterQuota(
        has no room for a second line and two accounts called `Claude` with
        different bars are otherwise two identical sections. */
     const who = `${nineRouterWho(connection)}${suffix}`;
+    const provider = typeof connection.provider === "string" ? connection.provider : null;
     accounts.push({
       id,
       group,
       name: who,
-      provider: typeof connection.provider === "string" ? connection.provider : null,
+      provider,
+      providerLabel: provider ? nineRouterProviderLabel(provider) : null,
       /* The plan only when the name does not already say it — the same rule the
          group string follows, so a heading and its subtitle cannot repeat. */
       plan: plan && !who.toLowerCase().includes(plan.toLowerCase()) ? plan : null,

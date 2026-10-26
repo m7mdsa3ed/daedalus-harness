@@ -20,7 +20,7 @@ import {
 } from "lucide-react"
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -187,6 +187,14 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
   }, [projectId, pinnedRepo, queryClient, repoPath, settings])
 
   const repo = repos?.find((item) => item.path === repoPath) ?? repos?.[0]
+  /* What the picker lists: the checkouts a project keeps, then the worktrees
+     cut from them. Discovery walks breadth-first, so a `worktrees/t01/...`
+     found beside `src/` used to land in the middle of the real repositories —
+     and with several worktrees of one repository they are most of the list. */
+  const menuRepos = React.useMemo(
+    () => repos ? [...repos].sort((a, b) => Number(a.worktree) - Number(b.worktree) || a.path.localeCompare(b.path)) : null,
+    [repos]
+  )
   const files = React.useMemo(() => status ? workingSet(status) : [], [status])
   const counts = React.useMemo(() => countsOf(files), [files])
   const groups = React.useMemo(() => status ? scmGroups(status) : [], [status])
@@ -524,7 +532,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
             key={`${projectId}:${repoPath}`}
             projectId={projectId}
             repo={repoPath}
-            repoName={repo.name}
+            repoName={repoLabel(repo)}
             named={repos.length > 1}
             branch={branch}
             busy={busy}
@@ -578,25 +586,40 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
         <div className="contents">
           {repos.length > 1 ? (
             <Select value={repoPath} onValueChange={(value) => { setRepoPath(value as string); setPicks(new Set()); setDiff(null); setSelected(null); setOpenFile(null) }}>
-              <SelectTrigger size="sm" aria-label="Repository" className="order-1 h-6 min-w-0 max-w-44 shrink font-medium">
+              <SelectTrigger size="sm" aria-label="Repository" title={repoTitle(repo)} className="order-1 h-6 min-w-0 max-w-44 shrink font-medium">
                 <SelectValue>
-                  <span className="truncate">{repo.name}</span>
+                  <span className="truncate">{repoLabel(repo)}</span>
                   {repo.worktree && <WorktreeBadge />}
                 </SelectValue>
               </SelectTrigger>
-              <SelectContent>
-                {repos.map((item) => (
-                  <SelectItem key={item.path || "."} value={item.path}>
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="truncate">{item.name}</span>
-                      {item.worktree && <WorktreeBadge />}
-                      {item.branch && <span className="truncate font-mono text-xs font-normal text-muted-foreground">{item.branch}</span>}
-                    </span>
+              {/* A project of several checkouts names the same repository twice —
+                  `mawared/attendance-fe` beside `mawared/worktrees/t03/attendance-fe`
+                  — so a row carries where the checkout is, not just its
+                  directory name. That is also why the popup is not the trigger's
+                  width: an 11rem anchor held two lines of path and branch. */}
+              <SelectContent className={MENU_WIDTH}>
+                {menuRepos?.map((item) => (
+                  <SelectItem key={item.path || "."} value={item.path} className="py-1.5 [&>span]:min-w-0">
+                    <div className="flex w-full min-w-0 flex-col gap-0.5">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate text-sm">{item.name}</span>
+                        {item.worktree && <WorktreeBadge />}
+                      </span>
+                      <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                        <span className="truncate font-mono">{item.path || "."}</span>
+                        {item.branch && (
+                          <>
+                            <span aria-hidden>·</span>
+                            <span className="truncate font-mono">{item.branch}</span>
+                          </>
+                        )}
+                      </span>
+                    </div>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          ) : <div className="order-1 flex min-w-0 max-w-44 shrink items-center gap-2 text-sm font-medium"><span className="truncate">{repo.name}</span>{repo.worktree && <WorktreeBadge />}</div>}
+          ) : <div className="order-1 flex min-w-0 max-w-44 shrink items-center gap-2 text-sm font-medium" title={repoTitle(repo)}><span className="truncate">{repoLabel(repo)}</span>{repo.worktree && <WorktreeBadge />}</div>}
           <Button variant="ghost" size="icon-xs" title="Refresh repository status" aria-label="Refresh repository status" loading={statusQuery.isFetching} onClick={() => void statusQuery.refetch()} className={cn(iconButton, "order-5")}>
             <RefreshCwIcon className={cn(statusQuery.isFetching && "animate-spin")} />
           </Button>
@@ -682,6 +705,23 @@ function Verb({ label, onClick, disabled, destructive, children }: { label: stri
 /** This directory is a linked worktree (`git worktree add`), not a main checkout. */
 function WorktreeBadge() {
   return <Badge variant="outline" title="A linked git worktree - it shares its repository with another checkout">worktree</Badge>
+}
+
+/** What a checkout is called where its own name is not enough. A folder of
+    checkouts gives several of them one name — `attendance-fe` beside
+    `worktrees/t12/attendance-fe` — so a nested one is named by the directory
+    that holds it too: `t12/attendance-fe`. */
+function repoLabel(repo: GitRepo): string {
+  if (!repo.path) return repo.name
+  const parts = repo.path.split("/")
+  return parts.length === 1 ? repo.name : parts.slice(-2).join("/")
+}
+
+/** What the picker and the trigger say on hover: where the checkout is, and on
+    what branch. */
+function repoTitle(repo: GitRepo): string {
+  const where = repo.path || "the project directory"
+  return repo.branch ? `${where} · ${repo.branch}` : where
 }
 
 function TextVerb({ onClick, disabled, destructive, children }: { onClick: () => void; disabled?: boolean; destructive?: boolean; children: React.ReactNode }) {

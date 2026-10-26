@@ -72,12 +72,13 @@ import {
   finishedOpening,
   formatElapsed,
   StepDirContext,
+  BATCH_CHIP,
   StepMarkerContext,
   StepMeta,
   StepRow,
-  textDir,
   yieldToTextSelection,
 } from "@/components/step-row"
+import { dominantTextDir } from "@/lib/text-direction"
 import {
   collectTools,
   stepNameOf,
@@ -116,6 +117,7 @@ import {
   railPlain,
   useRailSlots,
 } from "@/components/thread-items/rail"
+import { groupTreatment } from "@/components/thread-items/group-style"
 import { UserMessageText, UserMessageFold } from "@/components/thread-items/user-message"
 import {
   childToolTitle,
@@ -181,7 +183,7 @@ export const ToolRun = React.memo(function ToolRun({
   const summary = summarise(tools)
   /* One direction for the whole run, from its first call: its steps share a
      rail, and a rail cannot sit on both sides. */
-  const dir = textDir(tools[0]?.title)
+  const dir = dominantTextDir(tools.map((tool) => tool.title).join(" "))
   const displayItems: ToolGroup["children"] = nestedRows ?? items
   const displayLength = displayItems.length
   const view = useLayoutOptionsContext()
@@ -327,37 +329,21 @@ export const ToolRun = React.memo(function ToolRun({
     })
     return (id: string) => places.get(id)
   }, [batchOf, displayItems])
+  /* How this group is bracketed (`GROUP_STYLES`), and whether it is alive —
+     said by the frame's colour on one weight, never by a heavier box. A plain
+     run has no frame, so the treatment is only read for a batch. */
+  const treatment = React.useMemo(
+    () => groupTreatment(view.groupStyle, active),
+    [view.groupStyle, active]
+  )
   return (
     <StepDirContext.Provider value={dir}>
     <StepMarkerContext.Provider value={placeInBatch}>
-    {/* The batch wash sits 4px outside every hover ground it holds: the header
-        and the rows each bleed 4px past their content edge, so the wash takes
-        8px at the sides (the content stays on the column's edge) and 4px above
-        and below — the same inset on all four sides. A ring as well as the tint:
-        the wash is a colour on a ground that is also a colour, and a faint tint
-        read as nothing at all — a batch was told apart from the run above it
-        only by the word in its header. The ring is the tap on the shoulder the
-        tint alone never was, and it is what draws the edge of the set.
-
-        Its *weight* is the transcript's, not a badge's. The wash is the
-        strength of the `!` run's (`SHELL_WASH`, `/[0.06]`, on this same `-mx-2`
-        geometry — one shape for "this stretch is marked") and the ring is the
-        app's own edge tone (`ring-foreground/10`, what a card's border is),
-        never a darker frame. A batch drawn heavier than the prose it holds is a
-        box shouting over its own contents — the first version of this reached
-        for `bg-primary/10` and `ring-primary/25`, which put one row's frame 56
-        levels below every other edge on screen. */}
-    <div
-      dir={dir}
-      className={cn(
-        parallel &&
-          "ring-1 ring-foreground/10 ring-inset -mx-2 rounded-xl bg-primary/[0.06] px-2 py-1",
-        /* A live batch is the one thing on screen still happening, so its frame
-           keeps the edge's weight but takes the accent's colour — the same
-           bargain the running badge makes, not a heavier box. */
-        parallel && active && "ring-primary/30"
-      )}
-    >
+    {/* How a batch is bracketed is a reading preference, not a constant
+        (`GROUP_STYLES`): a marked wash, a card, or the calls side by side. The
+        chrome for each lives in `group-style.tsx`, so this row asks for a
+        treatment and cannot drift from what the settings page promises. */}
+    <div dir={dir} className={cn(parallel && treatment.frame)}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -394,7 +380,7 @@ export const ToolRun = React.memo(function ToolRun({
                    box as everything beside it, told apart by colour alone. Not a
                    pill of its own: a rounded-full badge in this column read as a
                    second kind of thing parked on the row. */
-                className={cn(CHIP, "shrink-0 bg-primary/10 font-medium text-primary tabular-nums")}
+                className={cn(CHIP, BATCH_CHIP)}
               >
                 <LayersIcon aria-hidden className="size-3 shrink-0" />
                 {tools.length} in parallel
@@ -449,8 +435,17 @@ export const ToolRun = React.memo(function ToolRun({
                ring down its left and right edges. */
             className="-mx-2 overflow-hidden px-2"
           >
-            {/* The rail's spacing lives inside the clip, so it collapses with it. */}
-            <div className={branch ? "space-y-0.5 pt-0.5" : RUN_RAIL_CLASS}>
+            {/* The rail's spacing lives inside the clip, so it collapses with it.
+                A `columns` batch is a grid, not a rail: it keeps the clip's own
+                spacing and takes no indent, because the trunk would point at
+                nothing across a gutter and `ps-7` would leave one empty column
+                of nothing on the left. */}
+            <div
+              className={cn(
+                branch ? "space-y-0.5 pt-0.5" : treatment.grid ? "space-y-0.5 pt-0.5" : RUN_RAIL_CLASS,
+                parallel && treatment.list
+              )}
+            >
             {hidden > 0 && (
               <div className={branch ? undefined : RAIL_THROUGH} style={branch ? { paddingInlineStart: gutter } : undefined}>
                 <EarlierSteps count={hidden} onClick={() => setOpen(true)} />
@@ -466,12 +461,15 @@ export const ToolRun = React.memo(function ToolRun({
                   ...(branch ? { paddingInlineStart: gutter } : { "--rail-i": railSlot(item.id) }),
                 } as React.CSSProperties}
                 className={cn(
-                  branch && !already.has(item.id) && "harness-item-in",
-                  branch ? "relative flow-root" : RAIL_ELBOW,
+                  (branch || treatment.grid) && !already.has(item.id) && "harness-item-in",
+                  branch ? "relative flow-root" : treatment.grid ? "relative" : RAIL_ELBOW,
                   /* A call draws a mark in the column the rail aims at; a thought
                      does when drawn as a step, and a notice is a plain rule. */
-                  !branch && railPlain(item.kind, item.kind === "thought" && view.thoughtStep),
-                  !branch && index < showing.length - 1 && RAIL_TAIL
+                  !branch && !treatment.grid && railPlain(item.kind, item.kind === "thought" && view.thoughtStep),
+                  !branch && !treatment.grid && index < showing.length - 1 && RAIL_TAIL,
+                  /* Side by side, a call is a cell of its own — no elbow, no
+                     trunk, no rail slot: the grid places it. */
+                  treatment.grid && treatment.cell
                 )}
               >
                 {graph && (
@@ -1269,7 +1267,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
             <MessageContent>
               <Bubble variant="tinted" align="end" className="max-w-full">
                 <BubbleContent
-                  dir="auto"
+                  dir={dominantTextDir(item.text)}
                   className="[&_.chip]:bg-background [&_.chip]:ring-1 [&_.chip]:ring-foreground/10 [&_.chip:hover]:bg-background"
                 >
                   {/* Above the prose, inside the same tinted bubble: what was
@@ -1302,7 +1300,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
             <MessageContent>
               <Bubble variant="ghost" className={hasOpenui ? "w-full max-w-full" : undefined}>
                 <BubbleContent
-                  dir="auto"
+                  dir={dominantTextDir(item.text)}
                   className={hasOpenui ? "w-full max-w-full" : undefined}
                 >
                   <StreamedAgentText text={item.text} streaming={streaming} />
@@ -1373,7 +1371,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
       if (view.thoughtStep) {
         return (
           <StepRow
-            dir={textDir(reasoning)}
+            dir={dominantTextDir(reasoning)}
             status={streaming ? "in_progress" : null}
             icon={BrainIcon}
             iconAccent={KIND_COLORS.think}
@@ -1389,26 +1387,34 @@ export const ThreadItemView = React.memo(function ThreadItemView({
             openSetting={view.showThinking}
             persistKey={item.id}
             metric={[tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null]}
-            detail={<ThoughtDetail text={reasoning} streaming={streaming} />}
+            detail={
+              <div className="thought-surface">
+                <ThoughtLabel />
+                <ThoughtReading text={reasoning} streaming={streaming} open />
+              </div>
+            }
           />
         )
       }
       return (
         <StepRow
-          dir={textDir(reasoning)}
+          dir={dominantTextDir(reasoning)}
           plain
           status={streaming ? "in_progress" : null}
           metric={[tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null]}
           mono={false}
           /* The block the step shape replaced, kept for a reader who reads
              thinking as prose: its own clock over the reasoning, three lines of
-             it while folded, and the whole of it on click. */
+             it while folded, and the whole of it on click. One body for both
+             states (`plainBody`), so the fold slides like a step's rather than
+             swapping one card for another. */
           autoOpen={view.showThinking && streaming}
           openSetting={view.showThinking}
           persistKey={item.id}
           target=""
-          foldedTarget={<ThoughtPreview text={reasoning} label={durationLabel} />}
-          detail={<ThoughtDetail text={reasoning} streaming={streaming} label={durationLabel} />}
+          plainBody={(open) => (
+            <ThoughtBlock text={reasoning} streaming={streaming} label={durationLabel} open={open} />
+          )}
         />
       )
     }
@@ -1505,27 +1511,138 @@ function ThoughtLabel({ label }: { label?: string }) {
   )
 }
 
-function ThoughtPreview({ text, label }: { text: string; label?: string }) {
+/* The reading itself, in both shapes: a capped scroller that follows its own
+   newest text while the thought streams. Its `max-h` is the open ceiling
+   (`THOUGHT_MAX_H`) — which is also what a step's disclosure measures, since a
+   scroller's height is min(content, max-height) — so it is drawn open and
+   inside the step's clip as it stands. */
+function ThoughtReading({
+  text,
+  streaming,
+  open,
+  scrollerRef,
+  proseRef,
+}: {
+  text: string
+  streaming: boolean
+  /** Whether the reading is being shown. Folded, the box is not a scroller: the
+   *  clip above it is three lines tall, and a scrollbar caught in that cut is
+   *  chrome for a viewport nobody can reach. */
+  open: boolean
+  /** Both are optional so the step shape, which needs neither, draws the same
+      reading: the caller measures what it has to. */
+  scrollerRef?: React.RefObject<HTMLDivElement | null>
+  proseRef?: React.RefObject<HTMLDivElement | null>
+}) {
+  const follow = useFollowStream(streaming)
   return (
-    <div className="thought-surface">
-      <ThoughtLabel label={label} />
-      <div className="thought-preview">
-        <StreamedProse text={text} streaming={false} className="thought-prose" />
+    <div
+      ref={(el) => {
+        if (scrollerRef) scrollerRef.current = el
+        follow.viewportRef(el)
+      }}
+      className={cn(THOUGHT_MAX_H, open && "overflow-y-auto overscroll-contain pr-1")}
+    >
+      <div ref={follow.contentRef}>
+        <div
+          ref={(el) => {
+            if (proseRef) proseRef.current = el
+          }}
+        >
+          <StreamedProse text={text} streaming={streaming} className="thought-prose" />
+        </div>
       </div>
     </div>
   )
 }
 
-function ThoughtDetail({ text, streaming, label }: { text: string; streaming: boolean; label?: string }) {
-  const follow = useFollowStream(streaming)
+/* The block shape, folded and open, as ONE card whose height animates — the
+   same movement a step's disclosure makes (`StepRow`'s clip), so the two shapes
+   of thinking fold alike. It used to swap two cards (`foldedTarget` → `detail`),
+   and a swap is a remount: the exchange had nothing to animate, so the block
+   jumped between three clamped lines and the whole reading while every tool
+   call around it slid.
+
+   Two heights, both measured rather than assumed: three lines of the prose's
+   own line box while folded, and the open body's natural height, which its
+   `max-h` already caps (a scroller's own height is min(content, max-height), so
+   the cap needs no second copy of the CSS in JS). The prose is never clamped —
+   the clip is what cuts it, at exactly the third line, and `.thought-fold` keeps
+   the same fade the old clamp drew. */
+function ThoughtBlock({
+  text,
+  streaming,
+  label,
+  open,
+}: {
+  text: string
+  streaming: boolean
+  label?: string
+  open: boolean
+}) {
+  const proseRef = React.useRef<HTMLDivElement>(null)
+  const scrollerRef = React.useRef<HTMLDivElement>(null)
+  const [folded, setFolded] = React.useState<number | null>(null)
+  const [opened, setOpened] = React.useState<number | null>(null)
+  const { calmMotion } = useLayoutOptionsContext()
+  const systemReducedMotion = useReducedMotion()
+  const reduceMotion = calmMotion || systemReducedMotion
+
+  /* Measured before paint, so a settled thought never draws its whole reading
+     for a frame on mount, and re-measured as the body grows (a stream, a panel
+     resize, a theme whose type scale moved). The open height is the scroller's
+     own, so its `max-h` already decides the cap — one copy of that number. */
+  React.useLayoutEffect(() => {
+    const prose = proseRef.current
+    const scroller = scrollerRef.current
+    if (!prose || !scroller) return
+    const measure = () => {
+      const line = Number.parseFloat(window.getComputedStyle(prose).lineHeight)
+      const content = prose.getBoundingClientRect().height
+      /* Three line boxes of the prose's own type — but never more than it has,
+         or a one-line thought folded would leave two blank lines under it. */
+      setFolded(Number.isFinite(line) && line > 0 ? Math.min(line * 3, content) : content)
+      /* The scroller's own height is what the open clip has to become: its
+         `max-h` already caps it, so there is no second copy of that number. */
+      setOpened(scroller.clientHeight)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(prose)
+    observer.observe(scroller)
+    return () => observer.disconnect()
+  }, [])
+
+  /* Only the fold itself animates. A figure that moves because the reading grew
+     (a stream, a reflow) is taken as it is — easing towards every new chunk
+     would trail the words it is revealing — and so is the first measurement,
+     which is where the row arrives rather than something it did. */
+  const wasOpen = React.useRef(open)
+  const toggled = wasOpen.current !== open
+  wasOpen.current = open
+  const target = open ? opened : folded
+  const glide = toggled && !reduceMotion
+
   return (
     <div className="thought-surface">
       <ThoughtLabel label={label} />
-      <div ref={follow.viewportRef} className={cn(THOUGHT_MAX_H, "overflow-y-auto overscroll-contain pr-1")}>
-        <div ref={follow.contentRef}>
-          <StreamedProse text={text} streaming={streaming} className="thought-prose" />
-        </div>
-      </div>
+      <m.div
+        initial={false}
+        animate={{ height: target ?? "auto" }}
+        transition={glide ? { duration: 0.26, ease: [0.22, 1, 0.36, 1] } : { duration: 0 }}
+        /* `thought-fold` fades the third line the way the old clamp did; the
+           clip is what cuts it, so the prose itself is never clamped and the
+           same nodes serve both states. */
+        className={cn("overflow-hidden", !open && "thought-fold")}
+      >
+        <ThoughtReading
+          text={text}
+          streaming={streaming && open}
+          open={open}
+          scrollerRef={scrollerRef}
+          proseRef={proseRef}
+        />
+      </m.div>
     </div>
   )
 }
@@ -1536,11 +1653,18 @@ function ThoughtDetail({ text, streaming, label }: { text: string; streaming: bo
     calls together, so the wait after it is still drawn; anything else has none. */
 function batchSpanOfRow(item: ToolGroup["children"][number]): BatchSpan {
   if (item.kind === "tool") return batchSpanOf(item)
+  /* Reasoning riding between two steps of a run: it belongs to no batch, but it
+     is when the batch above stopped being written, so the wait drawn under it
+     leaves the thinking out — the thought's own title line already says it. */
+  if (item.kind === "thought") return { end: item.endedAt ?? item.at, quiet: true }
   if (item.kind !== "run" && item.kind !== "tool-group") return {}
-  const spans = item.items.filter((member): member is ToolItem => member.kind === "tool").map(batchSpanOf)
+  const spans = item.items.map(batchSpanOfRow)
   const start = Math.min(...spans.map((span) => span.start ?? Infinity))
   if (!Number.isFinite(start)) return {}
-  const end = spans.some((span) => span.end === undefined) ? undefined : Math.max(...spans.map((span) => span.end ?? 0))
+  /* Its span is its calls together; reasoning it ends in — which has a start no
+     call has — is only when it stopped being written. */
+  const timed = spans.filter((span) => span.start !== undefined || span.quiet)
+  const end = timed.some((span) => span.end === undefined) ? undefined : Math.max(...timed.map((span) => span.end ?? 0))
   /* The group's request is its earliest call's, which is the one that says it. */
   return { start, end, lead: spans.find((span) => span.start === start)?.lead }
 }

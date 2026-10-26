@@ -20,7 +20,8 @@ import {
   type RegistrySource,
   type ServerSettings,
 } from "@/lib/settings"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
+import { toast } from "@/lib/toast"
 import {
   BadgeCheckIcon,
   ChevronDownIcon,
@@ -42,7 +43,7 @@ import {
   WrenchIcon,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { EntityIcon, McpIcon } from "@/components/entity-icon"
+import { EntityIcon, McpIcon, mcpHue, mcpHueStyle } from "@/components/entity-icon"
 import { ImageIcon } from "lucide-react"
 import { ErrorNote } from "@/components/error-note"
 import { Empty } from "@/components/empty"
@@ -80,8 +81,9 @@ import {
   StatusBadge,
   type StatusTone,
   lines,
-  pairs,
 } from "./primitives"
+import { KeyValueRows } from "./key-value-rows"
+import { ENV_KEY, recordFromRows, rowsFromRecord, type KeyValueRow } from "@/lib/key-value-rows"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, saveLibraryEntry } from "./library"
@@ -459,7 +461,18 @@ export function McpPage() {
             getRowId={(r) => r.server.id}
             isLoading={catalog.isPending}
             actions={actions}
-            mark={(r) => <McpIcon server={r.server} className="size-5" />}
+            mark={(r) => (
+              <span
+                data-mcp-disc={mcpHue(r.server) == null ? undefined : ""}
+                style={mcpHueStyle(r.server)}
+                className={cn(
+                  "grid size-7 shrink-0 place-items-center rounded-lg",
+                  mcpHue(r.server) == null && "bg-muted",
+                )}
+              >
+                <McpIcon server={r.server} className="size-5" />
+              </span>
+            )}
             mobile={{ renderRow }}
             expand={{ render: renderExpanded }}
             pageSize={50}
@@ -628,7 +641,14 @@ function McpMobileRow({
   return (
     <div className="min-w-0 flex-1 space-y-2">
       <div className="flex min-w-0 items-center gap-3">
-        <span className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
+        <span
+          data-mcp-disc={mcpHue(server) == null ? undefined : ""}
+          style={mcpHueStyle(server)}
+          className={cn(
+            "flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg",
+            mcpHue(server) == null && "bg-muted text-muted-foreground",
+          )}
+        >
           <McpIcon server={server} className="size-5" />
         </span>
         <div className="min-w-0 flex-1">
@@ -1307,14 +1327,33 @@ function McpForm({
     type: (server?.type === "http" ? "http" : "stdio") as "stdio" | "http",
     command: server?.type === "stdio" ? server.command : "",
     args: server?.type === "stdio" ? server.args.join("\n") : "",
-    env: server?.type === "stdio" ? server.env.map((e) => `${e.name}=${e.value}`).join("\n") : "",
     url: server?.type === "http" ? server.url : "",
-    headers: server?.type === "http" ? server.headers.map((h) => `${h.name}: ${h.value}`).join("\n") : "",
     auth: (server?.type === "http" ? server.auth : "none") as "none" | "oauth",
     /* How the row authenticates: "auto" asks the server on save (probe), the
        other two are the person's word and the probe never overrides them. */
     authMode: (server?.type === "http" ? server.auth : "auto") as "auto" | "none" | "oauth",
   }))
+  /* The two lists the form owns, as rows rather than `NAME=value` text: a stdio
+     server's env and an http server's headers. Both are `{name, value}` pairs on
+     the wire, and both used to make a person spell the separator. */
+  const [envRows, setEnvRows] = React.useState<KeyValueRow[]>(() =>
+    rowsFromRecord(
+      server?.type === "stdio" ? Object.fromEntries(server.env.map((e) => [e.name, e.value])) : undefined
+    )
+  )
+  const [headerRows, setHeaderRows] = React.useState<KeyValueRow[]>(() =>
+    rowsFromRecord(
+      server?.type === "http" ? Object.fromEntries(server.headers.map((h) => [h.name, h.value])) : undefined
+    )
+  )
+  const listProblem = React.useMemo(() => {
+    const badEnv = envRows.some((r) => r.name.trim() && !ENV_KEY.test(r.name.trim()))
+    const dupEnv = new Set(envRows.map((r) => r.name.trim().toLowerCase()).filter(Boolean)).size !==
+      envRows.filter((r) => r.name.trim()).length
+    const dupHeaders = new Set(headerRows.map((r) => r.name.trim().toLowerCase()).filter(Boolean)).size !==
+      headerRows.filter((r) => r.name.trim()).length
+    return badEnv || dupEnv || dupHeaders
+  }, [envRows, headerRows])
   const { busy, error: saveError, run } = useAsyncAction()
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
 
@@ -1323,13 +1362,16 @@ function McpForm({
   const [probe, setProbe] = React.useState<McpAuthProbe | null>(null)
   const { busy: checking, error: checkError, run: check } = useAsyncAction()
 
+  /** The header rows as the pair list the route takes. */
+  const headerPairs = () => Object.entries(recordFromRows(headerRows)).map(([name, value]) => ({ name, value }))
+
   /** Ask the server how this URL authenticates and remember the answer.
       Returns what to store, so `save` can run the same probe and use it
       without waiting for a re-render. */
   const runProbe = async (): Promise<"none" | "oauth"> => {
     const answer = await api<McpAuthProbe>(settings, "/api/mcp-servers/probe", {
       method: "POST",
-      body: JSON.stringify({ url: form.url, headers: pairs(form.headers, ":") }),
+      body: JSON.stringify({ url: form.url, headers: headerPairs() }),
     })
     setProbe(answer)
     /* `unknown` deliberately keeps whatever the row already said: a 403 from a
@@ -1343,6 +1385,15 @@ function McpForm({
 
   const save = (e: React.FormEvent) => {
     e.preventDefault()
+    /* Refused rather than silently collapsed: a duplicate header or a malformed
+       variable name would be dropped by `recordFromRows`, and the row would say
+       "saved" about something that is not there. */
+    if (listProblem) {
+      toast.error("Fix the list first", {
+        description: "A name has to be corrected, or a duplicate removed, before this can be saved.",
+      })
+      return
+    }
     void run("Couldn't save the MCP server", async () => {
       /* The probe runs on save for an HTTP row, which is what makes a server
          that answers 401 land in the library already marked `oauth` with
@@ -1360,14 +1411,14 @@ function McpForm({
       }
       const payload =
         form.type === "http"
-          ? { type: "http", name: form.name, logoUrl: form.logoUrl.trim() || undefined, url: form.url, headers: pairs(form.headers, ":"), auth }
+          ? { type: "http", name: form.name, logoUrl: form.logoUrl.trim() || undefined, url: form.url, headers: headerPairs(), auth }
           : {
               type: "stdio",
               name: form.name,
               logoUrl: form.logoUrl.trim() || undefined,
               command: form.command,
               args: lines(form.args),
-              env: pairs(form.env, "="),
+              env: Object.entries(recordFromRows(envRows)).map(([name, value]) => ({ name, value })),
             }
       await saveLibraryEntry(settings, "/api/mcp-servers", creating ? undefined : server?.id, payload)
       onDone(true)
@@ -1476,12 +1527,13 @@ function McpForm({
               ]}
             />
           </Field>
-          <Field label="Headers" hint="One per line: Name: value">
-            <Textarea
-              value={form.headers}
-              onChange={(e) => set({ headers: e.target.value })}
-              rows={3}
-              className="font-mono"
+          <Field label="Headers" hint="Sent with every request to this server. A token typed here is stored with the row.">
+            <KeyValueRows
+              rows={headerRows}
+              onChange={setHeaderRows}
+              addLabel="Add header"
+              namePlaceholder="Authorization"
+              valuePlaceholder="Bearer …"
             />
           </Field>
         </>
@@ -1504,12 +1556,15 @@ function McpForm({
               className="font-mono"
             />
           </Field>
-          <Field label="Environment" hint="One per line: NAME=value">
-            <Textarea
-              value={form.env}
-              onChange={(e) => set({ env: e.target.value })}
-              rows={2}
-              className="font-mono"
+          <Field label="Environment" hint="Passed to the server process. A value is filled in as written.">
+            <KeyValueRows
+              rows={envRows}
+              onChange={setEnvRows}
+              addLabel="Add variable"
+              namePlaceholder="API_TOKEN"
+              valuePlaceholder="…"
+              nameValidator={(name) => ENV_KEY.test(name)}
+              invalidHint="An environment name is letters, digits and underscores, and cannot start with a digit."
             />
           </Field>
         </>

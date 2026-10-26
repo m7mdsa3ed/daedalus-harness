@@ -48,6 +48,8 @@
           var legacy = JSON.parse(localStorage.getItem("ui.sidebarLayout") || "{}");
           document.documentElement.dataset.sidebarLayout =
             (layout.sidebarVariant || legacy.variant) === "inset" ? "inset" : "sidebar";
+          document.documentElement.dataset.workspaceTabs =
+            layout.hideWorkspaceTabs === true ? "hidden" : "shown";
           // The palette too: without it the first paint is Default and the app
           // visibly re-tints once ThemeProvider mounts. A custom palette's CSS
           // still arrives with the bundle, but the splash covers that gap.

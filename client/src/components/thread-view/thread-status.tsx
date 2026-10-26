@@ -5,8 +5,22 @@
    closes with a grid-rows transition (`harness-status-body`, index.css).
    Approvals, the held-on-failure card and the queue stay their own rows. */
 import * as React from "react"
+import {
+  ArrowUpIcon,
+  CircleHelpIcon,
+  PaperclipIcon,
+  PauseIcon,
+  PlayIcon,
+  PowerOffIcon,
+  RotateCwIcon,
+  SettingsIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+  WifiOffIcon,
+  WorkflowIcon,
+  XCircleIcon,
+} from "lucide-react"
 import { useNavigate } from "react-router"
-import { PaperclipIcon, PlayIcon, RotateCwIcon, SettingsIcon } from "lucide-react"
 import { PhaseLine } from "@/components/composer-status"
 import { formatElapsed } from "@/components/step-row"
 import { ActionPill } from "@/components/thread-cards"
@@ -17,7 +31,6 @@ import { Progress } from "@/components/ui/progress"
 import type { Actions } from "@/lib/actions"
 import { useLayoutOptionsContext } from "@/lib/layout-options"
 import type { StatusActionKind, ThreadStatus as Status } from "@/lib/thread/status"
-import { cn } from "@/lib/utils"
 
 /** A wait this long gets its extra sentence, and one this long gets a clock and a way out. */
 const SLOW_MS = 6_000
@@ -40,6 +53,47 @@ const LABEL: Partial<Record<Status["kind"], string>> = {
   /* Not "Agent working": the turn is over, and that label is what Stop and the
      composer read from. This one is the run the agent left going. */
   background: "Workflow running",
+}
+
+/* The mark at the head of the line: what the reading *is*, before the sentence
+   is read. Absent means the app's own mark, which is the honest answer for the
+   readings where the harness itself is doing the work on the thread's behalf —
+   opening it, spawning the agent, folding a replay, the agent writing a reply.
+   Everything else wears the glyph and the colour the rest of the app already
+   gives that meaning (amber needs you, red failed, grey stopped), so a thread
+   waiting on you and a thread reconnecting are told apart at the mark rather
+   than by reading two sentences whose first words agree. */
+function statusMark(status: Status): React.ReactNode {
+  switch (status.kind) {
+    case "waiting":
+      return <CircleHelpIcon aria-hidden className="size-4 text-warning" />
+    case "retrying":
+      return <RotateCwIcon aria-hidden className="size-4 animate-spin text-warning" />
+    case "reconnecting":
+      return <WifiOffIcon aria-hidden className="size-4 text-warning" />
+    case "parked":
+      return <WifiOffIcon aria-hidden className="size-4 text-destructive" />
+    case "failed":
+      return <XCircleIcon aria-hidden className="size-4 text-destructive" />
+    case "turn-failed":
+      return status.tone === "error" ? (
+        <XCircleIcon aria-hidden className="size-4 text-destructive" />
+      ) : (
+        <TriangleAlertIcon aria-hidden className="size-4 text-warning" />
+      )
+    case "trashed":
+      return <Trash2Icon aria-hidden className="size-4 text-muted-foreground" />
+    case "archived":
+      return <PowerOffIcon aria-hidden className="size-4 text-muted-foreground" />
+    case "held":
+      return <PauseIcon aria-hidden className="size-4 text-muted-foreground" />
+    case "background":
+      return <WorkflowIcon aria-hidden className="size-4 text-primary" />
+    case "sending":
+      return <ArrowUpIcon aria-hidden className="size-4 text-primary" />
+    default:
+      return undefined
+  }
 }
 
 /** Whole seconds until `at`, ticking once a second only while there is one. */
@@ -159,7 +213,11 @@ export function ThreadStatus({
   )
   const showCopy = status.tone === "error" || status.kind === "turn-failed" || !!status.more
   const copyText = [status.headline, detail, status.install, status.more].filter(Boolean).join("\n\n")
-  const live = status.tone === "progress" || status.kind === "retrying"
+  /* A retry is *waiting*, not working: the shimmer is what the app wears while
+     words are being produced, and a backoff that shimmered read as an answer
+     arriving slowly rather than as a request that died and is being re-sent.
+     The spinning mark still moves, so the line is not mistaken for dead. */
+  const live = status.tone === "progress"
   const text = status.kind === "working" || status.kind === "waiting" ? `${status.headline.replace(/[.…]+$/, "")}…` : status.headline
   const hasBody =
     opening ||
@@ -174,27 +232,24 @@ export function ThreadStatus({
   if (hasBody) {
     last.current = (
       <div className="min-w-0 space-y-1 pl-7 pt-1 text-sm">
+          {/* The attempt, as one meta line. It used to lead with a row of dots
+              — one per attempt, the current one pulsing — which is a picture
+              nothing else in the app draws and which restated a count the words
+              already give. What survives is the reading itself: which attempt
+              this is, and how long the wait is, separated the way every other
+              meta line in the app separates two facts. */}
           {retry && (
-            <div className="harness-part-in flex items-center gap-2 text-xs tabular-nums text-muted-foreground">
-              {retry.of && (
-                <span className="flex gap-1" aria-hidden>
-                  {Array.from({ length: retry.of }, (_, i) => (
-                    <span
-                      key={i}
-                      className={cn(
-                        "size-1.5 rounded-full",
-                        i < retry.attempt ? "bg-warning" : "bg-muted-foreground/25",
-                        i === retry.attempt - 1 && !!retrySeconds && "animate-pulse"
-                      )}
-                    />
-                  ))}
-                </span>
-              )}
-              <span>
+            <div className="harness-part-in flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground tabular-nums">
+              <span className="font-medium text-foreground">
                 Retry {retry.attempt}
                 {retry.of ? ` of ${retry.of}` : ""}
-                {retrySeconds ? ` · next try in ${retrySeconds}s` : ""}
               </span>
+              {retrySeconds ? (
+                <>
+                  <span aria-hidden className="size-0.5 shrink-0 rounded-full bg-muted-foreground/40" />
+                  <span>next try in {retrySeconds}s</span>
+                </>
+              ) : null}
             </div>
           )}
           {bar && (
@@ -220,18 +275,20 @@ export function ThreadStatus({
               {status.install}
             </code>
           )}
-          {status.more && (
-            <Disclosure open={open} onToggle={() => setOpen((v) => !v)}>
-              {open ? "Hide details" : "Show details"}
-            </Disclosure>
-          )}
-          {open && status.more && (
-            <pre className="max-h-56 overflow-auto rounded-lg bg-muted px-3 py-2 font-mono text-xs whitespace-pre-wrap text-foreground">
-              {status.more}
-            </pre>
-          )}
-          {(visible.length > 0 || showCopy) && (
+          {/* One row for everything the line offers. It used to be two — a
+              "Show details" line of its own, then a bar of actions under it —
+              so a retry that had nothing but a fold and a Copy drew three
+              stacked rows of one short thing each, and the last one was an
+              orphaned glyph. `ErrorRow` puts its fold above a bar because it
+              carries five actions; a status line carries one or two, so they
+              share the line and the fold leads it. */}
+          {(visible.length > 0 || showCopy || status.more) && (
             <div className="harness-part-in [--part-i:3] flex flex-wrap items-center gap-2 pt-1">
+              {status.more && (
+                <Disclosure open={open} onToggle={() => setOpen((v) => !v)} className="me-1">
+                  {open ? "Hide details" : "Show details"}
+                </Disclosure>
+              )}
               {visible.map((a) => (
                 <ActionPill
                   key={a.kind}
@@ -250,11 +307,15 @@ export function ThreadStatus({
                   {busy && a.busyLabel ? a.busyLabel : a.label}
                 </ActionPill>
               ))}
-              {/* Every drawn error carries a Copy, whether or not there is a detail. */}
+              {/* Every drawn error carries a Copy, whether or not there is a
+                  detail — and it wears the word, the way `ErrorRow`'s does. A
+                  lone icon in the action row was a glyph with nothing to say it
+                  copies the failure. */}
               {showCopy && (
                 <CopyButton
                   text={copyText}
-                  size="icon-xs"
+                  label="Copy"
+                  size="xs"
                   className="text-muted-foreground hover:text-foreground"
                 />
               )}
@@ -288,8 +349,11 @@ export function ThreadStatus({
         <PhaseLine
           text={text}
           still={!live}
-          tone={status.tone === "error" ? "error" : "normal"}
+          /* The sentence takes the reading's own tone, so the line and the pill
+             under it say the same thing: a retry is amber, not primary. */
+          tone={status.tone === "error" ? "error" : status.tone === "warn" ? "warn" : "normal"}
           label={opening ? "Opening this thread" : (LABEL[status.kind] ?? "Agent status")}
+          mark={statusMark(status)}
         />
       </button>
       {showLog && (

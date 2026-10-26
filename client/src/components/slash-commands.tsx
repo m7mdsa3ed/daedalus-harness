@@ -200,6 +200,8 @@ export function SlashCommandMenu({ state }: { state: SlashCommandState }) {
           icon: SlashSquare,
           label: state.hint ?? `${state.matches.length} command${state.matches.length === 1 ? "" : "s"}`,
           urgent: true,
+          /* A menu of the agent's slash commands: something found, offered. */
+          tone: "positive",
         }
       : null
   )

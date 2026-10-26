@@ -24,12 +24,14 @@ import * as React from "react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { CopyIcon, Cpu, DownloadIcon, EraserIcon, PencilIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react"
 import { Empty } from "@/components/empty"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { useTableFilter } from "@/lib/use-table-filter"
 import { DataTable, TitleCell, type DataTableExpand, type DataTableMobile, type TableAction } from "@/components/ui/data-table"
 import type { ColumnDef } from "@/lib/table"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { AgentEnvEditor } from "./agent-env"
 import { AgentIcon } from "@/components/entity-icon"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ErrorNote } from "@/components/error-note"
@@ -47,8 +49,10 @@ import {
   FormPageHeader,
   FormSection,
   FormShell,
+  Group,
   PageForm,
   PageHeader,
+  Row,
   Section,
   StatStrip,
   StatusBadge,
@@ -56,46 +60,6 @@ import {
 } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
-
-/* ── `NAME=value` lines ⇄ the env record ──
-   Split on the first `=` only: a value is a JSON blob or a config template, and
-   both are full of them.
-
-   Two rules the naive version got wrong, and both of them silently. A **value
-   may contain newlines** — nothing stops a user pasting a multi-line config
-   into `CODEX_CONFIG`, and the seeded one is only single-line by luck — so a
-   line with no `=` in it is a *continuation* of the value above, not a line to
-   drop; dropping it truncated the value and the form said nothing. And a line
-   before any `NAME=` at all is the one case with nothing to continue, which is
-   the only thing here that is genuinely discarded. `lines()` is not used for
-   the same reason: it trims, and leading whitespace is part of a wrapped
-   value. */
-const envText = (env: Record<string, string> | undefined) =>
-  Object.entries(env ?? {})
-    .map(([name, value]) => `${name}=${value}`)
-    .join("\n")
-
-/** A `NAME=` at the start of a line, and nothing else, opens a new value. */
-const ENV_LINE = /^[A-Za-z_][A-Za-z0-9_]*=/
-
-const envRecord = (text: string): Record<string, string> => {
-  const env: Record<string, string> = {}
-  let current: string | null = null
-  for (const line of text.split("\n")) {
-    if (ENV_LINE.test(line)) {
-      const at = line.indexOf("=")
-      current = line.slice(0, at)
-      env[current] = line.slice(at + 1)
-    } else if (current !== null) {
-      env[current] += `\n${line}`
-    }
-  }
-  /* A blank line is a separator, not the last line of the value above it: it
-     is how a textarea ends, and how anyone spaces out a list of keys. The cost
-     is that a value cannot end in a blank line, which nothing needs. */
-  for (const name of Object.keys(env)) env[name] = env[name].replace(/\n+$/, "")
-  return env
-}
 
 export function AgentsPage() {
   const meta = sectionMeta("agents")
@@ -546,24 +510,45 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
     name: agent.name,
     command: agent.command ?? "",
     args: (agent.args ?? []).join("\n"),
-    env: envText(agent.env),
     install: agent.install ?? "",
     icon: agent.icon ?? "",
   })
+  /* The env is its own state, as the record it is on the wire: the editor splits
+     it three ways and hands back the merged whole, and round-tripping it through
+     a `NAME=value` string on every keystroke is exactly the format this replaced.
+     `envProblem` is the editor's own verdict on the rows (a bad name, a
+     duplicate) — the save is refused on it rather than sending a row the server
+     would silently prune. */
+  const [env, setEnv] = React.useState<Record<string, string>>(() => ({ ...(agent.env ?? {}) }))
+  const [envProblem, setEnvProblem] = React.useState(false)
+  /* What this runtime ships, so the editor can tell the profile's wiring from a
+     person's keys. An agent somebody added has no baseline, and then every key is
+     theirs — which is the honest reading, not a special case. */
+  const seededEnv = agent.seededEnv ?? {}
+  /* The switches, in their own state: they are not text and must not round-trip
+     through the env box. A switch with no stored value is the runtime's
+     `fallback`, which is what an untouched one means — so the map holds only
+     what somebody changed, and Save sends exactly that. */
+  const switches = agent.behavior?.switches ?? []
+  const [values, setValues] = React.useState<Record<string, boolean>>(() => ({ ...(agent.behavior?.values ?? {}) }))
+  const isOn = (entry: (typeof switches)[number]) => values[entry.key] ?? entry.fallback
+  const setSwitch = (key: string, on: boolean) => setValues((v) => ({ ...v, [key]: on }))
   const { busy, error, run } = useAsyncAction()
   const confirm = useConfirm()
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
-  /* A section bar only once there are three sections to jump between. */
+  /* The jump bar: at most four stops, because the app's one segmented control
+     stops being readable past about five. Defaults is deliberately not one of
+     them — it is a single button at the foot of the page, not a place anybody
+     navigates to twice — while the three below are where the editing happens. */
   const formSections = React.useMemo(
     () =>
-      agent.builtIn
-        ? [
-            { id: "launch", label: "Launch" },
-            { id: "appearance", label: "Install and icon" },
-            { id: "reset", label: "Defaults" },
-          ]
-        : [],
-    [agent.builtIn],
+      [
+        { id: "launch", label: "Launch" },
+        { id: "environment", label: "Environment" },
+        ...(switches.length > 0 ? [{ id: "behavior", label: "Behaviour" }] : []),
+        { id: "appearance", label: "Install and icon" },
+      ],
+    [switches.length],
   )
 
   /* Both writes end the same way: the server's probe cache is evicted for this
@@ -578,6 +563,14 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
 
   const save = (e: React.FormEvent) => {
     e.preventDefault()
+    /* Refused, not truncated: `recordFromRows` would drop a malformed name and
+       the save would say "saved" about a variable that no longer exists. */
+    if (envProblem) {
+      toast.error("Fix the environment first", {
+        description: "A variable name or a duplicate has to be corrected before this can be saved.",
+      })
+      return
+    }
     void run("Couldn't save the agent", async () => {
       const updated = await api<AgentDef>(settings, `/api/agents/${agent.id}`, {
         method: "PUT",
@@ -585,19 +578,22 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
           name: form.name,
           command: form.command,
           args: lines(form.args),
-          env: envRecord(form.env),
+          env,
           /* Empty means "none", not "leave it": both are cleared on the row
              the same way, and a blank field that quietly kept the old value is
              how an edit stops being an edit. */
           install: form.install.trim() || null,
           icon: form.icon.trim() || null,
+          /* Only the values: what the switches *are* is the seed's, and a form
+             that could rename them would be redefining the runtime. */
+          behaviorValues: values,
         }),
       })
       await applied(updated, "Agent saved")
     })
   }
 
-  /* Reset throws away whatever the user put in the four fields, and there is no
+  /* Reset throws away whatever the user put in the form, and there is no
      undo — the row is the only copy. Every other irreversible write in the app
      asks first, and this one asks harder than most, because the button sits in
      the same footer as Save and the two are one slip apart. */
@@ -605,7 +601,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
     const ok = await confirm({
       title: `Reset ${agent.name} to its default?`,
       description:
-        "The command, arguments, environment, install line and icon this agent ships with come back, and whatever you have set here is lost. Threads already running keep the process they have.",
+        "The command, arguments, environment, behaviour switches, install line and icon this agent ships with come back, and whatever you have set here is lost. Threads already running keep the process they have.",
       confirmLabel: "Reset",
       destructive: true,
     })
@@ -625,7 +621,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
       />
       <PageForm onSubmit={save}>
         <FormShell sections={formSections}>
-        <FormSection id="launch" label="Launch" hint="The command the server spawns, and the environment it gets.">
+        <FormSection id="launch" label="Launch" hint="The command the server spawns.">
           <Field label="Name" hint="What the pickers call it.">
             <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
           </Field>
@@ -645,24 +641,51 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
               className="font-mono"
             />
           </Field>
-          <Field
-            label="Environment"
-            hint="One per line: NAME=value. {apiKey} {baseUrl} {gatewayUrl} {model} {smallModel} {effort} {contextWindow} {maxOutputTokens} {cwd} {personaFile} {personaPrompt} — a key whose placeholders resolve empty is dropped."
-          >
-            <Textarea
-              value={form.env}
-              onChange={(e) => set({ env: e.target.value })}
-              rows={8}
-              className="font-mono"
-              spellCheck={false}
-            />
-          </Field>
+        </FormSection>
+        {/* Its own section, because it is now three kinds of thing rather than
+            one box of text (see `agent-env.tsx`). The seeded env is what lets
+            the editor tell a key the profile drives from one a person typed. */}
+        <FormSection
+          id="environment"
+          label="Environment"
+          hint="What the process is given at spawn. Applied at spawn — a thread already running keeps the process it has."
+        >
+          <AgentEnvEditor
+            env={env}
+            seeded={seededEnv}
+            onChange={(next, problems) => {
+              setEnv(next)
+              setEnvProblem(problems.any)
+            }}
+          />
         </FormSection>
         {/* Descriptive, not protocol — which is why these two are editable
             at all and the declarative fields beside them are not. An agent
             somebody added has no seed to inherit either from: without them a
             row measured as missing showed no way to fix it, and every
             non-built-in wore the same neutral glyph. */}
+        {/* Before the descriptive half, and after the environment: these are
+            what the runtime *does*, where the fields above are how it is
+            launched. */}
+        {switches.length > 0 && (
+          <FormSection
+            id="behavior"
+            label="Behaviour"
+            hint="What this agent does, rather than how it is launched. Applied at spawn — a thread already running keeps the process it has."
+          >
+            <Group>
+              {switches.map((entry) => (
+                <Row key={entry.key} title={entry.label} subtitle={entry.description}>
+                  <Switch
+                    checked={isOn(entry)}
+                    onCheckedChange={(next) => setSwitch(entry.key, next)}
+                    aria-label={entry.label}
+                  />
+                </Row>
+              ))}
+            </Group>
+          </FormSection>
+        )}
         <FormSection id="appearance" label="Install and icon" hint="Descriptive only; the protocol never reads them.">
           <Field label="Install command" hint="Shown when the binary is not on the server's PATH.">
             <Input

@@ -41,15 +41,12 @@ function Button({
   className,
   variant = "default",
   size = "default",
-  loading,
-  disabled,
   ...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants> & { loading?: boolean }) {
+}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
   return (
     <ButtonPrimitive
       data-slot="button"
-      className={cn(buttonVariants({ variant, size, className }), loading && "harness-busy-ring disabled:opacity-100")}
-      disabled={disabled || loading}
+      className={cn(buttonVariants({ variant, size, className }))}
       {...props}
     />
   )

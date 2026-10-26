@@ -92,13 +92,45 @@ export function isToolLayout(value: unknown): value is ToolLayout {
   return TOOL_LAYOUTS.some((layout) => layout === value)
 }
 
+/* ── How a parallel group is drawn ──
+   `toolLayout` decides how a *step* is drawn; this decides how the calls one
+   response sent together are bracketed, which is a different question and was
+   the one with an answer hard-coded into the row. Three, and they are genuinely
+   different readings rather than three shades of one:
+     `wash`    — the group is a marked stretch: a tinted, ringed box bleeding
+                 past its rows, the calls on their rail under one counting line.
+     `card`    — the group is a card: a titled box, its calls a plain list under
+                 a hairline. For a reader who wants the set to look like a thing
+                 rather than a highlighted passage.
+     `columns` — the group is a grid: the calls stand side by side, because they
+                 *ran* side by side. The one shape that says what "parallel"
+                 meant, and the one that folds two calls into half the height.
+     `bracket` — no box: a thin rule down the start edge spans the header and its
+                 calls. The quietest way to say "these belong together".
+     `ledger`  — hairlines above and below, one between every call, no tint: the
+                 group read as a table of calls.
+     `tiles`   — every call a small card of its own under the header, so each can
+                 be told apart at a glance.
+   The chrome for each lives in `thread-items/group-style.tsx`, so the row reads
+   a treatment instead of spelling `bg-… ring-…` inline. */
+export const GROUP_STYLES = ["wash", "card", "columns", "bracket", "ledger", "tiles"] as const
+export type GroupStyle = (typeof GROUP_STYLES)[number]
+
+export function isGroupStyle(value: unknown): value is GroupStyle {
+  return GROUP_STYLES.some((style) => style === value)
+}
+
 /** The sidebar's arrangement, and how its list is read. Each tuple's first
     entry is its default; `CHOICES` is what stored values are checked against. */
 export const SIDEBAR_VARIANTS = ["sidebar", "inset"] as const
 export type SidebarVariant = (typeof SIDEBAR_VARIANTS)[number]
 export const SIDEBAR_SORTS = ["recent", "created", "title", "project"] as const
 export type SidebarSort = (typeof SIDEBAR_SORTS)[number]
-export const SIDEBAR_FILTERS = ["all", "running", "waiting", "unread", "hidden"] as const
+/* `hidden` is deliberately not one of these: hiding a thread is not a way to
+   read the list, it is a thing the list can be told to stop doing.
+   `sidebarShowHidden` is that switch, and it adds the Hidden group under the
+   list rather than swapping the list for it. */
+export const SIDEBAR_FILTERS = ["all", "running", "waiting", "unread", "trash"] as const
 export type SidebarFilter = (typeof SIDEBAR_FILTERS)[number]
 /** Only threads with a turn inside the window. "Any" is no filter. */
 export const SIDEBAR_WITHIN = ["any", "day", "week", "month"] as const
@@ -149,6 +181,10 @@ export interface LayoutOptions {
    *  folded by kind inside it (`groupToolRuns`). Off, the calls are plain rows
    *  of the run and nothing marks them. */
   parallelGroups: boolean
+  /** How a group of parallel calls is bracketed (`GROUP_STYLES`): a marked
+   *  wash, a card with a hairline list, or the calls side by side in columns.
+   *  Off `parallelGroups`, there is no group to draw and this says nothing. */
+  groupStyle: GroupStyle
   /** Fold a run of consecutive `!` commands into one line you can open. */
   groupShellCommands: boolean
   /** Open every `!` command's output by default. Off, the row folds like a
@@ -201,6 +237,8 @@ export interface LayoutOptions {
   gapMin: GapMin
   /** Render file diffs side by side instead of unified. */
   splitDiffs: boolean
+  /** Hide the workspace tab strips without closing panels or changing the saved layout. */
+  hideWorkspaceTabs: boolean
   /** The second row of every dock tab (project and model, a page's section,
       a shell's directory). Off, the tab is one line and shorter. */
   showTabDetails: boolean
@@ -270,6 +308,11 @@ export interface LayoutOptions {
   sidebarSort: SidebarSort
   /** Which threads the list shows, by what they are doing. */
   sidebarFilter: SidebarFilter
+  /** Keep hidden threads out of every list. On, they are still out of the
+      ordinary list — that is what hiding *is* — but a Hidden group sits under
+      it, which is the only place they can be read and unhidden again. Off, the
+      group is not drawn at all. */
+  sidebarShowHidden: boolean
   /** Which threads the list shows, by how recently they spoke. */
   sidebarWithin: SidebarWithin
   /** Shorter rows, so more threads fit. */
@@ -301,6 +344,7 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   groupTools: false,
   openRunningGroup: true,
   parallelGroups: true,
+  groupStyle: "wash",
   groupShellCommands: false,
   expandShellCommands: false,
   showShellCommands: true,
@@ -321,6 +365,7 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   gapMin: "1s",
   splitDiffs: false,
   stepDividers: false,
+  hideWorkspaceTabs: false,
   showTabDetails: true,
   tabAgentIcon: true,
   turnRail: true,
@@ -338,6 +383,7 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   sidebarVariant: "sidebar",
   sidebarSort: "recent",
   sidebarFilter: "all",
+  sidebarShowHidden: true,
   sidebarWithin: "any",
   sidebarCompact: false,
   sidebarSubThreads: "all",
@@ -421,12 +467,24 @@ function pick(raw: unknown): Partial<LayoutOptions> {
       }
     } else if (key === "toolVariant") {
       if (isToolVariant(value)) out[key] = value
+    } else if (key === "groupStyle") {
+      if (isGroupStyle(value)) out[key] = value
     } else if (key === "streamSpeed") {
       if (isStreamSpeed(value)) out[key] = value
     } else if (key === "batchBurst") {
       if (isBatchBurst(value)) out[key] = value
     } else if (key === "gapMin") {
       if (isGapMin(value)) out[key] = value
+    } else if (key === "sidebarFilter") {
+      /* "hidden" was a position of this choice — one that swapped the whole
+         list for the hidden threads. It is a switch now, so a reader parked on
+         it was reading exactly what the switch adds: carry the pick over to
+         the group and open the list behind it. Read only when the switch
+         itself is absent, so a later pick of either wins. */
+      if (value === "hidden") {
+        out[key] = "all"
+        if (typeof source.sidebarShowHidden !== "boolean") out.sidebarShowHidden = true
+      } else if (CHOICES[key]?.includes(value as string)) out[key] = value
     } else if (CHOICES[key]?.includes(value as string)) {
       out[key] = value
     }

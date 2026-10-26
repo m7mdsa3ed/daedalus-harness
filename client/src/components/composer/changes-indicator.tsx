@@ -77,7 +77,7 @@ export function ChangesIndicator({
           <Button
             variant="ghost"
             size="icon-xs"
-            className={cn(READING_TRIGGER, "text-muted-foreground hover:text-foreground")}
+            className={cn(READING_TRIGGER, "text-success hover:text-success")}
             title={`${label} — +${added} −${removed}`}
             aria-label={label}
           >

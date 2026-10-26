@@ -37,7 +37,7 @@ import {
 import { toast } from "@/lib/toast"
 import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { PickerSkeleton } from "@/components/ui/skeletons"

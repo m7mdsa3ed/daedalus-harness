@@ -80,6 +80,7 @@ export function SettingsNav({ onBack }: { onBack: () => void }) {
       <SidebarMenuItem key={id ?? "overview"}>
         <ItemContextMenu items={openInItems(path, { beside: !isMobile })}>
           <SidebarMenuButton
+            data-nav-row
             tooltip={label}
             isActive={id === section}
             onClick={() => go(path)}
@@ -101,6 +102,7 @@ export function SettingsNav({ onBack }: { onBack: () => void }) {
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
+                data-nav-row
                 className="text-muted-foreground"
                 tooltip="Back to threads"
                 onClick={onBack}

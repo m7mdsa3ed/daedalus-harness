@@ -2,7 +2,7 @@ import * as React from "react"
 import { PlugIcon, SearchIcon, SettingsIcon } from "lucide-react"
 import { useNavigate } from "react-router"
 
-import { McpIcon } from "@/components/entity-icon"
+import { McpIcon, mcpHue, mcpHueStyle } from "@/components/entity-icon"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
@@ -76,7 +76,14 @@ function McpRow({
         locked ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-muted",
       )}
     >
-      <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-muted">
+      <span
+        data-mcp-disc={mcpHue(server) == null ? undefined : ""}
+        style={mcpHueStyle(server)}
+        className={cn(
+          "grid size-7 shrink-0 place-items-center rounded-lg",
+          mcpHue(server) == null && "bg-muted",
+        )}
+      >
         <McpIcon server={server} className="size-4" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
@@ -128,7 +135,15 @@ function McpFace({ selected }: { selected: McpServerDef[] }) {
         {shown.map((server) => (
           <span
             key={server.id}
-            className="grid size-5 place-items-center rounded-full bg-muted ring-2 ring-background"
+            /* Every server's disc wears its hue — declared for a built-in,
+               hashed off the name for a row the user added. Only a server with
+               no identity at all keeps the neutral ground. */
+            data-mcp-disc={mcpHue(server) == null ? undefined : ""}
+            style={mcpHueStyle(server)}
+            className={cn(
+              "grid size-5 place-items-center rounded-full ring-2 ring-background",
+              mcpHue(server) == null && "bg-muted",
+            )}
           >
             <McpIcon server={server} className="size-3.5" />
           </span>

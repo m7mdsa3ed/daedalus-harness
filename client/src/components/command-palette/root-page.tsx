@@ -39,6 +39,7 @@ import {
   Gauge,
   Keyboard,
   LogOut,
+  FolderTreeIcon,
   MessageSquarePlusIcon,
   Maximize,
   Minus,
@@ -518,6 +519,25 @@ export function RootPage() {
         }),
     })
   }
+  /* The project's files: a Preview with no file in it is the explorer alone. */
+  items.push({
+    id: "dock:files",
+    group: "Workspace",
+    title: "Project files",
+    keywords: "files explorer tree preview browse open file editor",
+    icon: <FolderTreeIcon />,
+    onSelect: () =>
+      palette.run(() => {
+        const inThread = threadDock(meta?.id)
+        if (inThread) inThread.open("web", true)
+        else
+          palette.dock.openPanel({
+            kind: "web",
+            viewId: "default",
+            projectId: meta?.projectId ?? HOME_PROJECT_ID,
+          })
+      }),
+  })
   /* Outside the `meta` block above: a board is the server's, not a project's,
      so this row is offered whether or not a thread is routed. */
   items.push({

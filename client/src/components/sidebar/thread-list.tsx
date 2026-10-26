@@ -14,7 +14,7 @@ import { NEST } from "./scale"
 import { useSidebarEnv } from "./env"
 import { ThreadRow, type ThreadRowHandlers } from "./thread-row"
 import { useFold, useFolded } from "./fold"
-import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
+import { useFocusedRow, useWindowedRows, scrollParent } from "@/lib/windowed-rows"
 
 type ThreadFold = React.ComponentProps<typeof ThreadRow>["fold"]
 
@@ -247,6 +247,7 @@ export const ThreadList = React.memo(function ThreadList({
       session={session}
       state={trash ? "idle" : status(session)}
       trash={trash}
+      active={!trash && session.id === activeThreadId}
       unread={!trash && unread.has(session.id)}
       pinned={pinSet.has(session.id)}
       showProject={showProject ?? !grouped}
@@ -320,7 +321,11 @@ export const ThreadList = React.memo(function ThreadList({
     count: items.length,
     threshold: 100,
     list: listRef,
-    scroller: () => listRef.current?.closest<HTMLElement>('[data-sidebar="content"]') ?? null,
+    /* The nearest scroll box, not the sidebar's content: project sections cap
+       their bodies (`SECTION_BODY`) and scroll them themselves, so a windowed
+       list inside one has that box as its viewport. Asking for the
+       content element fixed it on a scroller that never moves for these rows. */
+    scroller: () => (listRef.current ? scrollParent(listRef.current) : null),
     estimateSize: (i) => {
       const item = items[i]
       /* 36px rows (24 compact); a sub-thread block is its rows, their gaps

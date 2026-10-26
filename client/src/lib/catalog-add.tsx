@@ -30,7 +30,7 @@
 import * as React from "react"
 
 import { usePrompt } from "@/components/prompt-dialog"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/busy-button"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,

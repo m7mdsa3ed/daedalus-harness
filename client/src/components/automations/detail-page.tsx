@@ -25,7 +25,7 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { ErrorNote } from "@/components/error-note"
 import { Notice } from "@/components/notice"
-import { MetaFact, SurfaceHeader } from "@/components/page-primitives"
+import { MetaCell, MetaCells, MetaFact, SurfaceHeader } from "@/components/page-primitives"
 import { Empty } from "@/components/empty"
 import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -386,6 +386,8 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
     .filter(Boolean)
     .join(" · ")
 
+  const firstRun = !session && !routine.dryRunCompleted
+
   const overview = (
     <>
       {last && needsYou && (
@@ -640,7 +642,7 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
             ) : null}
           </span>
         }
-        description={routine.description ?? undefined}
+        description={routine.description ? <ClampedText text={routine.description} /> : undefined}
         meta={
           session ? (
             <MetaFact title="Runs in">
@@ -654,31 +656,37 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
               )}
             </MetaFact>
           ) : (
-            <>
-              <MetaFact title="Project">
-                <ProjectIcon project={project} className="size-3.5" />
+            <MetaCells>
+              <MetaCell label="Project" icon={<ProjectIcon project={project} className="size-5" />}>
                 {project?.name ?? "Project missing"}
-                {routine.worktree && " · own worktree"}
-              </MetaFact>
-              <MetaFact title="Agent">
-                <AgentIcon agentId={routine.agentId} className="size-3.5" />
-                {[agentName, routine.model, routine.effort].filter(Boolean).join(" · ")}
-              </MetaFact>
-              <MetaFact title="Profile" className="hidden @panel-sm:inline-flex">
-                <ProfileIcon profile={profile} agentId={routine.agentId} className="size-3.5" />
+                {routine.worktree && <span className="text-muted-foreground"> · own worktree</span>}
+              </MetaCell>
+              <MetaCell label="Agent" icon={<AgentIcon agentId={routine.agentId} className="size-5" />}>
+                {agentName}
+                {[routine.model, routine.effort].filter(Boolean).length > 0 && (
+                  <span className="text-muted-foreground"> · {[routine.model, routine.effort].filter(Boolean).join(" · ")}</span>
+                )}
+              </MetaCell>
+              <MetaCell
+                label="Profile"
+                icon={<ProfileIcon profile={profile} agentId={routine.agentId} className="size-5" />}
+                className="hidden @panel-sm:flex"
+              >
                 {profileName}
-              </MetaFact>
+              </MetaCell>
               {grants > 0 && (
-                <button
-                  type="button"
-                  title="Open Access"
-                  className="inline-flex items-center pointer-coarse:min-h-11"
-                  onClick={() => void go("access")}
-                >
-                  <StatusBadge tone="warn">Acts alone on {grants}</StatusBadge>
-                </button>
+                <MetaCell label="Access">
+                  <button
+                    type="button"
+                    title="Open Access"
+                    className="inline-flex items-center pointer-coarse:min-h-11"
+                    onClick={() => void go("access")}
+                  >
+                    <StatusBadge tone="warn">Acts alone on {grants}</StatusBadge>
+                  </button>
+                </MetaCell>
               )}
-            </>
+            </MetaCells>
           )
         }
         actions={
@@ -691,16 +699,17 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
               />
               {routine.enabled ? "Active" : "Paused"}
             </label>
-            {/* The dry run is the first-class one for a thread automation: it is
-                what a person should press before granting anything. Narrow, it
-                lives in the ⋮ menu. */}
-            {!session && (
-              <Button variant="outline" className="hidden @panel-sm:inline-flex" disabled={firing} onClick={() => void run(true)}>
+            {/* Run now is the one primary action. Until a run has completed the
+                dry run is what a person should press (nothing can be granted
+                before it), so it takes the emphasis and Run now steps back;
+                afterwards it lives in the ⋮ menu. */}
+            {firstRun && (
+              <Button className="hidden @panel-sm:inline-flex" disabled={firing} onClick={() => void run(true)}>
                 <ShieldCheckIcon data-icon="inline-start" />
                 Run, forced to ask
               </Button>
             )}
-            <Button disabled={firing} onClick={() => void run(false)}>
+            <Button variant={firstRun ? "outline" : "default"} disabled={firing} onClick={() => void run(false)}>
               <PlayIcon data-icon="inline-start" />
               Run now
             </Button>
@@ -844,6 +853,27 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
           </>
         )}
       </div>
+    </>
+  )
+}
+
+/** A description is a sentence or two of orientation, but an automation's is
+    often its whole brief: two lines, then a toggle. */
+function ClampedText({ text }: { text: string }) {
+  const [open, setOpen] = React.useState(false)
+  const long = text.length > 160
+  return (
+    <>
+      <span className={!open && long ? "line-clamp-2" : undefined}>{text}</span>
+      {long && (
+        <button
+          type="button"
+          className="mt-1 text-xs font-medium text-foreground underline-offset-2 hover:underline pointer-coarse:min-h-11"
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
     </>
   )
 }

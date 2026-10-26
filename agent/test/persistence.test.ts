@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { buildAgentApp } from "../src/app.js";
 import { SessionStore } from "../src/persistence.js";
 import type { UpdateParams } from "../src/types.js";
@@ -13,6 +14,7 @@ import {
   scriptedModel,
   testEnv,
   textScript,
+  usage,
 } from "./helpers/scripted.js";
 
 const cwd = mkdtempSync(join(tmpdir(), "daedalus-agent-cwd-"));
@@ -262,6 +264,64 @@ let sessionId = "";
   assert.equal(new SessionStore(home).has(id), false, "the index flush landed");
   assert.equal(store.delete(id), false, "deleting nothing again is reported");
   console.log("persistence: lastTokens on read + delete ok");
+}
+
+// --- a tool call opened inside a text block does not cut the message short ---
+{
+  /* Some gateways open a tool call while the text block is still streaming:
+     `tool-input-start` lands between two deltas of one message. The runtime
+     used to close the block there, so the deltas after it streamed live and
+     were never journaled — a `session/load` replayed the sentence cut off at
+     the call. */
+  const input = JSON.stringify({ command: "echo hi" });
+  const interleaved: LanguageModelV4StreamPart[] = [
+    { type: "stream-start", warnings: [] },
+    { type: "text-start", id: "t1" },
+    { type: "text-delta", id: "t1", delta: "protect them with a one-time `" },
+    { type: "tool-input-start", id: "call-1", toolName: "bash" },
+    { type: "text-delta", id: "t1", delta: "state` nonce in KV." },
+    { type: "tool-input-end", id: "call-1" },
+    { type: "tool-call", toolCallId: "call-1", toolName: "bash", input },
+    { type: "text-end", id: "t1" },
+    {
+      type: "finish",
+      finishReason: { unified: "tool-calls", raw: "tool_calls" } as never,
+      usage: usage(20, 8),
+    },
+  ];
+  const textOf = (harness: ReturnType<typeof makeClient>["harness"]) =>
+    harness
+      .updatesOf("agent_message_chunk")
+      .map((u) => (u.update as { content?: { text?: string } }).content?.text ?? "")
+      .join("");
+  const whole = "protect them with a one-time `state` nonce in KV.";
+
+  let sid = "";
+  const agent = buildAgentApp({ env, makeModel: scriptedModel([interleaved, textScript("Done. ")]) });
+  const { app: client, harness } = makeClient();
+  await connectPair(agent, client, async (ctx) => {
+    await initialize(ctx);
+    sid = (await ctx.request("session/new", { cwd, mcpServers: [] })).sessionId;
+    await ctx.request("session/set_mode", { sessionId: sid, modeId: "bypassPermissions" });
+    await ctx.request("session/prompt", { sessionId: sid, prompt: promptOf("describe it") });
+    assert.equal(textOf(harness), whole + "Done. ", "live stream is whole");
+  });
+
+  const reader = buildAgentApp({ env, makeModel: scriptedModel([]) });
+  const { app: readerClient, harness: replay } = makeClient();
+  await connectPair(reader, readerClient, async (ctx) => {
+    await initialize(ctx);
+    await ctx.request("session/load", { sessionId: sid, cwd, mcpServers: [] });
+    assert.equal(textOf(replay), whole + "Done. ", "the journal kept the text after the call");
+    const kinds = replay.updates.map((u) => (u.update as { sessionUpdate: string }).sessionUpdate);
+    const call = kinds.indexOf("tool_call");
+    const messageIds = new Set(
+      replay.updatesOf("agent_message_chunk").slice(0, 2).map((u) => (u.update as { messageId?: string }).messageId),
+    );
+    assert.ok(call > kinds.indexOf("agent_message_chunk"), "the call follows the first half");
+    assert.equal(messageIds.size, 1, "both halves are one message");
+  });
+  console.log("persistence: text across an interleaved tool call ok");
 }
 
 console.log("persistence.test.ts passed");
