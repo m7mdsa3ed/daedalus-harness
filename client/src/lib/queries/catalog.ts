@@ -14,6 +14,7 @@ import {
   type AgentDef,
   type AgentsStatus,
   type CommandDef,
+  type Persona,
   type McpCheckResult,
   type ThreadMcpServer,
   type McpServerDef,
@@ -31,6 +32,7 @@ import {
   agentsKey,
   agentsStatusKey,
   commandsKey,
+  personasKey,
   mcpCatalogKey,
   threadMcpKey,
   mcpServersKey,
@@ -288,6 +290,14 @@ export function useCommands(): CommandDef[] {
   }).data)
 }
 
+/** The persona library (`GET /api/personas`), in menu order. */
+export function usePersonas(): Persona[] {
+  const settings = useServer()
+  return list<Persona>(useApiQuery<Persona[]>(personasKey(settings), "/api/personas", {
+    staleTime: CATALOG_STALE_MS,
+  }).data)
+}
+
 export function useModelPrompts(): ModelPrompt[] {
   const settings = useServer()
   return list<ModelPrompt>(useApiQuery<ModelPrompt[]>(modelPromptsKey(settings), "/api/model-prompts", {
@@ -380,6 +390,7 @@ export type CatalogSlice =
   | "mcp-servers"
   | "skills"
   | "commands"
+  | "personas"
   | "model-prompts"
 
 /** Whether one catalog slice has answered, and how it failed — for a page
@@ -445,6 +456,8 @@ export function useCatalogReader() {
         qc.getQueryData<Profile[]>(profilesKey(settings)) ?? (EMPTY as Profile[]),
       agents: (): AgentDef[] =>
         qc.getQueryData<AgentDef[]>(agentsKey(settings)) ?? (EMPTY as AgentDef[]),
+      personas: (): Persona[] =>
+        qc.getQueryData<Persona[]>(personasKey(settings)) ?? (EMPTY as Persona[]),
     }),
     [qc, settings]
   )

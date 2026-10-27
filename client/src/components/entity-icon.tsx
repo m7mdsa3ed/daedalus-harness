@@ -25,7 +25,6 @@ import {
   GlobeIcon,
   TerminalIcon,
   UsersIcon,
-  WorkflowIcon,
   WrenchIcon,
 } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
@@ -135,7 +134,6 @@ export function ProfileIcon({
 const BUILTIN_MCP_MARKS = {
   "web-search": GlobeIcon,
   knowledge: BookOpenIcon,
-  workflow: WorkflowIcon,
   agents: UsersIcon,
   harness: WrenchIcon,
   browser: AppWindowIcon,
@@ -167,7 +165,6 @@ const BUILTIN_MCP_MARKS = {
 const BUILTIN_MCP_HUES: Record<McpServerBuiltin["builtin"], number> = {
   "web-search": 243,
   knowledge: 152,
-  workflow: 285,
   agents: 38,
   harness: 330,
 }

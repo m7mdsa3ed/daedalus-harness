@@ -123,7 +123,7 @@ export const SUGGEST_KINDS: readonly SuggestKindDef[] = [
     fence: "suggest-agents",
     max: 2,
     maxLen: 200,
-    /* Naming the pair in the message is what lets `ask_agent` run without
+    /* Naming the pair in the message is what lets the `agent` tool run without
        stopping to ask which profile to use. */
     fill: (line) => {
       const ask = splitAsk(line)

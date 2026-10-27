@@ -164,7 +164,8 @@ export interface ThreadCallbacks {
     effort: string,
     suggestKinds?: string[],
     helperModels?: { role: string; model: string }[],
-    uiGroups?: string[]
+    uiGroups?: string[],
+    personaId?: string | null
   ) => void
   /** A config change is waiting for the running turn to end, or no longer is
       (`null`). Absolute and from every peer's point of view identical — this
@@ -742,7 +743,8 @@ export class ThreadSocket {
           event.effort,
           event.suggestKinds,
           event.helperModels,
-          event.uiGroups
+          event.uiGroups,
+          event.personaId
         )
         return
       case "staged_config":

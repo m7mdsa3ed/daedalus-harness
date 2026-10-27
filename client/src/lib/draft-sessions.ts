@@ -105,6 +105,7 @@ function parseRow(value: unknown): SessionMeta | null {
     draft: true,
     ...(Array.isArray(row.suggestKinds) ? { suggestKinds: normalizeSuggestKinds(row.suggestKinds) } : {}),
     ...(Array.isArray(row.uiGroups) ? { uiGroups: normalizeUiGroups(row.uiGroups) } : {}),
+    ...(str(row.personaId) ? { personaId: str(row.personaId) } : {}),
     ...(row.askProfiles && typeof row.askProfiles === "object" ? { askProfiles: row.askProfiles as AskProfiles } : {}),
     ...(row.isolate === true ? { isolate: true } : {}),
     ...(str(row.taskId) ? { taskId: str(row.taskId) } : {}),

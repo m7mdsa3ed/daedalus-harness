@@ -416,12 +416,12 @@ export function AppShell({
     startRef.current.startThread()
   }, [ready, location.search])
 
-  /* One opener for every workspace panel, so the tab strip's + menu, the
-     chords below and the palette cannot drift apart.
+  /* One opener for every workspace panel, so a tab's own menu (which is where
+     the panel rows live), the chords below and the palette cannot drift apart.
 
-     **A + opens a new one; a chord shows you the one you have.** Pressing the
-     button that means "open a terminal" a second time and being handed the
-     terminal already open is the dock refusing the thing the strip's + is for
+     **A pick opens a new one; a chord shows you the one you have.** Pressing
+     the button that means "open a terminal" a second time and being handed the
+     terminal already open is the dock refusing the question the menu answers
      — and with groups there is a second place to put it. So the default mints
      a fresh instance (`viewId`, or a whole new terminal), and `reuse` is what
      the chords and the thread's own links pass: those mean "show me the IDE
@@ -739,10 +739,10 @@ export function AppShell({
               actions={actions}
               dock={dock}
               onReady={handleDockReady}
-              /* The strip's + is the app's "new tab": a new thread, in a tab of
-                 its own. The landing console is where the dock lands when the
-                 last tab closes, not what + opens. */
-              onNewTab={() => dock.openTab()}
+              /* The strip's + is the app's "new tab": the New tab page, in a tab
+                 of its own, on the strip that asked. The landing console is
+                 where the dock lands when the last tab closes, not what + opens. */
+              onNewTab={(into) => dock.openRoute("/", { group: into?.group })}
               onOpenPanel={openWorkspacePanel}
             />
           </PageRoutesProvider>

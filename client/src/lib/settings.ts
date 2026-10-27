@@ -285,7 +285,7 @@ export interface AgentStatus {
   checkedAt: number
 }
 
-/** What `ask_agent` uses for one agent: a profile, and optionally one of its
+/** What the `agent` tool uses for one agent: a profile, and optionally one of its
     models (absent = the profile's own default). */
 export interface AskChoice {
   profileId: string
@@ -335,6 +335,12 @@ export interface AgentDef {
       not read them — a link that lands somewhere nothing looks used to be
       indistinguishable from one that works. */
   workspaceLayout?: { dir: string; skills?: string | null; commands?: string | null } | null
+  /** Built-in library rows this runtime's threads always receive
+      (`server/src/registry.ts`): the Daedalus agent's `agents` server is its
+      only way to delegate, so a thread without it has silently lost the
+      capability. The pickers draw these on and locked, with "required by
+      <name>" — read off the row, so the client compares no ids. */
+  requiredMcp?: string[] | null
   /** Whether this runtime's subagents take helper models (docs/model-roles.md):
       `"acp-env"` is ours, and the only one. The client reads it for one thing —
       whether the menus offer Helper models at all. */
@@ -531,9 +537,9 @@ export interface RegistryPage {
 export interface McpServerBuiltin {
   type: "builtin"
   name: string
-  builtin: "web-search" | "knowledge" | "workflow" | "agents" | "harness"
+  builtin: "web-search" | "knowledge" | "agents" | "harness"
   /** Only ever present on the rows whose server is synthesized from a *thread*
-      (`workflow`, `agents`, `harness`, `browser`): its connection is the
+      (`agents`, `harness`): its connection is the
       calling thread's own, so no session means nothing to connect to — the
       settings list explains that rather than reading a server that is not
       there. Absent on `web-search` and `knowledge`, which resolve without one. */
@@ -561,8 +567,7 @@ export function mcpNeedsAuth(s: McpServerDef): boolean {
 export function mcpSubtitle(s: McpServerDef): string {
   if (s.type === "builtin") {
     if (s.builtin === "web-search") return "built-in · web search + fetch"
-    if (s.builtin === "workflow") return "built-in · workflows"
-    if (s.builtin === "agents") return "built-in · ask other agents"
+    if (s.builtin === "agents") return "built-in · agents and workflows"
     if (s.builtin === "harness") return "built-in · manage the harness"
     return "built-in · project knowledge base"
   }
@@ -598,6 +603,17 @@ export interface SkillDef {
 
 /** A reusable slash command: materialized into <cwd>/.claude/commands at spawn,
     so the agent advertises it over ACP like any of its own. */
+/** A persona: instruction text a whole thread runs under, placed above the
+    rules in its spawn instructions (`server/src/personas.ts`). One per thread,
+    picked like the model; a change costs a respawn. */
+export interface Persona {
+  id: string
+  name: string
+  description: string
+  prompt: string
+  sortOrder: number
+}
+
 export interface CommandDef {
   id: string
   /** Invocation name — `/name` in the composer, `<name>.md` on disk. */
@@ -911,7 +927,10 @@ export interface ProjectDefaults {
   suggestKinds: string[]
   /** Which component groups a drawn view may use (`UI_GROUPS`); always resolved. */
   uiGroups: string[]
-  /** Which profile and model a thread here asks each agent with (`ask_agent`). */
+  /** The persona a thread here starts under; "" = none. Absent from a server
+      that predates personas coming back. */
+  personaId?: string
+  /** Which profile and model a thread here asks each agent with (the `agent` tool). */
   askProfiles: AskProfiles
   /** Voice backend for calls on a thread here; "" or absent = the profile's,
       then the global default. */
@@ -959,6 +978,8 @@ export interface SessionMeta {
       `lib/openui/groups`); empty = drawn answers off, absent reads as all of
       them. The one setting - there is no separate on/off. */
   uiGroups?: string[]
+  /** The persona the thread runs under; null or absent = none. */
+  personaId?: string | null
   title: string
   acpSessionId?: string
   createdAt: number
@@ -986,7 +1007,7 @@ export interface SessionMeta {
       follows the thread to every device. A hidden thread leaves the sidebar's
       default list and is read back with the "Hidden" filter. */
   hiddenAt?: number | null
-  /** Which profile and model this thread's `ask_agent` uses for each agent;
+  /** Which profile and model this thread's `agent` tool uses for each agent;
       an agent not in it is asked about. The server's, and read at ask time,
       so changing it costs the thread nothing. */
   askProfiles?: AskProfiles
@@ -1040,10 +1061,11 @@ export interface SessionMeta {
   /** The thread this one is a workflow step of; such threads are hidden from
       the lists and reached from the parent's subagent row or by URL. */
   parentSessionId?: string | null
-  /** What kind of child a `parentSessionId` thread is: an `ask_agent` run or a
-      workflow step. Absent on a child from before the server recorded it, which
-      `childKindOf` reads off the `Ask · ` title prefix the server gave it. */
-  childKind?: "ask" | "workflow" | null
+  /** What kind of child a `parentSessionId` thread is: an ask of another pair, a
+      plain subagent on this thread's own pair, or a step of a workflow run.
+      Absent on a child from before the server recorded it, which `childKindOf`
+      reads off the title prefix the server gave it (`Ask · `, `Subagent · `). */
+  childKind?: "ask" | "workflow" | "subagent" | null
   /** The workflow run a step belongs to and its name: the sidebar folds a
       run's steps into one row. Absent on an ask and on a step from before the
       server recorded it, which draws flat. */
@@ -1099,8 +1121,11 @@ export interface SessionPage {
 /** Whether a sub thread is an ask or a workflow step; null for a top-level
     thread. The server's `childKind` wins; a child written before it existed is
     told by the `Ask · ` prefix every ask's title starts with. */
-export const childKindOf = (s: SessionMeta): "ask" | "workflow" | null =>
-  !s.parentSessionId ? null : (s.childKind ?? (s.title.startsWith("Ask · ") ? "ask" : "workflow"))
+export const childKindOf = (s: SessionMeta): "ask" | "workflow" | "subagent" | null =>
+  !s.parentSessionId
+    ? null
+    : (s.childKind ??
+      (s.title.startsWith("Ask · ") ? "ask" : s.title.startsWith("Subagent · ") ? "subagent" : "workflow"))
 
 /** A thread that is nobody's workflow step. Half of `isListed`, which is what
     every list actually asks for. */
@@ -1166,6 +1191,7 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.effort === b.effort &&
     (a.suggestKinds ?? []).join() === (b.suggestKinds ?? []).join() &&
     sameUiGroups(a.uiGroups, b.uiGroups) &&
+    (a.personaId ?? null) === (b.personaId ?? null) &&
     a.title === b.title &&
     a.acpSessionId === b.acpSessionId &&
     a.createdAt === b.createdAt &&

@@ -78,6 +78,7 @@ const PastesContext = React.createContext<Paste[]>([])
    (Backspace already takes an atom whole). */
 function Chip({
   selected,
+  quote,
   onRemove,
   removeLabel,
   title,
@@ -86,6 +87,7 @@ function Chip({
   title?: string
   preview?: React.ReactNode
   selected: boolean
+  quote?: boolean
   onRemove: () => void
   removeLabel: string
 }) {
@@ -94,7 +96,7 @@ function Chip({
       as="span"
       contentEditable={false}
       title={title}
-      className={chipClass({ selected, trailing: true })}
+      className={chipClass({ selected, trailing: true, quote })}
     >
       <ChipBody {...body} />
       <button
@@ -142,6 +144,7 @@ function QuoteView({ node, deleteNode, selected }: NodeViewProps) {
     <Chip
       icon={TextQuoteIcon}
       {...quoteFace(text)}
+      quote
       selected={selected}
       onRemove={deleteNode}
       removeLabel="Remove quote"

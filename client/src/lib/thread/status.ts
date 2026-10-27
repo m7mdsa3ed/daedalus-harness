@@ -182,7 +182,7 @@ function backgroundStatus(thread: ThreadState): ThreadStatus | null {
   if (!thread.background) return null
   const agents = runningAgents(thread)
   const run = agents.find((agent) => agent.name)?.name
-  /* An ask_agent child is no workflow: name it by its pair, and say "agent". */
+  /* A one-step run's child is no workflow: name it by its pair, and say "agent". */
   const head = agents.length === 1 ? thread.items.find((item) => item.id === agents[0].id) : undefined
   const ask = head?.kind === "subagent" ? head.ask : undefined
   const asked = ask ? ask.agent ?? "The asked agent" : undefined

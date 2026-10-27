@@ -41,6 +41,7 @@ import {
   SquareSlash,
   ScrollText,
   Tag,
+  VenetianMask,
   type LucideIcon,
 } from "lucide-react"
 
@@ -164,6 +165,16 @@ export const SETTINGS_SECTIONS = [
     title: "Slash commands",
     description:
       "Reusable prompts invoked as /name from the composer. Attach them to a profile, or pick them on a new thread; they are written into <cwd>/.claude/commands at spawn and the agent advertises them like its own.",
+  },
+  {
+    id: "personas",
+    page: lazyPage(() => import("./personas"), "PersonasPage"),
+    sub: [{ path: ":entryId", page: lazyPage(() => import("./personas"), "PersonaFormPage") }],
+    label: "Personas",
+    icon: VenetianMask,
+    title: "Personas",
+    description:
+      "How a whole thread is worked on. A thread runs under one persona, picked in its settings menu like the model; its instructions are appended to the agent's own prompt, above the rules. Commands are the per-message half.",
   },
   {
     id: "files",
@@ -330,7 +341,7 @@ export const SETTINGS_NAV_GROUPS: readonly {
 }[] = [
   { label: "Personal", sections: ["general", "appearance", "keyboard", "notifications"] },
   { label: "Workspace", sections: ["projects", "files", "knowledge", "rules"] },
-  { label: "Tools", sections: ["mcp", "skills", "commands"] },
+  { label: "Tools", sections: ["mcp", "skills", "commands", "personas"] },
   { label: "AI & models", sections: ["profiles", "agents", "model-roles", "model-prompts", "ai"] },
   { label: "Services", sections: ["usage", "web-search", "voice"] },
   { label: "Server", sections: ["backup"] },

@@ -200,8 +200,14 @@ function ResponsiveDialogContent({
             className={cn(
               SURFACE,
               SHEET_INSET,
-              // A sheet floating off the bottom edge, following the finger.
-              "fixed inset-x-0 bottom-0 z-50 m-(--drawer-inset) flex min-h-0 origin-bottom flex-col rounded-4xl select-none",
+              /* A sheet floating off the bottom edge, following the finger.
+                 Its margins are the float's, not the safe area's: `m-2` is how
+                 far it stands off the foot of the screen, so a notch has to take
+                 the larger of the two on the side it is on — the app is
+                 `viewport-fit=cover` and content draws under the system chrome.
+                 Stated per side rather than as one `m-(--drawer-inset)`, because
+                 the two sides answer different cuts. */
+              "fixed inset-x-0 bottom-0 z-50 mb-(--drawer-inset) ml-[max(var(--drawer-inset),var(--safe-left))] mr-[max(var(--drawer-inset),var(--safe-right))] flex min-h-0 origin-bottom flex-col rounded-4xl select-none",
               /* A sheet is opened to be typed into as often as a dialog is, and
                  the page does not resize when the soft keyboard opens — so it
                  sits on top of one and its height is capped against it, or the
@@ -210,9 +216,26 @@ function ResponsiveDialogContent({
                  owns the transform and it is the *edge* that has to move: the
                  cap below is measured from it. */
               KEYBOARD_RISE,
+              /* The cap is measured from the sheet's own bottom edge, and that
+                 edge is the keyboard's (`KEYBOARD_RISE`), so the keyboard comes
+                 off it here too.
+
+                 `--safe-top` comes off as well, and that is what the `1.5rem`
+                 means. The app is `viewport-fit=cover`, so `100dvh` runs under
+                 the status bar: `100dvh - 1.5rem` is a top edge 1.5rem from the
+                 *screen's* edge, and on an Android phone a 24px status bar ate
+                 the whole 1.5rem and left none of it — the sheet came to rest
+                 flush against the system chrome, which is what it looked like.
+                 Taking the inset out first makes the 1.5rem the air below the
+                 status bar that it was written to be.
+
+                 `--safe-bottom` is deliberately not subtracted: the sheet floats
+                 `--drawer-inset` off the foot and its footer pads by the indicator
+                 itself, so taking it here too would lift a short sheet twice for
+                 one bar. */
               tall
-                ? "max-h-[calc(100dvh-1.5rem-var(--keyboard-inset,0px))]"
-                : "max-h-[calc(100dvh-6rem-var(--keyboard-inset,0px))]",
+                ? "max-h-[calc(100dvh-var(--safe-top)-1.5rem-var(--keyboard-inset,0px))]"
+                : "max-h-[calc(100dvh-var(--safe-top)-6rem-var(--keyboard-inset,0px))]",
               "transform-[translate3d(0,var(--drawer-swipe-movement-y),0)] will-change-transform",
               "[--closed-transform:translate3d(0,calc(100%+var(--drawer-inset)+2px),0)]",
               "transition-[transform,opacity,bottom,max-height] duration-450 ease-[cubic-bezier(0.22,1,0.36,1)]",

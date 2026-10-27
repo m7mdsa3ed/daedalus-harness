@@ -9,6 +9,7 @@
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { OPENUI_GROUPS } from "../src/openui-prompt.js";
+import type { Rule } from "../src/rules.js";
 import {
   OPENUI_FENCE,
   OPENUI_INSTRUCTIONS,
@@ -27,6 +28,7 @@ import {
   sameSuggestKinds,
   suggestKindsOf,
   SUGGEST_FOLLOWUPS_INSTRUCTIONS,
+  resolvePersonaSpawn,
   withInstructionTrailers,
 } from "../src/personas.js";
 
@@ -233,6 +235,18 @@ const persona = { id: "p1", prompt: "PERSONA TEXT" };
   const just = withInstructionTrailers(persona, { suggestKinds: ["replies"] })!.prompt;
   assert.ok(just.includes(SUGGEST_REPLIES_FENCE) && !just.includes("suggest-prompts"), "an unpicked kind is not asked for");
   console.log("openui-trailer: kinds ok");
+}
+
+{
+  // The persona heads the spawn text, the rules sit beneath it, trailers after.
+  const rule = { content: "RULE TEXT" } as Rule;
+  const spawn = await resolvePersonaSpawn("t1", undefined, { suggestKinds: ["prompts"] }, [rule], { id: "p1", prompt: "PERSONA TEXT\n" });
+  assert.equal(spawn?.id, "p1");
+  const text = spawn!.prompt;
+  assert.ok(text.startsWith("PERSONA TEXT\n\nRULE TEXT"), "persona first, then the rules");
+  assert.ok(text.indexOf("suggest-prompts") > text.indexOf("RULE TEXT"), "trailers after both");
+  assert.equal((await resolvePersonaSpawn("t1", undefined, {}, [rule]))?.id, "rules", "no persona: the rules alone");
+  console.log("openui-trailer: persona ok");
 }
 
 console.log("openui-trailer.test.ts passed");

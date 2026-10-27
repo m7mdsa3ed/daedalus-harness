@@ -125,6 +125,7 @@ import { defaultVoice, useVoiceProviders, voiceFor } from "@/lib/queries/voice"
 import { endVoiceCall, startVoiceCall, useVoiceCallActive } from "@/lib/voice-call"
 import type { Actions } from "@/lib/actions"
 import { useComposerPrefs } from "@/lib/composer-prefs"
+import { useLayoutOptions } from "@/lib/layout-options"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
 import { consumeComposerFocusRequest, useComposerFocusRequest } from "@/lib/composer-focus"
 import { consumeComposerInsertRequest, useComposerInsertRequest } from "@/lib/composer-insert"
@@ -249,10 +250,12 @@ export const Composer = React.memo(function Composer({
       this component's own, so it is the same fact the scroll-to-end button
       draws. */
   collapsed?: boolean
-  /** The thread has started, so the box is the mini one by default — a line, a
-      send and the toggle — and the advanced form (every control, the scope row
-      and its readings) is a choice. False for a draft and the landing console,
-      which are what the first message is written in and draw the whole box. */
+  /** The thread has started, so the box may take its mini form — a line, a send
+      and the toggle — with the advanced form (every control, the scope row and
+      its readings) a choice behind the toggle. That form is drawn only while
+      the reader's own `miniComposer` is on; False for a draft and the landing
+      console, which are what the first message is written in and always draw
+      the whole box. */
   compact?: boolean
   /** Offer the voice call. Wherever it is offered, something has to draw the
       call card with it — a thread view at the transcript's foot, the landing
@@ -279,9 +282,9 @@ export const Composer = React.memo(function Composer({
   const onEditorOverflowChange = React.useCallback((overflowing: boolean) => {
     setEditorOverflows(overflowing)
   }, [])
-  /* Mini or advanced, for a started thread. Mini is the default and advanced is
-     the reader's choice, remembered per thread for as long as the page lives so
-     a tab switch does not fold a box they opened. Scrolling off the tail folds
+  /* Mini or advanced, for a started thread that has `miniComposer` on. The
+     toggle's pick is remembered per thread for as long as the page lives so a
+     tab switch does not fold a box they opened. Scrolling off the tail folds
      an advanced box back to mini (`collapsed`) and `revealed` is the reader
      asking for it again — the toggle, or words put in the box from outside it (a
      suggested follow-up, a queued row's Edit, an "Ask about this", the
@@ -293,7 +296,12 @@ export const Composer = React.memo(function Composer({
   React.useEffect(() => {
     if (!collapsed) setRevealed(false)
   }, [collapsed])
-  const mini = compact && (!advanced || (collapsed && !revealed))
+  /* The reader's own switch (Settings › Appearance › Layout › Mini composer),
+     off unless they turned it on: the mini form is a shape a thread can be
+     given, never one it is forced into. Read during render, so flipping it
+     moves a box already on screen rather than only the next thread mounted. */
+  const { miniComposer } = useLayoutOptions()
+  const mini = compact && miniComposer && (!advanced || (collapsed && !revealed))
   const toggleAdvanced = () => {
     const next = mini ? true : !advanced
     if (next) ADVANCED_THREADS.add(sessionId)
@@ -1068,7 +1076,22 @@ export const Composer = React.memo(function Composer({
         aria-hidden={away || undefined}
         inert={away || undefined}
         className={cn(
-          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-composer p-composer-pad",
+          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)]",
+          /* The box's two shapes, corner and inset together. The advanced form
+             is a card — tall and variable in height, its 2xl-derived corner
+             capped so it stays a lozenge, its padding derived from that corner
+             so the trailing key's curve shares its centre. The mini one is a
+             single line, so it is a capsule instead: the theme's own pill capped
+             at half a line's height. Its padding is two numbers because a
+             capsule's ends are all curve and its top and bottom are not — the
+             ends take the reading inset, where the card's 6px left the key
+             hugging the sweep, and the top and bottom keep that 6px so a
+             one-line box still reads as a pill. The editor gives up its own
+             `px-2` inside one, below, so the first glyph and the key's outer
+             edge sit at the same distance from the edge. */
+          mini
+            ? "rounded-composer-mini px-composer-pad-mini py-composer-pad-mini-y"
+            : "rounded-composer p-composer-pad",
           /* The morph: clipped down to the pill's box (`--composer-pill` square,
              bottom right) while away. Open is a negative inset, not `none`, so the
              two shapes interpolate. A
@@ -1109,7 +1132,12 @@ export const Composer = React.memo(function Composer({
         }}
       >
         {dragging && (
-          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-composer border-2 border-dashed border-primary bg-composer-glass text-sm font-medium text-primary">
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-0 z-20 grid place-items-center border-2 border-dashed border-primary bg-composer-glass text-sm font-medium text-primary",
+              mini ? "rounded-composer-mini" : "rounded-composer"
+            )}
+          >
             Drop to attach
           </div>
         )}
@@ -1184,9 +1212,18 @@ export const Composer = React.memo(function Composer({
             !mini && (coarse ? "pr-8" : "pr-6"),
             /* Keep the compact default, with more room available on demand. */
             expanded ? "max-h-[min(50vh,32rem)]" : mini ? "max-h-24" : "max-h-40",
-            /* Roomier under a thumb: the caret row leading its 32px buttons
-               is how the row stays visually centred while the targets grow. */
-            coarse && "[&_.tiptap]:min-h-11"
+            /* The card's roomier line under a thumb. In the capsule it is the
+               token's business instead — `--composer-mini-line` is restated
+               where the pointer is coarse — so the two never claim the same
+               `min-h`, which would leave the winner to stylesheet order. */
+            coarse && !mini && "[&_.tiptap]:min-h-11",
+            /* In the capsule the editor takes the box's own line and end inset:
+               its `min-h-9`/`min-h-11` are the card's numbers, and its `px-2`
+               on top of `--spacing-composer-pad-mini` would put the first glyph
+               8px further in than the key sits from the other edge. Reading the
+               one token here is what keeps the box exactly as tall as
+               `--radius-composer-mini` assumes, at both pointers. */
+            mini && "[&_.tiptap]:min-h-(--composer-mini-line) [&_.tiptap]:px-0"
           )}
         />
         {/* One control language across the row: every icon button is the
@@ -1200,13 +1237,15 @@ export const Composer = React.memo(function Composer({
              making any of them easier to hit — the glyphs are the same size
              either way, so all the extra gap bought was air. Only the row's
              own height grows, which is what keeps the box clear of the thumb. */
-          /* Mini: the row is as tall as the editor's one line (`min-h-9`, 11 on
-             touch) and centres its buttons in it, so they sit on the text's
-             line rather than hanging off the bottom of the box. */
+          /* Mini: the row is as tall as the editor's line — the same
+             `--composer-mini-line` token the capsule's radius is halved out of,
+             so the two cannot disagree about how tall one line is — and centres
+             its buttons in it, so they sit on the text's line rather than
+             hanging off the bottom of the box. */
           className={cn(
             "flex items-center gap-1 pt-1",
             coarse && "pt-2",
-            mini && cn("shrink-0 self-end pt-0", coarse ? "min-h-11" : "min-h-9")
+            mini && "shrink-0 self-center pt-0 min-h-(--composer-mini-line)"
           )}
         >
           {!mini && (
@@ -1383,7 +1422,7 @@ export const Composer = React.memo(function Composer({
               {thread.paused ? <Play className={KEY_MARK} /> : <Pause className={KEY_MARK} />}
             </Button>
           )}
-          {compact && (
+          {compact && miniComposer && (
             <Button
               variant="ghost"
               size={iconSize}

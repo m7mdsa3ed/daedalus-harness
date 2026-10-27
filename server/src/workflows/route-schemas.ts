@@ -72,6 +72,8 @@ export const RunSavedBody = z.object({
   sessionId: z.string().min(1).optional(),
 });
 
+/** The one-step body both an ask and a subagent share. `agent`/`profile` absent
+    means the caller's own pair (a subagent); naming either makes it an ask. */
 export const AskBody = z.object({
   profile: z.string().min(1).optional(),
   agent: z.string().min(1).optional(),
@@ -79,11 +81,25 @@ export const AskBody = z.object({
   description: z.string().min(1).max(120).optional(),
   projectId: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  /** A helper role (`model-roles.md`), resolved on the server for the caller's
+      own pair. Only meaningful with no `agent`/`profile`: the map names models
+      in the caller's catalog. */
+  role: z.string().min(1).max(80).optional(),
   effort: z.string().min(1).optional(),
   timeoutSec: z.number().int().positive().optional(),
 });
 
 export const ContinueBody = z.object({ prompt: z.string().max(20_000).optional() });
+
+/** `POST …/steps`: one prompt handed to a worker. With no `agent`/`profile` it
+    runs on the caller's own pair — a subagent; with them, on that pair — an ask.
+    One shape, because it is one tool (`agent`) and one engine path. */
+export const StepBody = AskBody;
+
+/** A model role to resolve on the server (`model-roles.ts`): the role map names
+    models in *the caller's* catalog, so a role is only meaningful on its own
+    pair. Validated in the handler, where the thread is known. */
+export const RoleBody = z.object({ role: z.string().min(1).max(80).optional() });
 
 export const AskChoiceBody = z.object({
   agentId: z.string().min(1),

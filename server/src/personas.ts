@@ -7,12 +7,10 @@ import { globalRules, projectRules, type Rule } from "./rules.js";
 import type { TaskBrief } from "./task-threads.js";
 
 /**
- * The spawn-instruction doors. Personas are gone (they became slash commands,
- * `legacy-prompts.ts`), but the machinery that carried a persona into each
- * runtime still carries the standing rules (rules.ts) and the thread's trailers
- * below — hence the historical `persona` names (`AgentDef.personaVia`,
- * `{personaPrompt}`, `{personaFile}`, `PersonaSpawn`), kept so no column,
- * template or user's agent row has to change.
+ * The spawn-instruction doors. They carry the thread's persona (`personas`
+ * table, `sessions.persona_id`), the standing rules beneath it (rules.ts) and
+ * the thread's trailers below — one text, through whichever door the runtime
+ * opens (`AgentDef.personaVia`, `{personaPrompt}`, `{personaFile}`).
  *
  *   - claude-agent-acp and the daedalus agent read AIR's
  *     `_meta.jetbrains.air.customInstructions` on every `session/new`, load and
@@ -57,9 +55,14 @@ export async function resolvePersonaSpawn(
       into the same instruction text below. See `withInstructionTrailers`. */
   behaviour: ThreadBehaviour = {},
   rules?: Rule[],
+  /** The thread's persona row, resolved by the caller; absent = none. */
+  persona?: { id: string; prompt: string } | null,
 ): Promise<PersonaSpawn | undefined> {
-  const rulesText = rules?.length ? rules.map((r) => r.content).join("\n\n") : undefined;
-  const base: PersonaSpawn | undefined = rulesText ? { id: "rules", prompt: rulesText } : undefined;
+  // The persona first, the rules beneath it: who to be, then the standing rules.
+  const parts = [persona?.prompt.trim(), ...(rules ?? []).map((r) => r.content)].filter(Boolean);
+  const base: PersonaSpawn | undefined = parts.length
+    ? { id: persona ? persona.id : "rules", prompt: parts.join("\n\n") }
+    : undefined;
   // Folded here rather than at the call site so the file below holds the same
   // text the inline doors carry — an agent that reads instructions off disk
   // must see the trailer too.

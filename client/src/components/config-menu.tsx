@@ -25,6 +25,7 @@ import { DEFAULT_UI_GROUPS, normalizeUiGroups, UI_GROUPS } from "@/lib/openui/gr
 import type { ModelOption, ModelRole } from "@/lib/settings"
 import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
+import { usePersonas } from "@/lib/queries/catalog"
 import { EffortMeter, ModeIcon } from "@/components/composer/option-icons"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -434,6 +435,32 @@ function UiGroupsSub({
  * with the value skeletoned, which is the same bargain the project page's tiles
  * make: a shape that is waiting, never a zero.
  */
+const NO_PERSONA = "__none__"
+
+/** The thread's persona (Settings › Personas), one of the library or none.
+    Draws nothing while the library is empty and none is picked. */
+export function PersonaRow({
+  value,
+  onSelect,
+}: {
+  value: string | null | undefined
+  onSelect: (personaId: string | null) => void
+}) {
+  const personas = usePersonas()
+  if (personas.length === 0 && !value) return null
+  return (
+    <MenuRow
+      label="Persona"
+      value={value || NO_PERSONA}
+      choices={[
+        { value: NO_PERSONA, name: "None" },
+        ...personas.map((p) => ({ value: p.id, name: p.name, ...(p.description ? { details: [p.description] } : {}) })),
+      ]}
+      onSelect={(picked) => onSelect(picked === NO_PERSONA ? null : picked)}
+    />
+  )
+}
+
 export function MenuRowSkeleton({ label }: { label: string }) {
   return (
     <DropdownMenuItem disabled>

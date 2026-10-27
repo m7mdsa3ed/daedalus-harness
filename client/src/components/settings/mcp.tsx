@@ -91,7 +91,7 @@ import { captureError, inlineFromQuery, reportError, type InlineError } from "@/
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
 
-type BuiltinKind = "web-search" | "knowledge" | "workflow" | "agents" | "harness"
+type BuiltinKind = "web-search" | "knowledge" | "agents" | "harness"
 
 /* `hint` is the sentence the Add menu needs to make a choice; `detail` is the
    phrase the list needs to identify a row already there. */
@@ -103,8 +103,7 @@ const BUILTINS: {
 }[] = [
   { kind: "web-search", label: "Web search", detail: "web search + fetch", hint: "The harness's web search + fetch tools, on the backend in Settings › Web search" },
   { kind: "knowledge", label: "Knowledge base", detail: "per-project knowledge base", hint: "A per-project knowledge base the agent can read and write" },
-  { kind: "workflow", label: "Workflows", detail: "multi-step workflows", hint: "Run multi-step workflows: each step is a real thread, mirrored into the calling thread as a subagent" },
-  { kind: "agents", label: "Ask agents", detail: "ask other profiles and agents", hint: "Let the agent hand a task to another profile and agent pair (Codex, Claude Code, Daedalus), drawn as a subagent" },
+  { kind: "agents", label: "Agents", detail: "agents and workflows", hint: "Let the agent hand work to another worker: a subagent on its own model, another profile and agent pair (Codex, Claude Code, Daedalus), or a multi-step workflow — each drawn as a subagent in the calling thread" },
   { kind: "harness", label: "Harness", detail: "manage the harness", hint: "Let the agent manage the harness itself — read and write tasks on the board, list projects, and add profiles" },
 ]
 

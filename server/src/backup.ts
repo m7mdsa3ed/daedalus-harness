@@ -14,6 +14,7 @@ import {
   mcpOauth as mcpOauthTable,
   mcpServers as mcpServersTable,
   modelPrompts as modelPromptsTable,
+  personas as personasTable,
   notifications as notificationsTable,
   composerHistory as composerHistoryTable,
   profiles as profilesTable,
@@ -136,6 +137,11 @@ const AgentRow = z.object({
      this agent through, and every thread's persona would silently do nothing. */
   personaVia: z.enum(["acp-meta", "air-meta", "env"]).nullish(),
   sharedProcess: z.enum(["acp-meta"]).nullish(),
+  /* Carried for the same reason as the three above: a restored row keeps its
+     `seededVersion`, so nothing would backfill the built-in server its runtime
+     cannot do without, and every thread of it would silently lose the ability
+     to delegate. */
+  requiredMcp: z.array(str).nullish(),
   seededVersion: int.default(0),
 });
 
@@ -206,6 +212,10 @@ const McpServerRow = z.object({
   type: z.enum(["http", "stdio", "builtin"]),
   name: str,
   logoUrl: optStr,
+  /* `workflow` is accepted and then dropped on import: the row was retired when
+     its three tools moved under the `agents` server, so a bundle written before
+     that carries a library entry this install can no longer have. Reading it is
+     the difference between an old backup restoring and an old backup failing. */
   builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness"]).nullish(),
   /** Absent in a bundle written before OAuth existed, which read as "none". */
   auth: z.enum(["none", "oauth"]).default("none"),
@@ -261,7 +271,8 @@ const PromptRow = z.object({
   sortOrder: int.default(0),
 });
 
-/* The older shape (`personas`), accepted the same way. */
+/* Personas: exported and imported whole. A bundle from before personas came
+   back carries the same rows under the same key. */
 const PersonaRow = z.object({
   id: str.min(1),
   name: str,
@@ -314,6 +325,8 @@ const ProjectDefaultsRow = z.object({
   /* Absent or null in a bundle from before the groups existed: the legacy
      switch decides (off = none, otherwise every group). */
   uiGroups: z.array(str).nullish(),
+  /** Absent in a bundle from before personas came back: none. */
+  personaId: str.default(""),
   /** A provider this install lacks is harmless: voiceSetup falls through. */
   voiceProvider: str.default(""),
   /** Absent in a bundle from before it: ask each time, as every thread did. */
@@ -447,6 +460,8 @@ const SessionRow = z.object({
   uiBlocks: z.boolean().optional(),
   /* The group set, empty = off. Absent or null: the legacy switch decides. */
   uiGroups: z.array(str).nullish(),
+  /* Absent in a bundle from before personas came back: none. */
+  personaId: optStr,
   /* The thread's role → model assignment (`docs/model-roles.md`). Absent in a
      bundle written before the column existed, which reads as no helpers. */
   helperModels: z.array(z.object({ role: str, model: str })).default([]),
@@ -875,9 +890,9 @@ export const BundleSchema = z.object({
   mcpOauth: z.array(McpOauthRow).default([]),
   skills: z.array(SkillRow).default([]),
   commands: z.array(CommandRow).default([]),
-  /** Legacy keys (bundles written before slash commands took their place). */
+  /** Legacy key (bundles written while saved prompts existed). */
   prompts: z.array(PromptRow).optional(),
-  personas: z.array(PersonaRow).optional(),
+  personas: z.array(PersonaRow).default([]),
   modelPrompts: z.array(ModelPromptRow).default([]),
   spaces: z.array(SpaceRow).default([]),
   projects: z.array(ProjectRow).default([]),
@@ -973,6 +988,7 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
       : mcpOauthRows.map((r) => ({ ...r, accessToken: "", refreshToken: "", clientSecret: "" })),
     skills: await db.select().from(skillsTable),
     commands: await db.select().from(commandsTable),
+    personas: await db.select().from(personasTable),
     modelPrompts: await db.select().from(modelPromptsTable),
     spaces: await db.select().from(spacesTable),
     projects: (await db.select().from(projectsTable)).map((row) => ({
@@ -1038,7 +1054,7 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
 export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
-  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "modelPrompts" | "spaces" | "projects" | "projectHelpers" | "knowledge" | "settings"
+  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "modelPrompts" | "spaces" | "projects" | "projectHelpers" | "knowledge" | "settings"
   | "rules" | "modelRoles" | "themes" | "voiceProviders" | "sessions" | "queue" | "scheduled" | "wfRuns" | "wfEvents" | "wfSaved" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "boardLists" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
@@ -1155,7 +1171,7 @@ function foldLegacyScheduled(bundle: Bundle, summary: ImportSummary): void {
  */
 export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<ImportSummary> {
   const summary: ImportSummary = {
-    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, modelPrompts: 0, spaces: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
+    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, modelPrompts: 0, spaces: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
     rules: 0, modelRoles: 0, themes: 0, voiceProviders: 0, sessions: 0, queue: 0, scheduled: 0, wfRuns: 0, wfEvents: 0, wfSaved: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, boardLists: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
@@ -1181,7 +1197,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
         // `mcp_oauth` cascades off `mcp_servers`, and is named here anyway so
         // the list reads as the whole of what `replace` empties.
         sessionsTable, profilesTable, spacesTable, projectsTable, mcpOauthTable, mcpServersTable, skillsTable, commandsTable,
-        modelPromptsTable,
+        personasTable, modelPromptsTable,
         // A root of its own: its triggers, runs and links all cascade from it.
         routinesTable,
         // The saved-workflow library is a root; runs and their events cascade off sessions.
@@ -1223,9 +1239,10 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
       tx,
       mcpServersTable,
       "id",
-      bundle.mcpServers.map((s) => {
+      bundle.mcpServers.flatMap((s) => {
+        if (s.builtin === "workflow") return [];
         const was = existingMcp.get(s.id);
-        return {
+        return [{
           ...s,
           builtin: s.builtin ?? null,
           url: s.url ?? null,
@@ -1233,7 +1250,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
           args: s.args ?? null,
           headers: keepPairs(s.headers, was?.headers),
           env: keepPairs(s.env, was?.env),
-        };
+        }];
       }),
     );
     summary.mcpServers = bundle.mcpServers.length;
@@ -1268,9 +1285,9 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
 
     upsertChunked(tx, skillsTable, "id", bundle.skills);
     summary.skills = bundle.skills.length;
-    /* A legacy prompt arrives as a command; a name another command holds (here
-       or in the bundle) is suffixed, not refused. */
-    const legacy = [...(bundle.prompts ?? []), ...(bundle.personas ?? [])];
+    /* A legacy saved prompt arrives as a command; a name another command holds
+       (here or in the bundle) is suffixed, not refused. */
+    const legacy = bundle.prompts ?? [];
     const ids = new Set([...bundle.commands, ...legacy].map((c) => c.id));
     const usedNames = new Set(
       [
@@ -1284,6 +1301,8 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
     ];
     await upsertChunked(tx, commandsTable, "id", commandRows);
     summary.commands = commandRows.length;
+    await upsertChunked(tx, personasTable, "id", bundle.personas.map((p) => ({ ...p, thinking: p.thinking ?? null, effort: p.effort ?? null })));
+    summary.personas = bundle.personas.length;
     upsertChunked(tx, modelPromptsTable, "id", bundle.modelPrompts.map((r) => ({ ...r })));
     summary.modelPrompts = bundle.modelPrompts.length;
     /* Spaces before projects: a project names one, and the running install may
@@ -1404,6 +1423,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
           ...columns,
           modeId: columns.modeId ?? null,
           uiGroups: columns.uiGroups ?? (columns.uiBlocks === false ? [] : null),
+          personaId: columns.personaId ?? null,
           acpSessionId: columns.acpSessionId ?? null,
           deletedAt: columns.deletedAt ?? null,
           pinnedAt: columns.pinnedAt ?? null,

@@ -195,6 +195,11 @@ export interface LayoutOptions {
       silent. This is the switch `answersOnly` deliberately does not cover: a
       `!` line is the reader's own act, not the agent's work. */
   showShellCommands: boolean
+  /** After a thread's first message, fold the composer to its one-line mini
+   *  form, with the toggle that opens the advanced one. Off — the default — a
+   *  started thread keeps the full box: no mini form, and nothing that folds
+   *  it. The reverse of the switch it replaces, which was not a choice. */
+  miniComposer: boolean
   /** Tighter vertical rhythm in the transcript. */
   compactDensity: boolean
   /** Pin to the newest content while the agent is streaming. */
@@ -348,6 +353,7 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   groupShellCommands: false,
   expandShellCommands: false,
   showShellCommands: true,
+  miniComposer: false,
   compactDensity: false,
   autoScroll: true,
   showThinking: true,

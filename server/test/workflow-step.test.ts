@@ -67,6 +67,8 @@ type Behaviour = {
   /** The thread already exists with a turn still open (a resume at boot). */
   openTurn?: boolean;
   recovered?: { sessionId: string; attempt: number } | null;
+  /** A child an earlier RUN left for this call (`StepContext.resume`). */
+  resume?: { sessionId: string; attempt: number } | null;
   profileId?: string;
   onRestart?: "resume" | "rerun" | "fail";
   cancelReason?: () => string | null;
@@ -147,6 +149,7 @@ function rig(b: Behaviour = {}): Rig {
     defaultTimeoutSec: 5,
     defaultOnRestart: b.onRestart ?? "resume",
     recovered: b.recovered ?? null,
+    ...(b.resume ? { resume: b.resume } : {}),
     placement: () => ({ index: 0, total: 1, phase: null, plan: [], title: "Step", titles: {} }),
     whenRunning: async () => undefined,
     timer: (ms, fn) => {
@@ -181,6 +184,34 @@ await test("R1: step_started is journaled with a minted id BEFORE manager.create
   assert.equal(r.created[0]!.id, started.sessionId);
   assert.equal(r.journal.filter((j) => j.payload.kind === "step_started").length, 1, "not journaled twice for the first attempt");
   assert.equal(kinds(r).at(-1), "step_completed");
+});
+
+await test("a step continued from an earlier RUN revives that thread and says 'continue', not the whole brief", async () => {
+  /* The gap `agent_message` on a multi-step run had: replay serves the calls
+     that completed, and this one — failed or stopped last time — must pick up
+     its own conversation rather than begin again in a fresh thread. */
+  const r = rig({
+    recovered: null,
+    resume: { sessionId: "child-1", attempt: 1 },
+    onPrompt: ({ emit, settle }) => (emit(text("finished it")), emit(ended), settle()),
+  });
+  const out = await runAgentStep(r.ctx, spec, "k#0", "s");
+  assert.equal(out.output, "finished it");
+  assert.equal(r.log.includes("create"), false, "no fresh thread is spawned");
+  assert.ok(r.log.some((l) => l.startsWith("prompt:")), "the existing thread is prompted");
+  assert.equal(r.prompts.length, 1);
+  assert.doesNotMatch(r.prompts[0]!, /^do it$/, "the first attempt's brief is not re-sent as a new task");
+  assert.match(r.prompts[0]!, /Continue where you left off/);
+  assert.equal(r.journal.filter((j) => j.payload.kind === "step_started").length, 1, "the attempt is journaled against the revived thread");
+});
+
+await test("a step resumed from an earlier run whose thread is gone starts over rather than failing the run", async () => {
+  /* A child deleted between the two runs: the continue must still make progress,
+     which is the bargain a restart's `resume` policy already makes. */
+  const r = rig({ resume: { sessionId: "gone", attempt: 1 }, onPrompt: ({ emit, settle }) => (emit(text("fresh")), emit(ended), settle()) });
+  const out = await runAgentStep(r.ctx, spec, "k#0", "s");
+  assert.equal(out.output, "fresh");
+  assert.ok(r.log.includes("create"), "it falls back to a new thread");
 });
 
 await test("R2: a resumed child whose turn is still open is cancelled and awaited before the prompt", async () => {

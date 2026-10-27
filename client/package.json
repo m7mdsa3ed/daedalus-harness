@@ -16,7 +16,8 @@
     "electron:dist": "pnpm build && node scripts/electron-dist.mjs",
     "electron:dist:win": "pnpm build && node scripts/electron-dist.mjs --win",
     "icons": "node scripts/render-icons.mjs",
-    "test": "tsc -b",
+    "test": "tsc -b && pnpm test:subagents",
+    "test:subagents": "pnpm exec tsx src/lib/tools/subagents.check.mjs",
     "openui": "node scripts/gen-openui.mjs",
     "openui:check": "node scripts/gen-openui.mjs --check"
   },

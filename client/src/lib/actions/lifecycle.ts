@@ -73,7 +73,7 @@ export function lifecycleActions(core: ActionsCore) {
       dispatch({ type: "hide-session", id: sessionId, hiddenAt })
     },
 
-    /** Choose which profile and model this thread's `ask_agent` uses per
+    /** Choose which profile and model this thread's `agent` tool uses per
      * agent. Read by the server at ask time, so it is not a spawn input and
      * never stages: the answer moves the store, the way a pin does. */
     async setAskProfiles(sessionId: string, askProfiles: AskProfiles) {

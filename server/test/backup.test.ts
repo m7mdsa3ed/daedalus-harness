@@ -14,6 +14,7 @@ import {
   db,
   knowledge as knowledgeTable,
   mcpServers as mcpServersTable,
+  personas as personasTable,
   
   profiles as profilesTable,
   projectSpaces as projectSpacesTable,
@@ -46,7 +47,7 @@ async function test(name: string, fn: () => void | Promise<void>) {
 }
 
 async function wipe() {
-  for (const table of [sessionsTable, profilesTable, projectsTable, spacesTable, mcpServersTable, skillsTable, commandsTable, routinesTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
+  for (const table of [sessionsTable, profilesTable, projectsTable, spacesTable, mcpServersTable, skillsTable, commandsTable, personasTable, routinesTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
     await db.delete(table);
   }
 }
@@ -84,6 +85,7 @@ async function seed() {
     defaultSuggestKinds: [],
     defaultUiBlocks: false,
     defaultUiGroups: ["layout", "numbers"],
+    defaultPersonaId: "persona1",
     defaultAskProfiles: { fake: { profileId: "p1", model: "m1" } },
   });
   /* One project in two spaces: the join table is what the bundle has to carry. */
@@ -159,7 +161,7 @@ await test("a full export round-trips through the schema", async () => {
   assert.ok(!("mcpServerIds" in (bundle.profiles[0] as object)));
   assert.equal(bundle.events.length, 2);
   assert.equal(bundle.queue.length, 1);
-  assert.ok(!("prompts" in bundle) && !("personas" in bundle), "the legacy keys are never exported");
+  assert.ok(!("prompts" in bundle), "the legacy key is never exported");
   /* A model's `group` and `iconUrl` are the user's own writing, like the price
      beside them — a bundle that did not carry them would hand back a restored
      profile whose picker headings were silently gone. */
@@ -167,20 +169,23 @@ await test("a full export round-trips through the schema", async () => {
   assert.equal(bundle.profiles[0]!.models[0]!.iconUrl, "https://models.dev/logos/gw.svg");
 });
 
-await test("a legacy bundle's prompts and personas import as slash commands with slugged names", async () => {
+await test("a legacy bundle's prompts import as slash commands with slugged names; personas stay personas", async () => {
   await seed();
   const bundle = JSON.parse(JSON.stringify(await exportBundle({ includeSecrets: true, includeJournals: true })));
-  bundle.commands = [];
-  bundle.prompts = [{ id: "pc", name: "terse", description: "", prompt: "C" }];
-  bundle.personas = [
-    { id: "pa", name: "Think more!", prompt: "A", thinking: 0, effort: "low" },
-    { id: "pb", name: "think more", prompt: "B" },
+  bundle.commands = [{ id: "cx", name: "think-more", description: "d", content: "X" }];
+  bundle.prompts = [
+    { id: "pc", name: "terse", description: "", prompt: "C" },
+    { id: "pd", name: "Think more!", description: "", prompt: "D" },
   ];
+  bundle.personas = [{ id: "pa", name: "Think more", prompt: "A", thinking: 0, effort: "low" }];
   await wipe();
-  await importBundle(BundleSchema.parse(bundle), "replace");
+  const summary = await importBundle(BundleSchema.parse(bundle), "replace");
   const rows = await db.select().from(commandsTable);
-  assert.deepEqual(rows.map((r) => [r.id, r.name]).sort(), [["pa", "think-more"], ["pb", "think-more-2"], ["pc", "terse"]]);
+  assert.deepEqual(rows.map((r) => [r.id, r.name]).sort(), [["cx", "think-more"], ["pc", "terse"], ["pd", "think-more-2"]]);
   assert.equal(rows.find((r) => r.id === "pc")!.content, "C");
+  assert.equal(summary.personas, 1);
+  const personaRows = await db.select().from(personasTable);
+  assert.deepEqual(personaRows.map((r) => [r.id, r.name, r.prompt]), [["pa", "Think more", "A"]]);
 });
 
 await test("a routine round-trips with its triggers, runs and links", async () => {
@@ -334,6 +339,7 @@ await test("a project's start defaults survive export and import", async () => {
     commandIds: ["c1"],
     suggestKinds: [],
     uiGroups: ["layout", "numbers"],
+    personaId: "persona1",
     voiceProvider: "",
     askProfiles: { fake: { profileId: "p1", model: "m1" } },
   });
@@ -354,6 +360,7 @@ await test("a project's start defaults survive export and import", async () => {
   assert.deepEqual(round.defaultMcpServerIds, ["m1"]);
   assert.deepEqual(round.defaultSuggestKinds, []);
   assert.deepEqual(round.defaultUiGroups, ["layout", "numbers"]);
+  assert.equal(round.defaultPersonaId, "persona1");
   assert.deepEqual(round.defaultAskProfiles, { fake: { profileId: "p1", model: "m1" } });
 
   // A bundle from before the set carried only the legacy switch: off is the empty set.

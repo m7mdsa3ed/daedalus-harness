@@ -1294,8 +1294,10 @@ export function ThreadView({
           voiceCall
           autoFocus={landing ? true : undefined}
           beforeSend={landing?.beforeSend}
-          /* Once the thread has started the box is the mini one by default
-             (`compact`), and the reader opens the advanced form with its toggle.
+          /* Once the thread has started the box *may* be the mini one
+             (`compact`), which is the reader's own switch (View options › Mini
+             composer, off by default); with it on, they open the advanced form
+             with its toggle, and off, the full box is simply the box.
              Scroll away from the tail and an advanced box folds back to mini:
              `follow.pinned` is false once a gesture has taken the reader away —
              the same state the scroll-to-end button draws — and reaching the

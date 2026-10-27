@@ -160,11 +160,15 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Subagents: the store is flat, the transcript is a tree.** Ownership is resolved in one
   place and lands as `parentId`; consumers reading `thread.items` must ignore `parentId`
   items where the thread's own are meant. OpenCode's children are read off the side of the
-  process, server-side — nothing downstream learns a fourth shape. The Daedalus agent's
-  `task` children have stable ids and saved conversation state: use `list_agents` to find a
-  child and `send_message` to follow up. A stopped or failed child resumes from its last
-  complete model/tool step; a running child rejects a message instead of racing. This resumes
-  the conversation, not an in-flight model request or unfinished tool call.
+  process, server-side — nothing downstream learns a fourth shape. Handing work on is one
+  tool, `agent`, and every call makes a run (`docs/mcp-and-workflows.md`): `agent_list` and
+  `agent_message` reach any run this thread started, a stopped or failed child resumes from
+  its last complete model/tool step, and a running one refuses a message instead of racing
+  (that resumes the conversation, not an in-flight model request or unfinished tool call).
+  The Daedalus agent's in-process `task` survives only standalone: a spawn says which of the
+  three worlds it is in (`DAEDALUS_AGENT_SUBAGENTS` — `harness`, `off`, or absent for
+  standalone), because a step child has no server either and inferring it hands that child a
+  `task` back and makes a tree of the one-level rule.
 - Agent stderr is spliced into errors on the way out; every route throw becomes the
   `{ error }` shape the client parses.
 
@@ -331,16 +335,29 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   and the "Turn finished" notification, which is withheld while a run is live.
 - **A run pauses as a state, never as a cancel-and-restart**, and its clocks stand still. A
   restart ends a paused run as it ends a running one.
-- **Asking another agent is the one door to another pair** (`builtin:agents`, `agents-mcp.ts`,
-  `WorkflowEngine.ask`): a **one-step run** whose step names its own profile and agent, so
-  the child, the mirroring, the cost and the cancel are the workflow's. Drawn as a plain
-  subagent — no workflow `_meta`, a `_meta.daedalus.ask` pair instead, so its row is named by
-  the `description` the caller gave it (else `agent · profile`) and wears the asked agent's
-  own mark and an `AskAgentChip` naming the pair, because it is the one worker in a
-  transcript that is not this thread's agent. The parent's model and mode ids never cross to another
-  pair — the child starts on its profile's default model and its runtime's default mode.
-  Offered to every runtime, Claude Code included (it rivals nothing), one level, and capped
-  apart from workflows. The asked agent sees only the brief.
+- **Handing work to another worker is ONE tool, `agent`, and every call makes a run**
+  (`builtin:agents`, `agents-mcp.ts`, which absorbed the `workflow` server's tools). What kind
+  of run comes from the arguments, never from which tool was picked: `prompt` alone is one
+  step on the thread's own pair (a **subagent**), `agent`/`profile` make that step another
+  pair's (an **ask**), and `steps`/`script`/`name` make a **workflow** — all through
+  `WorkflowEngine.launch`, so the id, the notification, the follow-up (`agent_message`), the
+  stop (`agent_control`) and the cap are one system. The schema is flat (no `oneOf`: some
+  providers reject unions), exactly one shape field is required and the handler says which
+  it got, and it is generated per thread — the workflow fields only where
+  `AgentDef.workflowsVia !== "native"`, `role` only when the vocabulary is non-empty.
+  **An ask** is unchanged underneath: `ask_profiles` outrank the model, a missing choice
+  raises the `askAgentPair` elicitation, the parent's model and mode ids never cross to
+  another pair, and its row wears an `AskAgentChip`. **An own-pair subagent** is a real child
+  thread (durable, openable, capped at `ENGINE_LIMITS.subagentsPerParent`) drawn as a plain
+  subagent — no `_meta` at all. One level, never a tree, offered to every runtime. A run still going
+  when the call returns reports back as a `<task-notification>`; `waitSec` is the only
+  waiting model and the model is told not to poll.
+- **The Daedalus agent always has that server** (`AgentDef.requiredMcp`, seeded
+  `["builtin:agents"]` for `daedalus`, null elsewhere): its only way to delegate is this
+  server, so `serversFor` folds `requiredMcp` into the thread's links before the library is
+  filtered and an unlink changes nothing — while one level still wins, so a child gets
+  neither the row nor the tool. The pickers draw those rows on and locked ("required by
+  <agent>"), reading the column rather than comparing ids.
 
 ## Client and UI → `docs/client.md`
 
@@ -457,8 +474,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   a link, a notification) — the tab in front *becomes* that place, in the same spot, and does nothing
   when it is already there (which is what makes switching tabs idempotent: the dock writes the
   focused tab's path to the URL and the URL writes it back); a pinned tab, or none, gets a new tab
-  instead. **`openTab(path)`** is a new tab, always — ⌘N, the sidebar's "New tab" row, the strip's +,
-  the palette — and opens on the **New tab page** (`/`, `landing/landing-page.tsx`): the composer to
+  instead. **`openTab(path)`** is a new tab, always — ⌘N, the sidebar's "New tab" row, the palette —
+  and the strip's + is the same thing said with its own strip (`openRoute("/", { group })`, the only
+  tab opener that names where it lands); all of them open on the **New tab page** (`/`,
+  `landing/landing-page.tsx`): the composer to
   start a thread in that tab, and quick actions (New thread, Tasks, Automations, Inbox,
   Settings, the first projects) that each navigate *that* tab. A thread started from a project's +
   or ⌘K's ask row mints a draft and opens it in a tab of its own (`startThread`, `openInNewTab`).
@@ -517,15 +536,28 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `--harness-composer-width`, so the whole unit breathes on every click in and out of the
   textarea, which is motion the reader did not ask for at the exact moment they are aiming
   at something.
-- **After the first message the composer is the mini one, and the advanced form is a toggle on it
-  — nothing is hidden behind a button of its own.** `ThreadView` hands `Composer` `compact`
-  (the thread is not empty), and the mini box is the editor, the toggle and Send on one line:
+- **After the first message the composer may be the mini one, and the advanced form is a toggle on
+  it — nothing is hidden behind a button of its own.** It is the reader's switch, `miniComposer`
+  in View options, **off by default**: a started thread keeps the full box until they ask for the
+  small one, and the switch is read during render so it moves a box already on screen.
+  `ThreadView` hands `Composer` `compact` (the thread is not empty), and the mini box is the editor, the toggle and Send on one line:
   the scope row, the add menu, the pickers and the readings come back with the toggle
   (remembered per thread for the life of the page, `ADVANCED_THREADS`). A draft and the landing
   console are the full box — the first message is written in it. `ThreadView` also hands it the
   scroller's own pin (`useFollowStream.pinned`) as `collapsed`: leaving the tail folds an advanced
   box back to mini, and **a fill re-opens it** (`revealed`), because a suggested follow-up, a
-  queued row's Edit or an "Ask about this" has to be seen. Only a voice call still takes the box
+  queued row's Edit or an "Ask about this" has to be seen. **The mini box is a capsule, the full
+  one is a card**: its corner is `--radius-composer-mini` (the theme's pill, half a line plus the
+  inset above and below) where the advanced form wears `--radius-composer` (the 2xl step capped at
+  1.5rem) — one line at the card's corner reads as a shrunken box, and the uncapped pill would turn
+  a box grown to four lines into a stadium — and both are stated through the theme's
+  `--app-radius-pill` so a Square theme stays square either way. **Its padding is a pair, not the
+  card's one number**, because its ends are all curve and its top and bottom are not:
+  `--spacing-composer-pad-mini` at the ends (12px — the smallest the sweep allows at a finger's
+  radius, and the shelf's own column) against `--spacing-composer-pad-mini-y` above and below
+  (the card's 6px), with the editor dropping its own `px-2` inside one. **One token is the line**
+  (`--composer-mini-line`, restated under a coarse pointer) and the editor, the toolbar and the
+  radius all read it, so the box cannot be measured for one height and drawn for another. Only a voice call still takes the box
   away (the `composer-pill`, a clip-path morph that keeps the height it reserves,
   `--composer-dock-h`). A composer that collapsed *itself* — on a narrow panel or a short window —
   was tried and removed: it took the box away from someone who was typing, on no gesture at all.
@@ -807,7 +839,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   sidebar toggle's cluster and that group's tabs are one row whenever a group joins the band, so
   a pill of `--background` at 24px next to a rounded rectangle of `--composer` at 32px is two
   bars pretending to be one. **There is no ⋯ menu**, and **the header holds one control** —
-  the sidebar toggle. Opening a thread or a panel is the strip's +; what the app can search and
+  the sidebar toggle. The strip's + opens a tab and nothing else (**no menu behind it** — a +
+  that asks "open what?" is a second face for the panel rows); what the app can search and
   which notifications have arrived are rows in the sidebar, which is where a place you go is
   named, and **how transcripts are drawn is Settings › Appearance › Transcript**
   (`ViewSettings`, ⌥V goes there). The space switch is the sidebar footer's icon, not a header chip. The header is the band the *tabs* join, so what stands in it

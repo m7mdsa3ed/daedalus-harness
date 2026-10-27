@@ -306,6 +306,8 @@ export interface StagedConfig {
   /** Which component groups the drawn-answers lane teaches (`UI_GROUP_IDS`);
       empty = the lane is off. */
   uiGroups?: string[];
+  /** The thread's persona; null = none. Spawn text, so taking it costs a respawn. */
+  personaId?: string | null;
   /** The thread's role → model assignment (`sessions.helper_models`). Spawn-time
       like model and effort: taking it costs a respawn. */
   helperModels?: { role: string; model: string }[];
@@ -1354,6 +1356,8 @@ export type ThreadEvent =
       effort: string;
       suggestKinds?: string[];
       uiGroups?: string[];
+      /** The thread's persona, absolute; null = none. */
+      personaId?: string | null;
       /** The thread's helper models, absolute — the row's, so a menu draws the
           answer rather than the request. */
       helperModels?: { role: string; model: string }[];

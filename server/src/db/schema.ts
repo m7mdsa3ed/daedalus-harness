@@ -320,6 +320,9 @@ export const agents = pgTable("agents", {
   /** Where this runtime reads harness-projected skills, commands and the model
       allowlist from, inside the project's cwd. Null = nothing is projected. */
   workspaceLayout: jsonb("workspace_layout").$type<WorkspaceLayout>(),
+  /** Built-in library rows this runtime's threads always receive, whatever the
+      links say (`AgentDef.requiredMcp`). Null = none are forced. */
+  requiredMcp: jsonb("required_mcp").$type<string[]>(),
   /** The runtime's own tools a harness MCP server replaces, and how to switch
       them off. Null = its built-ins stay on beside ours. */
   builtinTools: jsonb("builtin_tools").$type<BuiltinToolOverrides>(),
@@ -633,6 +636,8 @@ export const projects = pgTable("projects", {
       `personas.ts`). Empty = drawn answers off. Null = never picked: the
       legacy boolean decides, and "on" is every group. */
   defaultUiGroups: jsonb("default_ui_groups").$type<string[]>(),
+  /** The persona a new thread here starts under; null for none, like `sessions.persona_id`. */
+  defaultPersonaId: text("default_persona_id"),
   /** Which voice backend a call on a thread in this project uses (`voice.ts`);
       the first scope asked. Null = no say, the profile's then the default. */
   defaultVoiceProvider: text("default_voice_provider"),
@@ -644,7 +649,7 @@ export const projects = pgTable("projects", {
     row stores no command, env or credentials — those are synthesized at spawn
     (`sessions.ts`: config.json's search backend, the project's id) so a config
     edit is live and a token is never cached in a row. */
-export type BuiltinMcp = "web-search" | "knowledge" | "workflow" | "agents" | "harness";
+export type BuiltinMcp = "web-search" | "knowledge" | "agents" | "harness";
 
 export const mcpServers = pgTable("mcp_servers", {
   id: text("id").primaryKey(),
@@ -653,7 +658,7 @@ export const mcpServers = pgTable("mcp_servers", {
   /** Optional registry-provided logo for the library list. */
   logoUrl: text("logo_url"),
   // builtin
-  builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow", "agents", "harness"] }).$type<BuiltinMcp>(),
+  builtin: text("builtin", { enum: ["web-search", "knowledge", "agents", "harness"] }).$type<BuiltinMcp>(),
   // http
   url: text("url"),
   headers: jsonb("headers").$type<NameValue[]>(),
@@ -758,15 +763,19 @@ export const commands = pgTable("commands", {
 });
 
 /**
- * LEGACY — the old personas. Kept declared only so `db:push` does not drop the
- * table: the boot migration (`legacy-prompts.ts`) copies every row into `commands`
- * once. Nothing else reads or writes it.
+ * A persona: instruction text a thread runs under, placed above the rules in
+ * the spawn instructions (`personas.ts`) — so it reaches every runtime through
+ * the same door, appended to the agent's own prompt rather than replacing it.
+ * One per thread (`sessions.persona_id`), picked like the model. Commands are
+ * the per-turn half; this is the whole-thread one.
  */
 export const personas = pgTable("personas", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   prompt: text("prompt").notNull(),
+  /** LEGACY: dials from the first personas, never read — model and effort are
+      the profile's. Declared so a push does not drop them. */
   thinking: integer("thinking"),
   effort: text("effort"),
   seededVersion: integer("seeded_version").notNull().default(0),
@@ -1048,6 +1057,10 @@ export const sessions = pgTable(
         fence whatever this says — and is a spawn input: a change costs a
         respawn. */
     uiGroups: jsonb("ui_groups").$type<string[]>(),
+    /** The persona this thread runs under (`personas`), or null for none. Not a
+        foreign key: a deleted persona reads as none on the next spawn, which is
+        what it is. Spawn text like `ui_groups`, so a change costs a respawn. */
+    personaId: text("persona_id"),
     title: text("title").notNull(),
     /** The git worktree this thread runs in, project-relative
         (`.daedalus/worktrees/<short-id>`), or null for a thread in the

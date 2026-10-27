@@ -81,7 +81,16 @@ export function buildTools(rt: ToolRuntime, opts: BuildToolsOptions = {}): Built
   if (rt.clientCaps?.elicitation?.form && !opts.subagent) {
     tools.ask_user = makeAskUserTool(rt);
   }
-  if (!opts.subagent && !planOnly) {
+  /* How this process delegates (`AgentEnv.subagents`, from the spawn):
+     - `"harness"`: the `agents` MCP server does it, and these three lose to it —
+       its children are real threads (openable, restart-durable, counted, visible
+       to the inbox) where this loop's are not, and keeping both puts back the
+       two-`list_agents` problem the one-tool design removes.
+     - `"off"`: a step or an ask's child. One level, never a tree, so neither.
+     - `"local"`: standalone — the in-process loop is all the agent has.
+     A subagent loop is always `off`: its own children would be a tree too. */
+  const delegate = !opts.subagent && !planOnly && rt.env.subagents === "local";
+  if (delegate) {
     tools.task = makeTaskTool(rt);
     Object.assign(tools, makeAgentMessageTools(rt));
   }

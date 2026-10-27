@@ -214,7 +214,7 @@ export interface State {
 
 /** Whether work may still be in flight for the subagent readings (rows, the
     agents count, the inspector): a turn open, or background work the server
-    says outlived it — an `ask_agent` or workflow run keeps streaming its
+    says outlived it — an `agent` run keeps streaming its
     child's events after the turn that launched it ended. Not `turnActive`'s
     replacement: Stop, the queue and the turn footers stay the turn's. */
 export const workLive = (thread: Pick<ThreadState, "turnActive" | "background">): boolean =>

@@ -2,7 +2,7 @@
    says whose work an update is. */
 import type { ToolItem } from "../store"
 import { asRecord, str, tagText, vendorMeta } from "./helpers"
-import { isOneOf } from "./naming"
+import { isOneOf, parseMcpToolName, toolIdentity } from "./naming"
 
 /**
  * Work handed to another agent. All three runtimes have one and none of them
@@ -65,12 +65,34 @@ export function isSubagentLaunch(item: Pick<ToolItem, "title" | "meta" | "rawInp
   const call = extractSubagent(item)
   if (!call) return false
   if (call.activity !== undefined) return call.started === true
-  if (call.tool !== undefined) return call.tool === "spawnAgent" || call.tool === ASK_AGENT
+  if (call.tool !== undefined) return call.tool === "spawnAgent" || call.tool === ASK_AGENT || call.tool === AGENT
   return true
 }
 
-/** The `agents` server's launch tool (`server/src/agents-mcp.ts`). */
+/** The `agents` server's launch tool BEFORE the one-tool design: kept so a
+    journal written then still draws as an ask. */
 export const ASK_AGENT = "ask_agent"
+
+/** The same server's tool now (server/src/agents-mcp.ts): one leaf name for every
+    shape of run. It collides with the *native* subagent list below — Claude
+    Code, OpenCode and Codex all launch a subagent with a tool called `agent` —
+    so the branch above the native reader is what wins the name, and it is
+    recognised by being THIS server's tool (the server prefix) and by what it
+    carries (a run id, an ask pair, or a `steps`/`script`/`name` call), never by
+    adding `agent` somewhere else. */
+export const AGENT = "agent"
+
+/** Whether this call is the harness's own `agent` tool rather than a runtime's
+    own subagent launcher that happens to share the leaf name. */
+function isHarnessAgent(item: Pick<ToolItem, "title" | "meta" | "name">): boolean {
+  if (!isOneOf(item, [AGENT])) return false
+  /* The MCP prefix is the whole tell: `mcp__agents__agent` (Claude Code,
+     OpenCode) or `mcp.agents.agent` (Codex). A bare `agent` — Claude Code's own
+     Agent/Task, OpenCode's `task` — is the runtime's, and falls through to the
+     native reader below. */
+  const identity = toolIdentity(item)
+  return identity !== null && parseMcpToolName(identity)?.server === "agents"
+}
 
 /** An MCP tool's JSON answer, from wherever the runtime put the text: the
     content blocks, a `{content: [...]}` rawOutput, or a bare string. */
@@ -150,10 +172,15 @@ export function extractSubagent(
      child's whole reply, which is the report — the envelope around it (ask id,
      status, thread id) is bookkeeping nobody reads, so the row shows the words
      the asked agent answered with. */
-  if (isOneOf(item, [ASK_AGENT])) {
+  if (isOneOf(item, [ASK_AGENT]) || isHarnessAgent(item)) {
     const answer = jsonAnswer(item)
+    /* An `agent` call carrying `steps`/`script`/`name` is a WORKFLOW, not a
+       subagent: it makes no child of its own (its steps do), and its answer is
+       a run, drawn by the run card. Reading it as one here would put a stray
+       subagent row above the run it started. */
+    if (answer && (answer.steps !== undefined || answer.result !== undefined) && answer.threadId === undefined) return null
     return {
-      tool: ASK_AGENT,
+      tool: isHarnessAgent(item) ? AGENT : ASK_AGENT,
       ask: true,
       agentType: str(input?.agent) ?? undefined,
       description: str(input?.description) ?? undefined,

@@ -125,8 +125,8 @@ ipcMain.handle("notify", (_event, payload) => {
   const notification = new Notification({
     title: String(title ?? "Daedalus"),
     body: String(body ?? ""),
-    // Dev/unpackaged runs have no bundled resources; a missing file is ignored.
-    icon: path.join(__dirname, "..", "build", "icon.png"),
+    // build/ is not packaged, so this has to take iconFile()'s dist/ fallback.
+    icon: iconFile(),
   })
   notification.on("click", () => {
     if (sessionId) openThreadInMain(String(sessionId))

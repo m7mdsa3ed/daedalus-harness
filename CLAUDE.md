@@ -317,16 +317,20 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Claude Code reaches a profile's gateway through the harness's own shim**
   (`server/src/gateway-shim.ts`), which forwards byte for byte and makes exactly one repair.
   **The key in the path is the credential** — derived (HMAC) from `data/loopback-secret`, so stable across restarts and never written anywhere else; a leaked key is revoked by rotating that file (every key changes, stranding adopted agents), not by restarting.
-- **There are no personas and no saved prompts: reusable text is a library slash command.**
-  Both became `commands` rows (`server/src/legacy-prompts.ts`, once at boot, marker
-  `savedPromptsToCommands`), run like any command the runtime materialises — so one is
-  *linked* to a thread, never offered to all of them, and a runtime with no
-  `workspaceLayout` (codex) has none. There is no persona id on a thread, project, routine or
-  workflow. The `personas` and `saved_prompts` tables stay declared (a table push does not
-  know about is dropped) until the migration has run everywhere.
+- **A persona is how a whole thread is worked on; a command is what one message asks.**
+  Personas are library rows (`personas`, Settings › Personas, `/api/personas`), one per thread
+  (`sessions.persona_id`, project default `projects.default_persona_id`), picked in the config
+  menu like the model and riding the same staged-config / respawn door as `uiGroups` — it is
+  spawn text, so a change costs a respawn. The text heads the spawn instructions, **above the
+  rules** (`resolvePersonaSpawn`), read at spawn so an edit or a delete (= none) lands on the
+  next one. Model and effort stay the profile's: the rows' legacy `thinking`/`effort` columns
+  are declared and never read. A workflow step inherits its parent's persona; an ask does not.
+  **Saved prompts are gone** — they became `commands` rows (`legacy-prompts.ts`, once at boot,
+  marker `savedPromptsToCommands`); `saved_prompts` stays declared until that has run
+  everywhere. Personas are no longer copied into commands.
 - **Rules ride the spawn-instruction doors** (`AgentDef.personaVia`, `{personaPrompt}`,
-  `{personaFile}` — names are historical): `server/src/rules.ts`, one global block plus one per
-  project, plus the spawn trailers. Spawn-time — a change costs a respawn. Claude Code's and the Daedalus agent's door is AIR's
+  `{personaFile}`): `server/src/rules.ts`, one global block plus one per
+  project, beneath the thread's persona, plus the spawn trailers. Spawn-time — a change costs a respawn. Claude Code's and the Daedalus agent's door is AIR's
   `_meta.jetbrains.air.customInstructions` (`"air-meta"`, re-sent on new/load/resume; the
   bridge logs a runtime that never advertised it); **codex stays on `"env"`** because codex-acp reads that key on
   `session/new` only, so a revived thread would never get a change.

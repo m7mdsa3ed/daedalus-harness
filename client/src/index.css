@@ -67,11 +67,47 @@
      like the capsule, so they are circles where the theme is round and
      small squares where it is not. */
   --radius-composer: min(calc(var(--radius) * var(--app-composer-mult, 1.8)), var(--app-composer-cap, 1.5rem));
+  /* ── The mini composer's one line ──
+     How tall a line of the capsule is, and the one number its whole shape is
+     derived from: the editor's `min-h`, the toolbar's `min-h` and the radius
+     below all read it, so a capsule cannot be measured one way and drawn
+     another. It is the mouse's line here (36px, the editor's old `min-h-9`) and
+     the finger's in the coarse block further down (44px, `min-h-11`), so the
+     box stays one line at either pointer instead of a desktop getting the
+     thumb's taller box. */
+  --composer-mini-line: 2.25rem;
+  /* The mini composer is a capsule, the advanced one a card: half a line plus
+     the inset above and below it, which is where that box's curve meets itself.
+     The cap is for the other direction — a box grown to a few lines while you
+     type used to keep opening out into a stadium, with semicircles the height
+     of two text lines at either end. Stated through the theme's pill, so a
+     Square theme's mini box is square and a Sharp one nearly so. */
+  --radius-composer-mini: min(
+    var(--app-radius-pill),
+    calc(var(--composer-mini-line) / 2 + var(--spacing-composer-pad-mini-y))
+  );
   /* The box's padding follows its corner: the composer's radius less the
      corner-most key's (a 24px key, whose radius is the 4xl step capped at its
      own half-height, 12px), so the key's curve shares the box's centre. Never
      under 6px, which is where the Square and Sharp presets land. */
   --spacing-composer-pad: max(0.375rem, calc(var(--radius-composer) - min(var(--radius-4xl), 0.75rem)));
+  /* A capsule's padding is two numbers, not one, because its ends are all
+     curve and its top and bottom are not. `x` is the reading inset: the same
+     number at both ends, where the card's 6px left the first glyph 14px in (its
+     6 plus the editor's own 8) and the trailing key 6px off the sweep. The
+     editor therefore drops its own `px-2` inside the capsule
+     (`[&_.tiptap]:px-0` at the call site) and takes this one instead, so the
+     first word and the key's outer edge sit at the same distance from the edge.
+     `y` stays the card's 6px floor: a one-line box wants its line close to the
+     top and bottom or it stops reading as a pill. `x` is not free the other
+     way either: at the finger's 28px radius a line starting 10px in has its
+     top-left corner (6px down) *outside* the sweep, which is 10.7px in by then
+     — so 12px is the smallest inset the curve allows at either pointer, and it
+     is the shelf's own column besides (`SHELF_PAD`). Not derived from the radius
+     like the card's sum — on a capsule the radius is half the height, so
+     `radius - keyRadius` would grow the inset every time the box grew. */
+  --spacing-composer-pad-mini: 0.75rem;
+  --spacing-composer-pad-mini-y: 0.375rem;
   --radius-key: var(--app-radius-pill);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -835,6 +871,19 @@
      class carries `[&_svg:not([class*='size-'])]`, so that excluded them all.) */
   [data-slot="composer-toolbar"] [data-slot="button"]:not(.rounded-full, .rounded-key) {
     height: 2rem;
+  }
+}
+
+/* ── The mini composer's line, under a finger ──
+   One token, restated where the pointer is coarse: the editor's `min-h`, the
+   toolbar's `min-h` and the capsule's radius all read `--composer-mini-line`,
+   so raising it here grows the line, the box and the curve together rather than
+   leaving a 44px editor in a box still measured for 36. It is the same reason
+   the toolbar's buttons take 32px instead of 24px (`useCoarsePointer`): the
+   target grows and the glyph does not. */
+@media (pointer: coarse) {
+  :root {
+    --composer-mini-line: 2.75rem;
   }
 }
 

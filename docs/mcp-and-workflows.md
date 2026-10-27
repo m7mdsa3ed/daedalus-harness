@@ -178,8 +178,8 @@ engine under them was rewritten (`server/src/workflows/`, design and rationale i
 `docs/workflow-engine-v2.md`); where a paragraph below describes the v1 `pump`/`readySteps`
 scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", this section wins.
 
-- **One program model.** `run_workflow` JSON is validated (`graph.ts`) and *compiled* to a script
-  (`compileDefinition`); `run_script` is the same dialect written by hand. `sandbox.ts` is the only
+- **One program model.** The `steps` of an `agent` call are validated (`graph.ts`) and *compiled*
+  to a script (`compileDefinition`); `script` is the same dialect written by hand. `sandbox.ts` is the only
   interpreter. Beyond Claude Code's API it has `map vote refine route race approve sleep until waitFor
   sh artifact state`, and `agent()` takes `retry`, `tools`, `timeoutSec`, `onRestart`, `system`,
   `profile`/`agent`, `resumeSession`, `concurrencyKey`, `priority`.
@@ -212,11 +212,13 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
 ## Workflows
 
 - **Workflows are the harness's where the agent has none.** Codex and OpenCode have
-  nothing like a workflow, so `builtin:workflow` is a third library row beside web search
-  and the knowledge base — an agent that links it gets the `workflow` MCP server, and the
-  server then disallows any native `Workflow` and allows `mcp__workflow`
-  (`AcpBridge.claudeMeta`, `workflowViaMcp`), for exactly the classifier reason the
-  web-search pair exists.
+  nothing like a workflow, so the `agents` server (`builtin:agents`) carries the workflow
+  shapes of `agent` — `steps`, `script`, `name` — as well as subagents and asks. It used to
+  be a second library row (`builtin:workflow`) with its own MCP server, which is what put two
+  tool families in front of a model for one job; the row is retired at boot and its links
+  cascade. On Claude Code, which has an engine of its own, linking `agents` disallows its
+  native `Workflow` and allows `mcp__agents` (`AcpBridge.sessionMeta`, `workflowViaMcp`), for
+  exactly the classifier reason the web-search pair exists.
 
   **A runtime with its own engine keeps it, by rule and not by configuration**
   (`ownsWorkflows` in `serversFor`): linking the server to it would disallow its native
@@ -233,8 +235,8 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
   fanning out over a list the run itself discovered, looping until a search goes dry,
   having agents judge each other's findings. A static graph cannot express any of those,
   and Claude Code's own workflows are built almost entirely out of them, so every agent
-  without a native workflow tool — the entire reason `builtin:workflow` exists — was being
-  handed a strictly weaker instrument.
+  without a native workflow tool — the entire reason the server carries these shapes — was
+  being handed a strictly weaker instrument.
 
   What makes it affordable is that the agent writing the script **already runs shell
   commands on this machine**. A script can do nothing a `Bash` call could not, so the
@@ -513,24 +515,25 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
   **retired the moment its turn settles** — it is a single-purpose process, and its id is
   proven by that turn (`onSessionDurable`), so the thread stays readable from its log and
   revivable through `session/load` like any retired thread. The trigger is the awkward
-  half: the `workflow` MCP server (`workflows/mcp.ts`) is a process the *agent* spawns and
+  half: the `agents` MCP server (`agents-mcp.ts`) is a process the *agent* spawns and
   cannot reach the SessionManager, so it drives the engine over HTTP at
   `/wf/<key>/<sessionId>/…` (`workflows/routes.ts`) — outside `/api`, the `/gw`/`/ide`
   key-in-path rule: the key is derived from `data/loopback-secret` — stable across restarts, never written elsewhere, and the session id names
   the caller so a server can act for exactly the thread that asked and no other. **One level,
-  never a tree**: `serversFor` hands no workflow server to a session with a
-  `parentSessionId`, whatever its profile links, and `WorkflowEngine.start` refuses a caller
+  never a tree**: `serversFor` hands no `agents` server to a session with a
+  `parentSessionId`, whatever its profile links and whatever its runtime requires, and
+  `WorkflowEngine.start` refuses a caller
   that is a step — a step that could start a workflow makes the caps, cancel propagation and
   restart recovery a tree, and a definition that spawns itself the obvious failure. **A run
   starts in the background, and its end is a message, never a poll** — Claude Code's
-  `<task-notification>`. `run_workflow`/`run_script` with no `waitSec` answer at once
+  `<task-notification>`. `agent` with a `steps`/`script`/`name` and no `waitSec` answers at once
   (`wait=0`), and **every** run is marked `notify` — a `waitSec` included, because a model
   that passed `waitSec: 1` to check the run started got a run that never said it ended, and
   the thread sat idle until a person typed "continue". `finishRun` hands the outcome to the parent
   through the scheduler's `fire` — the one door that queues behind a running turn, starts one
   on an idle thread and revives a retired one first — so the agent ends its turn and is woken
-  with the result. A `wait_workflow` blocked when the run ends *is* the telling, so nothing is
-  sent after it; neither is the agent's own `cancel_workflow`. A restart cannot prompt (boot
+  with the result. An `agent_status` blocked when the run ends *is* the telling, so nothing is
+  sent after it; neither is the agent's own `agent_control({action: "cancel"})`. A restart cannot prompt (boot
   recovery runs before adoption), so `recoverAtBoot` writes a one-shot scheduled message the
   scheduler delivers once it starts. `waitSec` still blocks ≤55s, because an MCP tool timeout
   is the agent runtime's — codex 60s, Claude Code a hard wall clock.
@@ -538,12 +541,12 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
   **The rest of Claude Code's script surface rides doors that already existed.**
   `agent(…, {isolation: 'worktree'})` is `manager.create({worktree: true})` — a checkout of
   the step's own, left in place like any thread's. `agentType` is a library command's name,
-  its body prepended to the step's prompt (an unknown one is refused by name). `projectId` is ours, not Claude Code's: the step runs in that project's cwd instead of the parent's (never the parent's worktree, which is a path inside the parent's repository); `ask_agent` takes the same field. `workflow(nameOrRef, args)` runs a child script inside the same run —
+  its body prepended to the step's prompt (an unknown one is refused by name). `projectId` is ours, not Claude Code's: the step runs in that project's cwd instead of the parent's (never the parent's worktree, which is a path inside the parent's repository); a one-step `agent` call takes the same field. `workflow(nameOrRef, args)` runs a child script inside the same run —
   one agent counter, its phases drawn under `▸ <name>`, one level. Saved workflows are files
   in **Claude Code's own directories** (`workflow-saved.ts`: `<project>/.claude/workflows/`
   and `~/.claude/workflows/` or `$CLAUDE_CONFIG_DIR/workflows/`, keyed by `meta.name`, the
   project's shadowing the personal one, a write through a symlink refused), so either tool
-  runs what the other saved — `list_workflows`, `save_workflow`, `run_script({name})`.
+  runs what the other saved — `list_workflows`, `save_workflow`, `agent({name})`.
   `resumeFromRunId` relaunches a script run on its old script and args unless new ones are
   given, and an `agent()` call whose key (prompt and options hashed,
   `WorkflowStepRecord.key`) matches a completed step of the old run answers from it without
@@ -560,84 +563,104 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
   race an unfinished recovery.
   `pnpm test:workflow-graph` covers the definition schema and the compiler.
 
-## Asking another agent
+## Handing work to another agent
 
-- **`ask_agent` is how a normal thread works with the other agents and profiles.** A
-  thread's agent is fixed at draft time, because its conversation lives in its runtime's
-  store and a revive is always `session/load` there. Swapping the agent would lose the
-  conversation. So the other pairs are *called*, never switched to. The `agents` server
-  (`builtin:agents`, a library row like the others) offers `list_agents`, `ask_agent`,
-  `wait_agent`, `cancel_agent` and `continue_agent`, over the workflow runner's own loopback.
-- **An ask has no clock unless the caller gives it one.** `stepTimeoutSec(step, ask)` is
-  null for an ask and the run's own timer is `NO_LIMIT_MS`: the 15-minute step default killed an
-  agent mid-edit, which a workflow's bounded step can afford and an errand cannot. `timeoutSec` on
-  `ask_agent` is an opt-in cap. **A failed, timed-out or stopped ask keeps its thread**
-  (`retire` ends the process, never the log), so `continue_agent` (`WorkflowEngine.continueAsk`,
-  `POST …/asks/:id/continue`) is a new one-step run whose step carries `resumeSessionId`: the
-  same child, spawned again on the parent (the client reads a settled child spawned again as a
-  wake), its process revived by the prompt. A failed step keeps what the child had said
-  (`output`), which is what the notification's `<result>` carries.
-- **The notification is Claude Code's shape**, so the client draws one card for both:
-  `<usage>` (`subagent_tokens`, `tool_uses`, `duration_ms`, plus the agent counts for a
-  workflow), `<failures>` as `[step] failed: why`, a prose `<result>` (an ask's own words, not
-  JSON around them) and a `<note>` naming the thread and `continue_agent`. Old journals keep
-  `<failed-agents>` and the JSON result — `parseTaskNotification` reads both.
-- **An ask is a one-step workflow run** (`WorkflowEngine.ask` → `launch`), its step carrying
-  `profileId`/`agentId`/`agentName`/`profileName`/`label`, plus the caller's `description`
-  when it gave one (`rowNameOf`: the errand titles the child thread and its row, where `label`
-  names the pair). `runStep` reads the pair off the step and falls back to the
-  parent's. Everything else — the child thread with `parentSessionId`, the mirrored events,
-  `_daedalus/subagent_usage`, the clocks, cancel on the parent's process going — is the
-  workflow's. Waiting and cancelling are the `/runs/:id` routes. **An ask still running when its call's wait ends reports back as a `<task-notification>`** (`launch`'s `notify`, worded as an ask by `notification(view, ask)`), as a background workflow does, so the caller never polls `wait_agent`; one that ends inside a wait is handed to that waiter and no message repeats it. The spawn carries **no
-  `_meta.daedalus.workflow`** and a `_meta.daedalus.ask` (`{agent, profile, agentId,
-  profileId}`) instead, so the client draws it as a plain subagent rather than a one-row run
-  card — `workflowInfoOf` finds no run and `askInfoOf` finds the pair, which is what makes the
-  row wear the asked agent's own mark (`AgentIcon`, by that id) and an `AskAgentChip` saying
-  `agent · profile` where every other subagent's row has only its title. It is the one worker
-  in a transcript that is not the thread's own agent, and the row says so; the brief, the rail
-  and the report are the ones any subagent draws. The answer the model reads stays one JSON
-  object (`askId`, `status`, `threadId`, `output`), while the *row's* report is the
-  `output` in it — the envelope is bookkeeping, and the asked agent's words are the answer.
-- **An ask's child asks nobody for permission** (`ASK_AUTONOMY` in `workflows/engine.ts`, an
-  `autonomy.ts` policy: every permission `allow`, questions parked, no timer): the ask is the
-  person's go-ahead for its brief, and the child has no reader. **What still parks — a question,
-  or a request offering nothing allow-shaped — is repeated on the parent** (`SessionManager.emit`
-  forwards a child's `permission`/`elicitation`/`request_answered` live, `requestId` namespaced
-  `<childId>:<requestId>` with `from: {sessionId, title}`; `childPendingEvents` is the attach
-  handover), drawn in the parent's transcript under "Asked by <thread>", and answered on the
-  parent's socket, which routes a namespaced id to the child's bridge (`answerChild`) before it
-  asks whether the parent has a process at all. This holds for every child, workflow steps too —
-  a step parked where nobody reads was a run stuck. Still live-only and never journaled.
-- **Nothing that belongs to the parent's pair crosses to another one.** Model and effort are
-  inherited only when the pair is the parent's own; otherwise the profile's default model.
-  The permission mode is restored only when the *agent* is the same, because mode ids are a
-  runtime's; a child on another runtime starts in its default mode and its permission
-  requests land in the inbox. Persona, links, worktree and project are the parent's.
-- **Pairs are measured, not assumed**: every profile that is neither hidden nor disabled,
-  crossed with the agents it declares, with `installed` from `checkInstalled` against the
-  caller's project (a path check, never a handshake). Matched by id or case-insensitive name;
-  zero or two matches is an error naming what exists.
-- **The user picks the profile, not the caller.** `installed` is a path check, not a
-  credential check, so a pair can be listed and still fail on its first request — a Default
-  profile leans on the runtime's own login, and Defaults cannot be disabled. So `profile` and
-  `agent` are optional on `ask_agent` and the caller leaves them out unless the user named
-  them. The choice is **per agent, per thread**: `sessions.ask_profiles` maps an agent id to
-  `{ profileId, model? }`. It is seeded from the project (`projects.default_ask_profiles`),
-  picked in the draft's config menu and editable on a started thread (both: Ask agents, a
-  row per installed agent with the menu's own Profile and Model rows —
-  `components/ask-agents.tsx`), and **read at ask time on the server**
-  (`WorkflowEngine.ask`), so unlike `suggest_kinds` it is no spawn input: no trailer, no
-  respawn, no staging. A set choice **outranks whatever the model passed**, and an ask that
-  names no agent goes to the one agent the thread has a choice for. With none, the `agents`
-  server raises an MCP form elicitation whose `askAgentPair` field the client recognises and
-  draws as those same pickers (plus "use for every ask to this agent", which writes the
-  choice through `PUT …/ask-profiles`); a generic client shows it as a plain form, and a
-  runtime that cannot show one gets an error telling the model to ask in prose. A declined
-  picker aborts the ask; nothing falls back to another pair.
-- **Offered to every runtime, including Claude Code.** Unlike the workflow server it
-  rivals nothing native, so `workflowsVia` does not gate it. One level: a child is never
-  handed it. Four asks per thread at once, counted apart from `MAX_RUNS_PER_PARENT` so
-  consulting two agents never locks a thread out of a workflow.
+- **One tool, `agent`, and every call makes a run** (`server/src/agents-mcp.ts`,
+  `builtin:agents`). It replaced three surfaces that did almost the same thing — `ask_agent`
+  here, `run_workflow`/`run_script` on a second `workflow` server, and the Daedalus agent's
+  in-process `task` — which meant a model seeing two tools named `list_agents` answering
+  different questions, two follow-up verbs and two waiting models. The server had always
+  treated an ask as a one-step workflow run, so the split was a *tool* split, not an engine
+  one. What kind of run a call makes comes from its **arguments**:
+  `prompt` alone is one step on the thread's own pair (a **subagent**), `agent`/`profile`
+  make that step another pair's (an **ask**), and `steps`/`script`/`name` make a **workflow**.
+  The four companions are `agent_status`, `agent_message`, `agent_control` and `agent_list`;
+  the workflow library is `list_workflows`/`save_workflow`/`delete_workflow`, which manage
+  saved scripts and hand work to nobody.
+- **The schema is flat and validation is not a mode.** There is no `oneOf` (some
+  OpenAI-compatible providers reject union schemas) and no `mode` enum: every shape field is
+  optional, exactly one of `prompt`/`steps`/`script`/`name` is required, and the handler
+  answers a sentence naming what it got. The top-level pair and model are the **default for
+  every step**, so a one-step call is not a special case — it is a workflow whose only step
+  inherits everything. `model` beats `role`, and `role` beats the pair's default.
+- **The schema is generated per thread.** `steps`/`script`/`name`/`args` appear only where
+  `AgentDef.workflowsVia !== "native"` (Claude Code keeps its own `Workflow`), read off the
+  row and never off the id; `role` appears only when the profile's vocabulary is non-empty,
+  and the pair list in the description comes from `WorkflowEngine.pairs`. A capability that
+  is not on offer is not advertised, which is the same rule `rolesClause` already followed.
+- **`steps` and `script` both stay, on purpose.** `steps` compiles to a script
+  (`compileDefinition`), so a script could express every graph — but a graph is **checked
+  before anything spawns** (cycles, duplicate names, unknown reads and the step limit are
+  refused up front by `graph.ts`, naming the path), where a script fails mid-run after the
+  children it already ran have spent their tokens, and a model fills a flat schema more
+  reliably than it writes code. The rule carried in the description: `steps` when the whole
+  plan can be written down before starting, `script` when its shape depends on what an
+  earlier step finds. Both dialects' manuals live in `workflows/manual.ts`, beside the
+  validator whose option names they spell.
+- **Every shape is one `WorkflowEngine.launch`**, so the id, the notification, the follow-up
+  and the stop are the same for all three. What differs is what the `EngineSpec` carries:
+  one step with no pair info (a plain subagent row), one step with `ask: AskInfo` (today's
+  `launchAsk`, drawn with `AskAgentChip`), or a `source`/`meta` from a definition or a
+  script (the run card). `RunKind` is `"workflow" | "ask" | "subagent"` and it is what
+  decides the cap, the notification's wording and the child's `childKind`.
+- **An own-pair subagent is a real child thread**, inheriting the parent's profile, agent,
+  model, effort and mode as a workflow step already does — which is what buys it durability,
+  an openable thread and a cap. It has **no clock** (`timeoutSec` is opt-in) and its spawn
+  carries no `_meta` at all: `workflowInfoOf` finds no run and `askInfoOf` no pair, so the
+  client draws the plain subagent shape it already had. It runs under `ASK_AUTONOMY` like an
+  ask — the call is the person's go-ahead for its brief — and what still parks is repeated on
+  the parent, as it is for every child.
+- **An ask is unchanged underneath.** `ask_profiles` still outranks what the model passed, a
+  missing choice still raises the `askAgentPair` elicitation (declined = abort, never a
+  fallback to another pair), nothing that belongs to one pair crosses to another, and the
+  answer the model reads stays one JSON object while the row's report is the `output` in it.
+  `installed` is a path check, so the user still picks the profile.
+- **A role is resolved on the server** (`WorkflowEngine.resolveRole`, from
+  `sessions.helper_models` through `modelRoleDefs`), because `agent` is offered to every
+  runtime and a role only means anything in the caller's own catalog. On another pair it is
+  an error, not a translation. An unknown role is an answer naming the ones that exist.
+- **One waiting model.** A call returns when the run ends or `waitSec` does (1-55); a run
+  still going arrives as a `<task-notification>`, and one that ends inside a wait is handed
+  to that waiter and never said twice (`launch`'s `notify`). The model is told not to poll.
+- **`agent_message` continues any run that is not running.** A one-step run is a new run on
+  the *same* child thread with `resumeSession`, keeping its conversation — what
+  `continue_agent` did. A **workflow run** is relaunched from its journal
+  (`resumeFromRunId`): completed steps answer without running or costing anything, and only
+  the failed, stopped or new calls run, which is what recovery already does after a reboot.
+  **A call that did not complete keeps its conversation**: `drive.ts` hands the replayed call
+  the child thread its last attempt left, and `step.ts` revives it rather than spawning a fresh
+  one (`onRestart: "rerun"` still refuses; a child that is gone falls back to a new thread).
+  A prompt cannot steer a script (a changed prompt is a *new* call by the replay rules), so
+  one is refused rather than ignored.
+- **`agent_control` is the run's own door**: cancel, pause, resume, and `signal` for a
+  `waitFor`. An `approve()` gate stays answerable only by the person in the app — there is
+  deliberately no tool for it (`test:workflow-routes` asserts it).
+- **Caps stay split by shape**, so consulting two agents never locks a thread out of a
+  workflow and a fan-out of subagents never takes every workflow slot. All three are
+  `ENGINE_LIMITS`' (`workflows/types.ts`), beside every other engine ceiling:
+  `asksPerParent` (4) for one-step runs on another pair, `subagentsPerParent` (8) for
+  one-step runs on the thread's own, `runsPerParent` (3) for workflows.
+- **One level, never a tree.** A thread with `parentSessionId` gets neither the server nor any
+  of its tools, and `WorkflowEngine` refuses an ask or a subagent from a child.
+- **The Daedalus agent always has it** (`AgentDef.requiredMcp`, seeded `["builtin:agents"]`
+  for `daedalus` and null elsewhere). Its only way to delegate is this server, so a thread
+  without it had silently lost the capability. `serversFor` folds `requiredMcp` into the
+  thread's effective links **before** the library is filtered on `linked`, so no stored link
+  set can leave it out and an unlink changes nothing; one level still wins. The pickers draw
+  those rows on and locked with "required by <agent>" (`mcp-picker.tsx`), reading
+  `requiredMcp` off the agent row so the client compares no ids.
+- **What that runtime gives up.** The in-process `task`/`list_agents`/`send_message`
+  (`agent/src/tools/`) are **withdrawn where the thread has this server** and kept where it
+  does not, gated by one env key from the spawn: `DAEDALUS_AGENT_SUBAGENTS` = `harness` (a
+  top-level thread), `off` (a step or an ask's child) or absent/`local` (standalone, where the
+  in-process loop is all there is). It is said rather than inferred, because a step child has
+  no servers either and reading "is the `agents` server among mine" would hand it the
+  in-process `task` back and make a tree of the one-level rule.
+- **The cost is spawn latency** for own-pair subagents: an in-process child started on the
+  next model call, and as a step it is a new Daedalus process (~0.4s by the installed-binary
+  rule) plus `initialize`. Ten parallel subagents are ten processes. That is the price of
+  durability, an openable thread and a cap. Blocking also becomes background: a run longer
+  than the wait comes back as a later message, which is the bargain asks already made.
 
 ## Driving the preview
 

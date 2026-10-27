@@ -3,8 +3,8 @@
  *
  * Two families, registered together because they speak to the same engine:
  *
- *  - `/wf/:key/:sessionId/...` — the loopback the `workflow` and `agents` MCP
- *    servers drive (workflows/mcp.ts, agents-mcp.ts). Outside `/api`, so outside
+ *  - `/wf/:key/:sessionId/...` — the loopback the `agents` MCP server drives
+ *    (`agents-mcp.ts`, which absorbed the `workflow` server's tools). Outside `/api`, so outside
  *    the bearer check: the derived key in the path is the credential (the
  *    `/gw`/`/ide` rule), and the session id after it names the thread the call
  *    is made for — the only thread whose runs it may start, read or stop.
@@ -36,6 +36,7 @@ import {
   ScopeQuery,
   ScriptBody,
   SignalBody,
+  StepBody,
 } from "./route-schemas.js";
 import { deleteSaved, listSaved, saveWorkflow, type ProjectRef } from "./saved.js";
 import type { Budgets, RunView } from "./types.js";
@@ -155,16 +156,19 @@ export function workflowRoutes(app: Hono, deps: { engine: WorkflowEngine; sessio
     );
   });
 
-  /* This thread's recent runs, newest first, no steps. Asks are runs too but
-     are the `agents` server's business, so they are left out unless asked for. */
+  /* This thread's recent runs, newest first, no steps.
+     Every kind is a run here (`kind`: workflow, ask or subagent), and all of
+     them are this thread's — the one tool starts all three, so they are one
+     list. `?workflows=1` narrows it to the multi-step kind for the surfaces
+     that draw cards (`workflow_status` used to be the only reader). */
   app.get(`${base}/runs`, async (c) => {
     const parent = caller(c);
     if (!parent) return c.json({ error: "not found" }, 404);
     const limit = LimitQuery.parse(c.req.query("limit"));
-    const withAsks = c.req.query("asks") === "1";
-    // Fetch wide when asks are filtered out, so a burst of asks does not push every workflow off the page.
-    const runs = await engine.listRuns(parent.id, withAsks ? limit : 100);
-    return c.json({ runs: (withAsks ? runs : runs.filter((r) => !r.ask)).slice(0, limit) });
+    const workflowsOnly = c.req.query("workflows") === "1";
+    // Fetch wide when the one-step runs are filtered out, so a burst of errands does not push every workflow off the page.
+    const runs = await engine.listRuns(parent.id, workflowsOnly ? 100 : limit);
+    return c.json({ runs: (workflowsOnly ? runs.filter((r) => r.kind === "workflow") : runs).slice(0, limit) });
   });
 
   /* A run of THIS thread: waiting on, reading and stopping are scoped by the
@@ -292,12 +296,58 @@ export function workflowRoutes(app: Hono, deps: { engine: WorkflowEngine; sessio
     return c.json({ askProfiles: (await sessions.setAskProfiles(parent.id, { ...parent.askProfiles, [agentId]: choice })) ?? {} });
   });
 
+  /* One prompt, one worker. Naming no `agent`/`profile` runs it on the caller's
+     OWN pair (a subagent, drawn as a plain subagent); naming them makes it an
+     ask of that pair. One route because it is one tool — the shape is decided by
+     the arguments, never by which door was knocked on. */
+  app.post(`${base}/steps`, async (c) => {
+    const parent = caller(c);
+    if (!parent) return c.json({ error: "not found" }, 404);
+    const body = await parse(c, StepBody);
+    if (!body.ok) return body.res;
+    const { agent, profile } = body.data;
+    return guarded(c, async () =>
+      started(
+        c,
+        agent || profile
+          ? await engine.ask(parent, body.data)
+          : await engine.subagent(parent, {
+              prompt: body.data.prompt,
+              ...(body.data.description ? { description: body.data.description } : {}),
+              ...(body.data.model ? { model: body.data.model } : {}),
+              ...(body.data.role ? { role: body.data.role } : {}),
+              ...(body.data.effort ? { effort: body.data.effort } : {}),
+              ...(body.data.timeoutSec ? { timeoutSec: body.data.timeoutSec } : {}),
+            }),
+      ),
+    );
+  });
+
+  /* The `agents` server's original door, kept for a server and a client build
+     from either side of the rename: `agent` calls `/steps`, and nothing else
+     does. Same body, same handler, so a tool still calling `/asks` is not a
+     different code path. */
   app.post(`${base}/asks`, async (c) => {
     const parent = caller(c);
     if (!parent) return c.json({ error: "not found" }, 404);
     const body = await parse(c, AskBody);
     if (!body.ok) return body.res;
     return guarded(c, async () => started(c, await engine.ask(parent, body.data)));
+  });
+
+  /* A one-step run picked back up: a NEW run on the SAME child thread, its
+     conversation intact. Works on any run that is not running — an ask, a
+     subagent, or a workflow run, which is continued by relaunching the step
+     that failed with its thread resumed (what `onRestart: "resume"` already
+     does after a reboot). */
+  app.post(`${base}/runs/:id/continue`, async (c) => {
+    const parent = caller(c);
+    if (!parent) return c.json({ error: "not found" }, 404);
+    const body = await parse(c, ContinueBody);
+    if (!body.ok) return body.res;
+    const id = c.req.param("id");
+    if (!(await engine.statusFor(parent.id, id))) return c.json({ error: "no such run" }, 404);
+    return guarded(c, async () => started(c, await engine.continueRun(parent, id, body.data.prompt)));
   });
 
   /* An ask that failed, timed out or was stopped, picked up where it stopped —
@@ -307,7 +357,7 @@ export function workflowRoutes(app: Hono, deps: { engine: WorkflowEngine; sessio
     if (!parent) return c.json({ error: "not found" }, 404);
     const body = await parse(c, ContinueBody);
     if (!body.ok) return body.res;
-    return guarded(c, async () => started(c, await engine.continueAsk(parent, c.req.param("id"), body.data.prompt)));
+    return guarded(c, async () => started(c, await engine.continueRun(parent, c.req.param("id"), body.data.prompt)));
   });
 
   // ===========================================================================

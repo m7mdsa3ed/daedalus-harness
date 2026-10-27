@@ -69,7 +69,7 @@ export function threadDock(sessionId: string | null | undefined): ThreadDockHand
 
 /* ── Layouts ──
    Per thread. A thread nobody has arranged is its transcript alone — every
-   other panel is asked for from the strip's +. Device-local: how a thread is
+   other panel is asked for from a tab's menu. Device-local: how a thread is
    laid out is the reader's, not the conversation's. */
 interface ThreadLayouts {
   by: Record<string, SerializedDockview>

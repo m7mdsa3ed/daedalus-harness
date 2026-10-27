@@ -30,6 +30,7 @@ import {
 } from "../src/workflows/drive.js";
 import { foldRun } from "../src/workflows/fold.js";
 import {
+  ENGINE_LIMITS,
   callHash,
   keyFields,
   stepKey,
@@ -436,6 +437,50 @@ await test("resumeFromRunId does not replay a prior FAILURE (a relaunch is how i
   assert.equal(fresh.calls.length, 1);
 });
 
+await test("a continued workflow resumes the FAILED step's own thread, not a fresh one", async () => {
+  const spec = specOf("const a = await agent('one', {label: 'a'}); const b = await agent('two', {label: 'b'}); return [a, b];");
+  const old = await harness({
+    spec,
+    runId: "old",
+    reply: (s) => {
+      if (s.prompt === "two") throw new Error("flaky");
+      return "A";
+    },
+  });
+  assert.equal((await old.run()).status, "failed");
+  /* The failed attempt journaled its child; the continue must be handed that id
+     so the step picks the conversation up instead of beginning again. */
+  const failedChild = old
+    .events()
+    .find((e) => e.payload.kind === "step_failed" && e.payload.name === "b")?.payload as { sessionId: string } | undefined;
+  assert.equal(failedChild?.sessionId, "child-b");
+
+  const fresh = await harness({ spec, runId: "new", priorEvents: old.events(), reply: () => "B" });
+  await fresh.run();
+  const b = fresh.calls.find((c) => c.name === "b");
+  assert.ok(b, "the failed step runs again");
+  assert.equal(b.resume?.sessionId, "child-b", "on the SAME thread the failed attempt used");
+  const a = fresh.calls.find((c) => c.name === "a");
+  assert.equal(a, undefined, "and the completed step is served from the journal, not run");
+});
+
+await test("a step that was in flight when a run stopped is continued too", async () => {
+  const spec = specOf("return await agent('only');");
+  /* Hand-build the prior journal: a `step_started` with no outcome is what a
+     stopped run leaves, and it is the case `onRestart` never sees (no restart
+     happened — the run was relaunched). */
+  const store = new FakeStore();
+  await store.createRun({ id: "old", parentSessionId: "p", projectId: null, name: "demo", spec, notify: false, createdAt: 1 });
+  const key = stepKey(callHash(keyFields({ prompt: "only", label: "agent-1", phase: null })), 0);
+  await store.append("old", key, { kind: "step_started", name: "agent-1", phase: null, sessionId: "child-live", attempt: 1, startedAt: 1 });
+  await store.append("old", null, { kind: "run_finished", status: "cancelled", error: "stopped by the user", result: null });
+
+  const fresh = await harness({ spec, runId: "new", priorEvents: await store.events("old"), reply: () => "done" });
+  await fresh.run();
+  const only = fresh.calls.find((c) => c.name === "agent-1");
+  assert.equal(only?.resume?.sessionId, "child-live");
+});
+
 await test("run_finished status mapping: completed / failed / cancelled", async () => {
   const done = await (await harness({ spec: specOf("return 7;") })).run();
   assert.deepEqual([done.status, done.result, done.error], ["completed", 7, null]);
@@ -831,6 +876,32 @@ await test("B4 caps hold under concurrent launches: 10 asks at once => exactly t
   r.engine.shutdown();
 });
 
+await test("the three caps are counted apart: asks, subagents and workflows never starve each other", async () => {
+  const r = rig({ stepMode: "pending" });
+  r.store.createDelay = 5;
+  const e = privately(r.engine);
+  /* One-step runs on the thread's OWN pair saturate their own bucket — which is
+     `ENGINE_LIMITS.subagentsPerParent`, not the workflow one — and a workflow
+     can still start beside them, which is the whole reason the caps are split. */
+  const subagents = await Promise.allSettled(
+    Array.from({ length: ENGINE_LIMITS.subagentsPerParent + 2 }, (_, i) =>
+      r.engine.subagent({ ...r.parent } as never, { prompt: `s${i}` }),
+    ),
+  );
+  assert.equal(subagents.filter((x) => x.status === "fulfilled").length, ENGINE_LIMITS.subagentsPerParent);
+  const refused = subagents.filter((x) => x.status === "rejected") as PromiseRejectedResult[];
+  assert.equal(refused.length, 2);
+  assert.ok(refused.every((x) => x.reason instanceof WorkflowError && x.reason.status === 409));
+  assert.match(String(refused[0]!.reason.message), /subagents running/);
+  /* The buckets are independent: with the subagent cap full, a workflow still
+     starts — and so does an ask, up to its own number. */
+  await r.engine.start({ ...r.parent } as never, { script: SCRIPT });
+  assert.equal(e.runs.size, ENGINE_LIMITS.subagentsPerParent + 1);
+  for (const run of e.runs.values()) r.engine.cancel(run.events[0]!.runId);
+  await until(() => [...e.runs.values()].every((x) => x.settled), "runs to settle");
+  r.engine.shutdown();
+});
+
 await test("R11/R12 shutdown closes the door; a launch that dies after createRun fails its row instead of leaving it running", async () => {
   const r = rig({ stepMode: "pending" });
   r.store.createDelay = 20;
@@ -843,7 +914,7 @@ await test("R11/R12 shutdown closes the door; a launch that dies after createRun
   const row = [...r.store.headers.values()][0]!;
   assert.equal(row.status, "failed", "the row must not stay running with no driver");
   assert.ok(r.store.journals.get(row.id)!.some((e) => e.payload.kind === "run_finished"));
-  for (const call of [() => r.engine.start(r.parent as never, { script: SCRIPT }), () => privately(r.engine).launchAsk(r.parent, askArgs(1)), () => r.engine.continueAsk(r.parent as never, "x")]) {
+  for (const call of [() => r.engine.start(r.parent as never, { script: SCRIPT }), () => privately(r.engine).launchAsk(r.parent, askArgs(1)), () => r.engine.continueRun(r.parent as never, "x")]) {
     await assert.rejects(call(), (e: unknown) => e instanceof WorkflowError && e.status === 409);
   }
 });

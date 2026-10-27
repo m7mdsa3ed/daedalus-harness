@@ -92,6 +92,19 @@ export interface StepCall {
   name: string;
   /** Set when the journal says this step was in flight at a restart. */
   recovered: Recovered | null;
+  /**
+   * The child thread an EARLIER run left behind for this same call — a step that
+   * failed, or one that was in flight when the run was stopped.
+   *
+   * A resumed run (`resumeFromRunId`) serves a completed call from the journal
+   * and runs the rest again, so without this the step that failed would start
+   * over in a fresh thread and lose what it had worked out — which is exactly
+   * the conversation `agent_message` keeps for a one-step run. The runner
+   * continues THIS thread instead, and falls back to a fresh spawn if it is
+   * gone (deleted, or never persisted), the same bargain a restart's `resume`
+   * policy makes.
+   */
+  resume?: Recovered | null;
   placement: Placement;
   /** Journals under this step's key. The runner writes step_started / _retry / _completed / _failed. */
   append(payload: JournalPayload): Promise<JournalEvent>;
@@ -286,7 +299,19 @@ const isAbort = (error: unknown): boolean => error instanceof Error && error.nam
 export async function drive(opts: DriveOptions): Promise<DriveOutcome> {
   const { spec, signal, tracker } = opts;
   const snapshot = replayIndex(opts.events());
-  const prior = opts.priorEvents ? replayIndex(opts.priorEvents).done : new Map<string, Replayed>();
+  const priorIndex = opts.priorEvents ? replayIndex(opts.priorEvents) : null;
+  const prior = priorIndex?.done ?? new Map<string, Replayed>();
+  /* The child thread an earlier run left for a call it did not complete: a step
+     that FAILED, and one that was in flight when the run stopped. Read off the
+     prior journal's `step_started`/`step_failed`, keyed exactly as the calls are
+     — so the continue lands on the same conversation, not a lookalike. */
+  const priorChild = new Map<string, Recovered>();
+  if (priorIndex) {
+    for (const [key, r] of priorIndex.done) {
+      if (r.kind === "failed" && r.sessionId) priorChild.set(key, { sessionId: r.sessionId, attempt: 1 });
+    }
+    for (const [key, r] of priorIndex.inFlight) priorChild.set(key, r);
+  }
 
   const occurrences = new Map<string, number>();
   const usedNames = new Set<string>();
@@ -460,6 +485,7 @@ export async function drive(opts: DriveOptions): Promise<DriveOutcome> {
           key,
           name,
           recovered,
+          ...(priorChild.has(key) ? { resume: priorChild.get(key)! } : {}),
           placement: placementOf(name),
           append: (payload) => opts.append(key, payload),
           signal,

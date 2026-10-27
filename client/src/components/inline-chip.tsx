@@ -26,12 +26,19 @@ import { cn } from "@/lib/utils"
  * so a chip leading with an icon (or a project's mark) sat a few pixels off the
  * text it rides in — `align-baseline` had nothing true to align to. Aligning the
  * face's own label puts the pill's text on the line's baseline; a control drawn
- * after the face (`trailing`) centres itself back with `self-center`. */
-export function chipClass(opts: { selected?: boolean; trailing?: boolean; link?: boolean } = {}) {
+ * after the face (`trailing`) centres itself back with `self-center`.
+ *
+ * `quote` widens the end margin: a quote leads its line with no space typed
+ * after it, so the 1px every chip keeps ran it straight into the words asked
+ * about it. */
+export function chipClass(
+  opts: { selected?: boolean; trailing?: boolean; link?: boolean; quote?: boolean } = {}
+) {
   return cn(
     "chip mx-px inline-flex items-baseline gap-0.5 rounded-pill bg-secondary py-px ps-1.5 align-baseline text-[0.9em] leading-snug text-foreground not-prose transition-colors hover:bg-muted",
     opts.link ? "max-w-[min(16rem,100%)]" : "max-w-[min(20rem,100%)]",
     opts.trailing ? "pe-0.5" : "pe-1.5",
+    opts.quote && "me-2",
     opts.selected && "bg-primary/15 hover:bg-primary/15"
   )
 }

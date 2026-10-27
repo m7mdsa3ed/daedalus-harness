@@ -38,6 +38,15 @@ export const FEATURES = [
   /** `@kind:ref` mentions: `POST /api/mentions/context` expands a message's
       typed references into a `<context>` block (`mentions/expand.ts`). */
   "mentionKinds",
+  /** The one `agent` MCP server replaces `ask_agent` and the `workflow` server:
+      every way of handing work to another worker is one `agent` tool, and a
+      run's kind travels in its answer rather than in which tool was called.
+      The client's subagent reader tells the two families apart by the MCP
+      server prefix (`mcp__agents__agent`), which a server from before this
+      never sent — its launch tool was `ask_agent` — so an old journal cannot be
+      misread either. This name is what a later reader gates on instead of that
+      inference. */
+  "agentTool",
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];

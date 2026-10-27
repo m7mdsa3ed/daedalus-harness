@@ -115,10 +115,17 @@ async function withServer<T>(fn: (client: Client, hits: Hit[]) => Promise<T>): P
   });
   await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
   const port = (http.address() as AddressInfo).port;
+  /* The one `agents` server: `agent` and its four companions, with the workflow
+     shapes on because this thread's runtime has no engine of its own. */
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: ["--import", "tsx", fileURLToPath(new URL("../src/workflows/mcp.ts", import.meta.url))],
-    env: { ...(process.env as Record<string, string>), WORKFLOW_URL: `http://127.0.0.1:${port}/wf/k/s` },
+    args: ["--import", "tsx", fileURLToPath(new URL("../src/agents-mcp.ts", import.meta.url))],
+    env: {
+      ...(process.env as Record<string, string>),
+      AGENTS_URL: `http://127.0.0.1:${port}/wf/k/s`,
+      AGENTS_WORKFLOWS: "1",
+      AGENTS_ROLES: JSON.stringify([{ id: "small", label: "Small", description: "cheap", model: "m-small" }]),
+    },
     stderr: "ignore",
   });
   const client = new Client({ name: "test", version: "1" });
@@ -133,43 +140,69 @@ async function withServer<T>(fn: (client: Client, hits: Hit[]) => Promise<T>): P
 
 const text = (r: object) => (((r as { content?: { text: string }[] }).content ?? [])[0]?.text ?? "");
 
-test("the workflow MCP server registers every v2 tool with its input fields", async () => {
+test("one `agent` server carries every way of handing work on", async () => {
   await withServer(async (client) => {
     const { tools } = await client.listTools();
     const by = new Map(tools.map((t) => [t.name, t]));
     const expected: Record<string, string[]> = {
-      run_workflow: ["definition", "inputs", "budgets", "priority", "concurrencyKey", "onRestart", "waitSec"],
-      run_script: ["script", "name", "resumeFromRunId", "args", "budgets", "tokenBudget", "priority", "concurrencyKey", "onRestart", "waitSec"],
+      agent: ["prompt", "description", "agent", "profile", "model", "effort", "projectId", "timeoutSec", "waitSec", "role", "steps", "script", "name", "args"],
+      agent_status: ["id", "waitSec"],
+      agent_message: ["id", "prompt", "waitSec"],
+      agent_control: ["id", "action", "name", "value"],
+      agent_list: ["runs"],
       list_workflows: [],
       save_workflow: ["runId", "script", "scope"],
       delete_workflow: ["name", "scope"],
-      wait_workflow: ["runId", "timeoutSec"],
-      workflow_status: ["runId"],
-      list_runs: ["limit"],
-      cancel_workflow: ["runId"],
-      pause_workflow: ["runId"],
-      resume_workflow: ["runId"],
-      signal_workflow: ["runId", "name", "value"],
     };
     assert.deepEqual([...by.keys()].sort(), Object.keys(expected).sort());
     for (const [name, fields] of Object.entries(expected)) {
       const props = Object.keys((by.get(name)!.inputSchema as { properties?: object }).properties ?? {});
       assert.deepEqual(props.sort(), [...fields].sort(), name);
     }
-    // The manual documents the dialect it validates.
-    const script = by.get("run_script")!.description ?? "";
-    for (const g of ["agent", "parallel", "pipeline", "phase", "log", "budget", "workflow", "map", "vote", "refine", "route", "race", "approve", "sleep", "until", "waitFor", "sh", "artifact", "state"]) {
-      assert.ok(script.includes(g), `run_script manual mentions ${g}`);
+    // Both dialects are documented where the model reads them, with the option
+    // names `sandbox.ts` validates, and the rule for which to reach for.
+    const manual = by.get("agent")!.description ?? "";
+    for (const g of ["parallel", "pipeline", "phase", "budget", "map", "vote", "refine", "route", "race", "approve", "sleep", "until", "waitFor", "sh", "artifact", "state"]) {
+      assert.ok(manual.includes(g), `the manual mentions ${g}`);
     }
-    for (const o of ["resumeSession", "concurrencyKey", "fallbackModel", "judgePrompt", "maxRounds", "onRestart"]) {
-      assert.ok(script.includes(o), `run_script manual mentions ${o}`);
+    for (const o of ["resumeSession", "concurrencyKey", "fallbackModel", "judgePrompt", "maxRounds", "onRestart", "forEach", "when", "isolation", "agentType"]) {
+      assert.ok(manual.includes(o), `the manual mentions ${o}`);
     }
-    const def = by.get("run_workflow")!.description ?? "";
-    for (const f of ["forEach", "when", "retry", "isolation", "agentType", "timeoutSec", "{{inputs.NAME}}", "{{index}}"]) {
-      assert.ok(def.includes(f), `run_workflow manual mentions ${f}`);
-    }
+    assert.match(manual, /WHICH SHAPE/);
+    // The roles this thread names are advertised and resolved here.
+    assert.match(manual, /`small` \(Small — cheap\)/);
   });
 });
+
+test("the workflow shapes are not advertised where the runtime has its own engine", async () => {
+  const { tools } = await stdioTools({ AGENTS_WORKFLOWS: "" });
+  const agent = tools.find((t) => t.name === "agent")!;
+  const props = Object.keys((agent.inputSchema as { properties?: object }).properties ?? {});
+  for (const field of ["steps", "script", "name", "args"]) assert.ok(!props.includes(field), `${field} is not offered`);
+  assert.deepEqual(tools.map((t) => t.name).filter((n) => n.endsWith("_workflow")), []);
+  const list = tools.find((t) => t.name === "agent_list")!;
+  assert.deepEqual(Object.keys((list.inputSchema as { properties?: object }).properties ?? {}), []);
+  const control = tools.find((t) => t.name === "agent_control")!;
+  const controlProps = Object.keys((control.inputSchema as { properties?: object }).properties ?? {});
+  assert.ok(!controlProps.includes("name") && !controlProps.includes("value"));
+});
+
+/** The server's tools under a chosen env, over a loopback nobody calls. */
+async function stdioTools(env: Record<string, string>): Promise<{ tools: { name: string; description?: string; inputSchema: unknown }[] }> {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["--import", "tsx", fileURLToPath(new URL("../src/agents-mcp.ts", import.meta.url))],
+    env: { ...(process.env as Record<string, string>), AGENTS_URL: "http://127.0.0.1:9/wf/k/s", ...env },
+    stderr: "ignore",
+  });
+  const client = new Client({ name: "test", version: "1" });
+  await client.connect(transport);
+  try {
+    return (await client.listTools()) as never;
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
 
 test("the agent has no tool that answers an approval, and the manual says so", async () => {
   await withServer(async (client, hits) => {
@@ -178,8 +211,7 @@ test("the agent has no tool that answers an approval, and the manual says so", a
     const r = await client.callTool({ name: "answer_approval", arguments: { runId: "r", gateKey: "gate:0", choice: "approve" } }).catch(() => ({ isError: true }));
     assert.equal(r.isError, true);
     assert.equal(hits.length, 0, "nothing reached the loopback");
-    const manual = `${by(tools, "run_script")}\n${by(tools, "run_workflow")}`;
-    assert.match(manual, /answered by the user in the app only/);
+    assert.match(by(tools, "agent"), /answered by the user in the app only/);
   });
 });
 
@@ -209,26 +241,79 @@ test("the loopback family has no approval route; the bearer-gated one is the onl
 
 test("tools make the loopback calls the routes expect", async () => {
   await withServer(async (client, hits) => {
-    await client.callTool({ name: "run_script", arguments: { script: "s", tokenBudget: 99, budgets: { agents: 3 } } });
+    /* One prompt with no pair is a subagent on the caller's own model, and it
+       waits the default budget — verbatim what `ask_agent` did, because a
+       one-step errand is the shape that answers soonest. */
+    await client.callTool({ name: "agent", arguments: { prompt: "audit", description: "Audit it" } });
     assert.deepEqual(hits.at(-1), {
       method: "POST",
-      url: "/wf/k/s/scripts?wait=0",
-      body: { budgets: { tokens: 99, agents: 3 }, script: "s" },
+      url: "/wf/k/s/steps?wait=45",
+      body: { prompt: "audit", description: "Audit it" },
     });
-    await client.callTool({ name: "run_script", arguments: { name: "saved", budgets: { tokens: 5 }, tokenBudget: 99 } });
-    assert.equal((hits.at(-1)!.body as { budgets: { tokens: number } }).budgets.tokens, 5, "explicit budgets.tokens wins over the alias");
-    await client.callTool({ name: "wait_workflow", arguments: { runId: "a b" } });
-    assert.equal(hits.at(-1)!.url, "/wf/k/s/runs/a%20b?wait=45");
-    await client.callTool({ name: "wait_workflow", arguments: { runId: "r", timeoutSec: 55 } });
+    /* Naming a pair is an ask — the same route, the pair carried through. */
+    await client.callTool({ name: "agent", arguments: { prompt: "look", agent: "codex", profile: "openai" } });
+    assert.equal(hits.at(-1)!.url, "/wf/k/s/steps?wait=45");
+    assert.deepEqual((hits.at(-1)!.body as Record<string, unknown>).agent, "codex");
+    /* `waitSec` is the only waiting model. */
+    await client.callTool({ name: "agent", arguments: { prompt: "x", waitSec: 55 } });
+    assert.equal(hits.at(-1)!.url, "/wf/k/s/steps?wait=55");
+    /* A script and a saved workflow are `/scripts`; a graph is `/runs`, with
+       the top-level pair as its steps' default. */
+    await client.callTool({ name: "agent", arguments: { script: "s" } });
+    assert.deepEqual(hits.at(-1), { method: "POST", url: "/wf/k/s/scripts?wait=0", body: { script: "s" } });
+    await client.callTool({ name: "agent", arguments: { name: "saved", args: { a: 1 } } });
+    assert.deepEqual((hits.at(-1)!.body as Record<string, unknown>), { name: "saved", args: { a: 1 } });
+    await client.callTool({
+      name: "agent",
+      arguments: { steps: [{ name: "one", prompt: "p" }], agent: "codex", model: "m" },
+    });
+    const def = (hits.at(-1)!.body as { definition: { steps: Record<string, unknown>[] } }).definition;
+    assert.equal(def.steps[0]!.agent, "codex", "the top-level pair is the default for every step");
+    assert.equal(def.steps[0]!.model, "m");
+    await client.callTool({ name: "agent_status", arguments: { id: "a b" } });
+    assert.equal(hits.at(-1)!.url, "/wf/k/s/runs/a%20b");
+    await client.callTool({ name: "agent_status", arguments: { id: "r", waitSec: 55 } });
     assert.equal(hits.at(-1)!.url, "/wf/k/s/runs/r?wait=55");
-    await client.callTool({ name: "signal_workflow", arguments: { runId: "r", name: "go" } });
+    await client.callTool({ name: "agent_message", arguments: { id: "r", prompt: "more" } });
+    assert.equal(hits.at(-1)!.url, "/wf/k/s/runs/r/continue?wait=45");
+    await client.callTool({ name: "agent_control", arguments: { id: "r", action: "signal", name: "go" } });
     assert.deepEqual(hits.at(-1), { method: "POST", url: "/wf/k/s/runs/r/signal", body: { name: "go", value: null } });
+    await client.callTool({ name: "agent_control", arguments: { id: "r", action: "pause" } });
+    assert.equal(hits.at(-1)!.url, "/wf/k/s/runs/r/pause");
     await client.callTool({ name: "delete_workflow", arguments: { name: "x y", scope: "personal" } });
     assert.deepEqual(hits.at(-1), { method: "DELETE", url: "/wf/k/s/saved/x%20y?scope=personal", body: null });
-    await client.callTool({ name: "list_runs", arguments: {} });
-    assert.equal(hits.at(-1)!.url, "/wf/k/s/runs?limit=20");
-    await client.callTool({ name: "pause_workflow", arguments: { runId: "r" } });
-    assert.equal(hits.at(-1)!.url, "/wf/k/s/runs/r/pause");
+    /* `runs` asks for both halves, and they are issued together. */
+    await client.callTool({ name: "agent_list", arguments: { runs: true } });
+    const listed = hits.slice(-2).map((h) => h.url);
+    assert.deepEqual(listed.sort(), ["/wf/k/s/agents", "/wf/k/s/runs?limit=20"]);
+  });
+});
+
+test("a role is resolved here when it exists and named when it does not", async () => {
+  await withServer(async (client, hits) => {
+    await client.callTool({ name: "agent", arguments: { prompt: "x", role: "small" } });
+    assert.equal((hits.at(-1)!.body as { model?: string }).model, "m-small");
+    const before = hits.length;
+    const bad = await client.callTool({ name: "agent", arguments: { prompt: "x", role: "nope" } });
+    assert.equal(bad.isError, true);
+    assert.match(text(bad), /Known roles: small/);
+    assert.equal(hits.length, before, "an unknown role never reaches the loopback");
+    /* A role on ANOTHER pair is the user's question, not a translation. */
+    const crossed = await client.callTool({ name: "agent", arguments: { prompt: "x", role: "small", agent: "codex", profile: "openai" } });
+    assert.equal(crossed.isError, true);
+    assert.match(text(crossed), /cannot cross to another pair/);
+  });
+});
+
+test("exactly one shape is enforced in words the model can act on", async () => {
+  await withServer(async (client, hits) => {
+    const before = hits.length;
+    for (const args of [{}, { prompt: "a", script: "b" }, { args: { a: 1 } }]) {
+      const r = await client.callTool({ name: "agent", arguments: args });
+      assert.equal(r.isError, true, JSON.stringify(args));
+      assert.match(text(r), /give exactly one of|goes with/);
+    }
+    assert.equal(hits.length, before, "a bad shape never starts anything");
   });
 });
 

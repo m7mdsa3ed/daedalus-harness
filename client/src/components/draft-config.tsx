@@ -37,6 +37,7 @@ import {
   type ChoicePick,
   HelperModelsSub,
   MenuRow,
+  PersonaRow,
   PILL,
   PillLabel,
   SessionSettingsSub,
@@ -819,6 +820,7 @@ export function DraftConfigPopover({
             <MenuRow {...modelPick} />
           )}
           {effortPick && <MenuRow {...effortPick} />}
+          <PersonaRow value={meta.personaId} onSelect={(personaId) => configure({ personaId })} />
           <AskAgentsSub
             value={meta.askProfiles ?? {}}
             onChange={(askProfiles) => configure({ askProfiles })}

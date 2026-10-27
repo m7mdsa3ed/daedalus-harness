@@ -69,6 +69,26 @@ export interface AgentEnv {
   holdOnError: boolean;
   /** Name a thread from its first message with the small model (`title.ts`). Off with `0`/`false`. */
   autoTitle: boolean;
+  /**
+   * How this process hands work to another worker (`DAEDALUS_AGENT_SUBAGENTS`,
+   * written by the harness at spawn):
+   *
+   *  - `"harness"` — a top-level harness thread, which has the `agents` MCP
+   *    server. The in-process `task`, `list_agents` and `send_message` are
+   *    dropped there: under the harness they LOSE to that server (their
+   *    children are not real threads, do not survive a restart and are not
+   *    counted in any cap), and keeping both is two `list_agents` answering
+   *    different questions.
+   *  - `"off"` — a workflow step or an ask's child: one level is the rule, so
+   *    neither the server nor the in-process loop is offered.
+   *  - `"local"` — standalone (`agent/docs/standalone.md`), or any process the
+   *    harness did not spawn. The in-process loop is all there is.
+   *
+   * It is said, never inferred: reading "is the `agents` server among my
+   * servers" gives a step child the in-process `task` back, and a tree of the
+   * one-level rule.
+   */
+  subagents: "harness" | "off" | "local";
   home: string;
 }
 
@@ -181,6 +201,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
       (str(env.DAEDALUS_AGENT_HOLD_ON_ERROR) ?? "").toLowerCase(),
     ),
     autoTitle: !["0", "false", "off"].includes((str(env.DAEDALUS_AGENT_TITLES) ?? "").toLowerCase()),
+    subagents: (["harness", "off", "local"] as const).find((v) => v === str(env.DAEDALUS_AGENT_SUBAGENTS)) ?? "local",
     home: str(env.DAEDALUS_AGENT_HOME) ?? join(homedir(), ".daedalus-agent"),
   };
 }

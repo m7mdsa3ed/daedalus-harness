@@ -28,6 +28,7 @@ const TABLES = [
   ["mcpServers", "MCP servers"],
   ["skills", "Skills"],
   ["commands", "Commands"],
+  ["personas", "Personas"],
   ["projects", "Projects"],
   ["knowledge", "Knowledge entries"],
   ["previews", "Saved previews"],

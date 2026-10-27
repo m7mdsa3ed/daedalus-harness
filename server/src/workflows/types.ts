@@ -319,7 +319,16 @@ export const ENGINE_LIMITS = {
   /** Per run, unless FlowControl.concurrency. */
   defaultConcurrency: 5,
   maxConcurrency: 16,
+  /** Workflow runs one thread may have going at once. */
   runsPerParent: 3,
+  /** One-step runs on ANOTHER pair (an ask) one thread may have going at once,
+      counted apart from `runsPerParent` so consulting two agents never locks a
+      thread out of a workflow. */
+  asksPerParent: 4,
+  /** One-step runs on the thread's OWN pair (a subagent), counted apart again:
+      a model fanning out eight of them must not take every workflow slot, and
+      a model consulting two agents must not run out of subagents. */
+  subagentsPerParent: 8,
   stepTimeoutSec: { default: 15 * 60, max: 6 * 60 * 60 },
   totalTimeoutSec: { default: 2 * 60 * 60, max: 24 * 60 * 60 },
   outputBytes: 256 * 1024,

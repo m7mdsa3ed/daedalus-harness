@@ -225,7 +225,9 @@ export function createCore(deps: CoreDeps) {
         /* Which component groups the drawn-view lane teaches; empty is the lane
            off, unset is all of them (the server's own reading of an absent set). */
         uiGroups: meta.uiGroups ?? [...DEFAULT_UI_GROUPS],
-        /* Which profile and model `ask_agent` uses per agent — free on the
+        // The persona picked on the draft; null is none.
+        personaId: meta.personaId ?? null,
+        /* Which profile and model the `agent` tool uses per agent — free on the
            draft, and read by the server at ask time, never at spawn. */
         askProfiles: meta.askProfiles ?? {},
         /* The agent options as the draft showed them. The server applies them

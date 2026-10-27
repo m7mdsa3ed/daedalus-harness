@@ -7,7 +7,7 @@
 import type * as acp from "@daedalus/acp"
 import { toast } from "../toast"
 import { saveProjectDefaults } from "../project-defaults"
-import { api, type Profile, type ProjectDefaults, type SessionMeta } from "../settings"
+import { api, type Persona, type Profile, type ProjectDefaults, type SessionMeta } from "../settings"
 import { currentChoiceLabel } from "../session-options"
 import type { ThreadState } from "../store"
 import type { ActionsCore } from "./core"
@@ -43,6 +43,8 @@ export type ConfigPatch = {
   /** Which component groups the drawn-view lane teaches; a set travels whole,
       and empty is drawn answers off. */
   uiGroups?: string[]
+  /** The thread's persona; null = none. Spawn text, so a change costs a respawn. */
+  personaId?: string | null
   /** The thread's role→model helper map (docs/model-roles.md) — a spawn input
       like `model`/`effort`, so a change costs a respawn and the server stages
       it against the running turn's boundary. */
@@ -88,6 +90,7 @@ function previousConfig(meta: SessionMeta, patch: ConfigPatch): ConfigPatch {
       ? { suggestKinds: meta.suggestKinds ?? [...DEFAULT_SUGGEST_KINDS] }
       : {}),
     ...(patch.uiGroups !== undefined ? { uiGroups: meta.uiGroups ?? [...DEFAULT_UI_GROUPS] } : {}),
+    ...(patch.personaId !== undefined ? { personaId: meta.personaId ?? null } : {}),
     ...(patch.helperModels !== undefined ? { helperModels: meta.helperModels ?? [] } : {}),
   }
 }
@@ -101,6 +104,7 @@ export type ConfigChangeKind =
   | "effort"
   | "suggestions"
   | "ui"
+  | "persona"
   | "helpers"
   | "mode"
   | "option"
@@ -125,7 +129,9 @@ export function configChanges(
   profiles: Profile[],
   /** What names a mode or an option — the agent's own list, which this module
       does not otherwise read. Without it an id stands in for its name. */
-  thread?: ThreadState
+  thread?: ThreadState,
+  /** What names a persona id; without it the id stands in. */
+  personas?: Persona[]
 ): ConfigChange[] {
   const rows: ConfigChange[] = []
   if (patch.profileId !== undefined) {
@@ -159,6 +165,10 @@ export function configChanges(
           : `Drawn UI: ${patch.uiGroups.length} of ${UI_GROUPS.length} groups`,
     })
   }
+  if (patch.personaId !== undefined) {
+    const name = patch.personaId ? (personas?.find((p) => p.id === patch.personaId)?.name ?? patch.personaId) : "none"
+    rows.push({ kind: "persona", label: "Persona", value: name })
+  }
   if (patch.helperModels !== undefined) {
     const named = patch.helperModels.map((h) => h.role).join(", ")
     rows.push({ kind: "helpers", label: "Helper models", value: named || "none" })
@@ -180,9 +190,10 @@ export function configChanges(
 export function describeConfig(
   patch: ConfigPatch,
   profiles: Profile[],
-  thread?: ThreadState
+  thread?: ThreadState,
+  personas?: Persona[]
 ): string {
-  return configChanges(patch, profiles, thread)
+  return configChanges(patch, profiles, thread, personas)
     .map((change) => change.sentence ?? `${change.label}: ${change.value}`)
     .join(" · ")
 }
@@ -218,6 +229,7 @@ export function configActions(core: ActionsCore) {
     if (next.effort !== undefined) patch.effort = next.effort
     if (next.suggestKinds !== undefined) patch.suggestKinds = next.suggestKinds
     if (next.uiGroups !== undefined) patch.uiGroups = next.uiGroups
+    if (next.personaId !== undefined) patch.personaId = next.personaId ?? ""
     if (next.helperModels !== undefined) patch.helperModels = next.helperModels
     if (Object.keys(patch).length > 0) {
       saveProjectDefaults(settings, queryClient, meta.projectId, patch)
@@ -271,6 +283,8 @@ export function configActions(core: ActionsCore) {
           suggestKinds: next.suggestKinds,
           // A set travels whole, like the suggestions: absent is unchanged.
           uiGroups: next.uiGroups,
+          // The persona: absent is unchanged, null is none.
+          personaId: next.personaId,
           /* The role→model helper map (docs/model-roles.md). A spawn input:
              only a real pick travels (`undefined` is dropped by
              `JSON.stringify`), and the server stages it like the rest. */
@@ -441,7 +455,7 @@ export function configActions(core: ActionsCore) {
        never surprised anyone. */
     if (outcome === "restarting" || outcome === "restarted") {
       toast("Restarting the agent", {
-        description: describeConfig(held.patch, catalog.profiles()),
+        description: describeConfig(held.patch, catalog.profiles(), undefined, catalog.personas()),
         action: {
           label: "Undo",
           onClick: () => changeThreadConfig(held.meta, held.before, held.context),
@@ -554,6 +568,12 @@ export function configActions(core: ActionsCore) {
      */
     changeThreadUiGroups(meta: SessionMeta, uiGroups: string[]): void {
       changeThreadConfig(meta, { uiGroups }, "Couldn't change this thread's drawn UI")
+    },
+
+    /** Set the persona a thread runs under; null is none. Spawn text like the
+        drawn-view lane, so the server stages it and it costs a respawn. */
+    changeThreadPersona(meta: SessionMeta, personaId: string | null): void {
+      changeThreadConfig(meta, { personaId }, "Couldn't change this thread's persona")
     },
 
     /** Drop the staged change. The server answers every peer with

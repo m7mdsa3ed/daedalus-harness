@@ -40,7 +40,7 @@ export interface HarnessTool {
 }
 
 /** The library's five reusable-row resources, addressed by one set of tools. */
-export const LIBRARY_RESOURCES = ["mcp-servers", "skills", "commands", "model-prompts"] as const;
+export const LIBRARY_RESOURCES = ["mcp-servers", "skills", "commands", "personas", "model-prompts"] as const;
 
 const id = { id: z.string().min(1).describe("The row's id.") };
 const projectId = { projectId: z.string().min(1).describe("The project's id.") };
@@ -297,7 +297,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
     params: id,
   },
 
-  /* ── The library: MCP servers, skills, commands, model prompts ── */
+  /* ── The library: MCP servers, skills, commands, personas, model prompts ── */
   {
     name: "library_list",
     title: "List a library kind",
@@ -310,7 +310,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
     name: "library_create",
     title: "Add a library row",
     description:
-      "Create a row: an MCP server ({type:\"stdio\"|\"http\"|\"builtin\", name, ...}), a skill ({name, path}), a command ({name, description, content, argumentHint?}), or a model prompt.",
+      "Create a row: an MCP server ({type:\"stdio\"|\"http\"|\"builtin\", name, ...}), a skill ({name, path}), a command ({name, description, content, argumentHint?}), a persona ({name, prompt, description?, sortOrder?}), or a model prompt.",
     method: "POST",
     path: "/api/:resource",
     params: resource,

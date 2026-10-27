@@ -88,8 +88,18 @@ export interface StepContext {
   cancelReason?: () => string | null;
   /** Set for a run drawn as an ask (a plain subagent, `_meta.daedalus.ask`). */
   ask: AskInfo | null;
+  /** The run is ONE step on the parent's own pair — a subagent. Its child is
+      drawn as a plain subagent (neither an ask's chip nor a run's card), and it
+      carries no `childRun`: there is no card for it to belong to. */
+  subagent?: boolean;
   /** The child's permission policy (an ask grants everything: ASK_AUTONOMY). */
   autonomy?: AutonomyPolicy;
+  /** The child thread an EARLIER run left for this same call (a step that failed
+      or was stopped), from `StepCall.resume`. Continuing it keeps the
+      conversation that got as far as it did, which is the whole point of
+      `agent_message` on a multi-step run — a fresh thread would begin the work
+      again. Absent when there is nothing to continue. */
+  resume?: Recovered | null;
   /** Step clock when the spec names none; null = no limit (an ask's default). */
   defaultTimeoutSec: number | null;
   defaultOnRestart: OnRestart;
@@ -274,6 +284,9 @@ function schemaInstruction(schema: Record<string, unknown>): string {
 export async function runAgentStep(ctx: StepContext, spec: AgentSpec, key: string, name: string): Promise<StepResult> {
   const { parent } = ctx;
   const policy: OnRestart = spec.onRestart ?? ctx.defaultOnRestart;
+  /* An ask's row is named for the errand, because the pair it names is on its
+     chip; every other step is named by its title (`titles.ts`), which a
+     one-step run on the parent's own pair sets from the caller's description. */
   const rowName = ctx.ask ? (ctx.ask.description ?? `${ctx.ask.agent} · ${ctx.ask.profile}`) : ctx.placement().title;
   const maxAttempts = 1 + (spec.retry?.max ?? 0);
   const fallbackModel = spec.retry?.fallbackModel;
@@ -321,11 +334,24 @@ export async function runAgentStep(ctx: StepContext, spec: AgentSpec, key: strin
       // The old thread is abandoned, not deleted: say so on its row.
       ctx.manager.emitOn(parent.id, stateUpdate(recovered.sessionId, "disconnected"));
     }
-    const resumeId = spec.resumeSession ?? (recovered && policy === "resume" ? recovered.sessionId : undefined);
+    /* Three ways to continue an existing conversation, in the order they win:
+       the script named the thread (`resumeSession`), this step was in flight at
+       a RESTART (`recovered`, policy permitting), or an earlier RUN of the same
+       call left a child behind (`ctx.resume`). The last is the one a continue
+       of a workflow run needs: replay serves the completed calls, and the failed
+       one picks up where it stopped instead of starting over.
+       `onRestart: "rerun"` refuses the third: the author said this step must
+       start from its prompt whenever it runs again, and resuming it would
+       contradict that whatever caused the re-run. */
+    const resumeId =
+      spec.resumeSession ??
+      (recovered && policy === "resume" ? recovered.sessionId : undefined) ??
+      (policy === "rerun" ? undefined : ctx.resume?.sessionId);
     /* A resumed step continues the attempt that was in flight rather than
-       starting another, so a restart never eats a retry. */
-    const continuing = !!recovered && policy === "resume";
-    attempt = continuing ? Math.max(0, recovered!.attempt - 1) : 0;
+       starting another, so a restart never eats a retry. A step continued from
+       an earlier run is the same bargain, one run further out. */
+    const continuing = (!!recovered && policy === "resume") || (!!resumeId && resumeId === ctx.resume?.sessionId);
+    attempt = continuing ? Math.max(0, (recovered?.attempt ?? 1) - 1) : 0;
 
     // ---- the prompt ----
     const lead = spec.agentType ? (await commandLibrary.list()).find((c) => c.name === spec.agentType) : undefined;
@@ -537,9 +563,9 @@ async function spawnChild(
     parent.links,
     {
       parentSessionId: parent.id,
-      childKind: ctx.ask ? "ask" : "workflow",
-      ...(ctx.ask ? {} : { childRun: { id: ctx.runId, name: ctx.runName } }),
-      title: ctx.ask ? `Ask · ${rowName}` : `${ctx.runName} · ${rowName}`,
+      childKind: ctx.ask ? "ask" : ctx.subagent ? "subagent" : "workflow",
+      ...(ctx.ask || ctx.subagent ? {} : { childRun: { id: ctx.runId, name: ctx.runName } }),
+      title: ctx.ask ? `Ask · ${rowName}` : ctx.subagent ? `Subagent · ${rowName}` : `${ctx.runName} · ${rowName}`,
       restore,
       /* A step works where its parent does — in the parent's worktree — unless
          the script asked for `isolation: 'worktree'`: then a checkout of its
@@ -547,6 +573,8 @@ async function spawnChild(
       worktree: spec.isolation === "worktree" ? true : spec.projectId ? undefined : (parent.worktree ?? undefined),
       suggestKinds: parent.suggestKinds,
       uiGroups: parent.uiGroups,
+      // An ask is another pair working from a brief; it does not take this thread's persona.
+      personaId: ctx.ask ? null : parent.personaId,
       /* An ask is the person's go-ahead for its whole brief, and its child has
          nobody in front of it. What no policy can answer still parks, and is
          repeated on the parent (`SessionManager.emit`). */
@@ -586,6 +614,38 @@ async function reviveChild(ctx: StepContext, id: string, model: string | undefin
     and workflow card decode. Journaled with the spawn, so a replay redraws it. */
 function announce(ctx: StepContext, child: Session, spec: AgentSpec, name: string, rowName: string): void {
   const where = ctx.placement();
+  /* What kind of worker this row is: a run's step, another pair's ask, or — on
+     the parent's own pair — a plain subagent, which is the one shape that needs
+     no `_meta` at all. */
+  const meta = ctx.subagent
+    ? null
+    : ctx.ask
+      ? {
+          daedalus: {
+            ask: {
+              agent: ctx.ask.agent,
+              profile: ctx.ask.profile,
+              agentId: ctx.ask.agentId,
+              profileId: ctx.ask.profileId,
+            },
+          },
+        }
+      : {
+          daedalus: {
+            workflow: {
+              runId: ctx.runId,
+              sessionId: ctx.parent.id,
+              name: ctx.runName,
+              step: name,
+              title: where.title,
+              titles: where.titles,
+              index: where.index,
+              total: where.total,
+              phase: where.phase ?? undefined,
+              plan: where.plan,
+            },
+          },
+        };
   ctx.manager.emitOn(ctx.parent.id, {
     ev: "update",
     seq: 0,
@@ -601,33 +661,11 @@ function announce(ctx: StepContext, child: Session, spec: AgentSpec, name: strin
          is the whole outline, repeated on every spawn so the card shows the
          shape the author wrote from the first step. An ask carries the pair
          instead (`ask`, never `workflow`): it is no run, so it draws as a plain
-         subagent — one that has to say it is a *different* agent. A resumed
-         child is spawned again: a settled child spawned again is a wake. */
-      _meta: {
-        daedalus: ctx.ask
-          ? {
-              ask: {
-                agent: ctx.ask.agent,
-                profile: ctx.ask.profile,
-                agentId: ctx.ask.agentId,
-                profileId: ctx.ask.profileId,
-              },
-            }
-          : {
-              workflow: {
-                runId: ctx.runId,
-                sessionId: ctx.parent.id,
-                name: ctx.runName,
-                step: name,
-                title: where.title,
-                titles: where.titles,
-                index: where.index,
-                total: where.total,
-                phase: where.phase ?? undefined,
-                plan: where.plan,
-              },
-            },
-      },
+         subagent — one that has to say it is a *different* agent. A one-step
+         run on the parent's OWN pair carries neither: it is a plain subagent
+         of this thread's own agent, which is exactly what the absence says. A
+         resumed child is spawned again: a settled child spawned again is a wake. */
+      ...(meta ? { _meta: meta } : {}),
     },
   });
 }

@@ -73,6 +73,7 @@ export const emptyDefaults = (): ProjectDefaults => ({
   commandIds: [],
   suggestKinds: [...DEFAULT_SUGGEST_KINDS],
   uiGroups: [...DEFAULT_UI_GROUPS],
+  personaId: "",
   askProfiles: {},
 })
 

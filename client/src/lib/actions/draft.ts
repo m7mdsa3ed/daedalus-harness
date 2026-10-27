@@ -76,6 +76,7 @@ export function draftActions(core: ActionsCore) {
     copy("effort")
     if (next.suggestKinds !== undefined) patch.suggestKinds = next.suggestKinds
     if (next.uiGroups !== undefined) patch.uiGroups = next.uiGroups
+    if (next.personaId !== undefined) patch.personaId = next.personaId ?? ""
     if (next.askProfiles !== undefined) patch.askProfiles = next.askProfiles
     if (next.mcpServerIds !== undefined) patch.mcpServerIds = next.mcpServerIds
     if (next.skillIds !== undefined) patch.skillIds = next.skillIds
@@ -194,6 +195,7 @@ export function draftActions(core: ActionsCore) {
       effort: effort ?? "",
       suggestKinds: defaults.suggestKinds,
       uiGroups: defaults.uiGroups,
+      personaId: defaults.personaId || null,
       askProfiles: defaults.askProfiles,
       /* The picks against the agent's advertised selectors, and the permission
          mode, are the project's too — they are what the menu there showed. An
@@ -359,6 +361,7 @@ export function draftActions(core: ActionsCore) {
           | "modeId"
           | "suggestKinds"
           | "uiGroups"
+          | "personaId"
           | "askProfiles"
           | "helperModels"
           | "configChoices"
@@ -406,6 +409,7 @@ export function draftActions(core: ActionsCore) {
             helperModels: named ? d.helperModels : [],
             suggestKinds: d.suggestKinds,
             uiGroups: d.uiGroups,
+            personaId: d.personaId || null,
             askProfiles: d.askProfiles,
             ...defaultToolPicks(d),
           }

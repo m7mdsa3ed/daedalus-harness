@@ -9,10 +9,17 @@
    package.json as `${env.DAEDALUS_UPDATE_URL}` because electron-builder fails
    the whole build on an unset env macro, and a from-CLI publish cannot be
    nulled out again; unset, the build has no app-update.yml and main.cjs logs
-   the failed checks and moves on. Extra arguments (`--win`) pass through. */
+   the failed checks and moves on. Extra arguments (`--win`) pass through.
+
+   A gitignored client/.env may carry it instead, and an exported value wins:
+   one build made without the feed ships no app-update.yml, and every install
+   it reaches stops updating for good. */
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { createRequire } from "node:module"
+
+const envFile = new URL("../.env", import.meta.url)
+if (existsSync(envFile)) process.loadEnvFile(envFile)
 
 const require = createRequire(import.meta.url)
 const { version } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"))

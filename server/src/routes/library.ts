@@ -5,9 +5,11 @@ import { z } from "zod";
 import {
   CommandInputSchema,
   McpServerInputSchema,
+  PersonaInputSchema,
   SkillInputSchema,
   commands,
   mcpServers,
+  personas,
   skills,
   isBuiltinMcp,
   isThreadScopedBuiltin,
@@ -45,6 +47,7 @@ export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     ["mcp-servers", mcpServers, McpServerInputSchema],
     ["skills", skills, SkillInputSchema],
     ["commands", commands, CommandInputSchema],
+    ["personas", personas, PersonaInputSchema],
     ["model-prompts", modelPrompts, ModelPromptInputSchema],
   ] as const) {
     /* The MCP list is the one that says more than the row holds: each `http`

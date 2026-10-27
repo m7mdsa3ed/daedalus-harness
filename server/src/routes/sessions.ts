@@ -178,6 +178,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       modeId,
       suggestKinds,
       uiGroups,
+      personaId,
       askProfiles,
       configChoices,
       helperModels: rawHelperModels,
@@ -253,6 +254,8 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         // The drawn-UI lane, the same draft-picked spawn input: empty is off,
         // omitted (or not an array) reads as all.
         uiGroups: Array.isArray(uiGroups) ? normalizeUiGroups(uiGroups) : undefined,
+        // The draft's persona; anything but a non-empty string is none.
+        personaId: typeof personaId === "string" && personaId ? personaId : null,
         // Which profile and model `ask_agent` uses per agent; omitted = ask.
         askProfiles: AskProfilesSchema.safeParse(askProfiles).data,
         // The draft's permission mode, picked against the agent's probed `modes`.
@@ -509,7 +512,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
        change it was asked to take. This is what answers a caller that does
        not. */
     const staged = body.defer === false ? (sessions.stagedRequest(session.id) ?? {}) : {};
-    const { profileId, agentId: askedAgent, model, effort, suggestKinds, uiGroups, helperModels } = {
+    const { profileId, agentId: askedAgent, model, effort, suggestKinds, uiGroups, personaId, helperModels } = {
       ...staged,
       ...body,
     };
@@ -541,6 +544,9 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         // The drawn-UI lane: spawn text, and a set that differs costs the
         // process (`applyConfigLive` compares as sets); empty is off.
         uiGroups: Array.isArray(uiGroups) ? normalizeUiGroups(uiGroups) : undefined,
+        // The persona: spawn text like the lane above. Omitted = unchanged,
+        // null or "" = none.
+        personaId: personaId === undefined ? undefined : typeof personaId === "string" && personaId ? personaId : null,
         // The role → model map: read at spawn (the env var and the materialised
         // files), so a change costs the process like a profile move.
         helperModels: parsedHelpers ? parsedHelpers.data : undefined,
@@ -572,6 +578,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       effort: session.effort,
       suggestKinds: session.suggestKinds,
       uiGroups: session.uiGroups,
+      personaId: session.personaId,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId,
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
     });

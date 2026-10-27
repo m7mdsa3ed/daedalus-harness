@@ -157,8 +157,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   one, because every one of them was a place a fork, a rename or a fifth runtime silently
   got the wrong answer:
   - `workflowsVia: "native"` — `sessions.ts` compared `session.agentId === "claude-code"` to
-    decide whether to hand a thread the harness's workflow server. A fork under another id
-    got the lesser engine *and* kept its own.
+    decide whether to hand a thread the harness's workflow tools (now the `agents` server's
+    `steps`/`script`/`name` fields). A fork under another id got the lesser engine *and* kept
+    its own.
   - `workspaceLayout` — where a runtime reads projected skills, commands and the model
     allowlist. `materialize.ts` wrote `<cwd>/.claude/…` for every thread whatever ran it, so
     a skill linked to a Codex thread did nothing and a project nobody ran Claude Code in grew

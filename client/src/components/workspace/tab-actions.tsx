@@ -5,10 +5,11 @@
    one looks first. It went to the app header once because a split dock has one
    per group with no obvious answer to which you press; the answer it has now is
    that there is no ambiguity to resolve — a + on *this* strip opens into *this*
-   group, which is the same thing every tab beside it is about. Its rows are
-   `WorkspacePanelItems`, the header menu's own, so the two cannot drift; the
-   openers come down through the dock (`useDockOpeners`) because which project a
-   panel belongs to is `app-shell`'s answer, not a strip's.
+   group, which is the same thing every tab beside it is about. It opens a new
+   tab and nothing else — no menu, because a + that asks "open what?" is the
+   header menu wearing a second face. The opener comes down through the dock
+   (`useDockOpeners`) because which project a panel belongs to is `app-shell`'s
+   answer, not a strip's.
 
    The layout button is the + for arrangement: it deals the dock's tabs into a
    preset (`LAYOUT_PRESETS`, the Layouts menu's own list). Not on a phone,
@@ -41,6 +42,8 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { useStoreSelect } from "@/lib/store"
+import { useChord } from "@/lib/keybindings"
+import { formatChord } from "@/lib/shortcuts"
 import { useIsMobile } from "@/hooks/use-device"
 import { HEADER_CHIP } from "@/lib/header-chrome"
 import { MENU_ROW, MENU_WIDTH, MenuRow } from "@/components/menu-row"
@@ -48,7 +51,7 @@ import { PANEL_ICONS, PanelIcon } from "@/components/workspace/panel-kinds"
 import { AgentIcon } from "@/components/entity-icon"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
 import type { PresetId } from "@/components/workspace/dock-context"
-import { LAYOUT_PRESETS, WorkspacePanelItems } from "@/components/workspace/panel-items"
+import { LAYOUT_PRESETS } from "@/components/workspace/panel-items"
 import { descriptorOf, useDock, useDockOpeners } from "@/components/workspace/dock-context"
 import { useOpenThreads } from "@/lib/workspace/open-threads"
 import { activityAt, isListed, relativeAge } from "@/lib/settings"
@@ -287,8 +290,9 @@ export function LayoutMenu({ onPick, className }: { onPick: (preset: PresetId) =
 
 export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
   const dock = useDock()
-  const { onNewTab, onOpenPanel } = useDockOpeners()
+  const { onNewTab } = useDockOpeners()
   const isMobile = useIsMobile()
+  const newTabChord = useChord("newThread")
 
   /* ── One gutter in the row ──
      Everything standing in a strip keeps the same 4px between it and its
@@ -300,37 +304,20 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
   return (
     <div className="flex h-full items-center gap-1 pl-0.5">
       {onNewTab && (
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            title="New tab"
-            render={
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label="Open something in this group"
-                className={STRIP_CONTROL}
-              >
-                <PlusIcon className="size-4" />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="end" className={MENU_WIDTH}>
-            {/* Flat: the + already asked "open what?", so answering with one
-                row and a submenu is a hop for nothing. The rows themselves are
-                the header menu's, unchanged. */}
-            <WorkspacePanelItems
-              flat
-              onNewTab={() => {
-                dock.targetNext(group.id)
-                onNewTab()
-              }}
-              /* Said, not aimed: the terminal behind this is a round trip away,
-                 and the strip goes along with it. */
-              onOpen={(kind) => onOpenPanel?.(kind, false, { into: { group: group.id } })}
-              canOpenPanels={!!onOpenPanel}
-            />
-          </DropdownMenuContent>
-        </DropdownMenu>
+        /* One gesture, no menu: a + is the browser's "another one of these",
+           and a reader who wanted a terminal has a tab's own menu for it. It
+           lands on *this* strip, which is the whole meaning of the control
+           standing at the end of these tabs. */
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          title={newTabChord ? `New tab (${formatChord(newTabChord)})` : "New tab"}
+          aria-label="New tab"
+          onClick={() => onNewTab({ group: group.id })}
+          className={STRIP_CONTROL}
+        >
+          <PlusIcon className="size-4" />
+        </Button>
       )}
       {/* Below `LIST_FROM` the list is a button that does nothing for you — the
           tabs are all on screen. On a phone the strip is the one tab you are on
@@ -343,13 +330,7 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
           onClose={(id) => void dock.closePanel(id)}
           onCloseAll={() => panels[0] && void dock.closeGroup(panels[0].id)}
           onOpenThread={(id) => dock.openChat(id, { newTab: true, into: { group: group.id } })}
-          onNew={
-            onNewTab &&
-            (() => {
-              dock.targetNext(group.id)
-              onNewTab()
-            })
-          }
+          onNew={onNewTab && (() => onNewTab({ group: group.id }))}
         />
       )}
     </div>

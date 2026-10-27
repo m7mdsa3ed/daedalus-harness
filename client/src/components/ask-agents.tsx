@@ -23,7 +23,7 @@ import { useAgents, useAgentsStatus, useProfiles } from "@/lib/queries/catalog"
 import { chatModels, profileSupports, type AskChoice, type AskProfiles, type Profile } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 
-/* ── Which profile (and model) `ask_agent` uses, per agent ──
+/* ── Which profile (and model) the `agent` tool uses, per agent ──
    One vocabulary in two places: the config menus' "Ask agents" submenu, where
    the person sets it ahead of time, and the card the `agents` MCP server raises
    when an ask has nothing set (an MCP form elicitation whose `askAgentPair`

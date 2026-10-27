@@ -10,7 +10,7 @@ import type * as acp from "./acp.js";
 import { db, sessions as sessionsTable } from "./db/index.js";
 import { SESSION_LINKS, emptyLinks, linksOf, readLinks, unionLinks, writeLinks, type LinkSet } from "./db/links.js";
 import { ensureProjectDir, materializeModelAllowlist, materializeWorkspace, sweepSubagentRoles } from "./materialize.js";
-import { commands as commandLibrary, mcpServers as mcpLibrary, skills as skillLibrary } from "./library.js";
+import { commands as commandLibrary, mcpServers as mcpLibrary, personas as personaLibrary, skills as skillLibrary } from "./library.js";
 import { isConnected as isMcpConnected } from "./mcp-oauth.js";
 import { mcpProxyUrlFor } from "./mcp-shim.js";
 import {
@@ -32,7 +32,8 @@ import { globalRules, projectRules } from "./rules.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { defaultProfileFor, getProfile, listProfiles, profileBaseUrl, profileSupports } from "./profiles.js";
-import { agentModelId, bareModelId, getAgent, modelAllowlistFor, type AgentDef } from "./registry.js";
+import { listModelRoles } from "./model-roles.js";
+import { agentModelId, bareModelId, getAgent, modelAllowlistFor, modelRoleDefs, type AgentDef } from "./registry.js";
 import type { WorkspaceLayout } from "./db/schema.js";
 import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
 import { addTps } from "./tps.js";
@@ -52,7 +53,7 @@ import { enrichError, pushStderr, resetStderr, spliceStderr } from "./stderr-rin
 import { checkInstalled } from "./agent-status.js";
 import { SessionQueue } from "./session-queue.js";
 import type { AutonomyPolicy } from "./autonomy.js";
-import { AGENTS_SERVER_NAME, HARNESS_SERVER_NAME, WORKFLOW_SERVER_NAME } from "./workflows/types.js";
+import { AGENTS_SERVER_NAME, HARNESS_SERVER_NAME } from "./workflows/types.js";
 import { deleteSearchIndex } from "./search.js";
 import { getQuota, invalidateQuota, planReadable, setRuntimeLiveCheck } from "./quota.js";
 import { profileUsage } from "./usage-api.js";
@@ -227,6 +228,9 @@ export interface Session {
       "layout". Same spawn-input bargain as the suggestions trailer: it is
       system-prompt text, so a change costs a respawn. */
   uiGroups: string[];
+  /** The persona the thread runs under (`personas`), or null for none. Spawn
+      text above the rules, so a change costs a respawn like `uiGroups`. */
+  personaId: string | null;
   title: string;
   /** The current title came from the first-prompt fallback, so an ACP
       `session_info_update` may replace it with the agent's better title. */
@@ -472,11 +476,9 @@ export async function mcpServersFor(
   links: Pick<LinkSet, "mcpServerIds">,
   project: Pick<Project, "id">,
   config: ReturnType<typeof loadConfig>,
-  /** The `workflow` server as this thread may have it — null for a thread
-      that must not (a workflow step: one level, never a tree). */
-  workflow: StdioMcpServer | null = null,
-  /** The `agents` server, on the same terms: null for a thread that is itself
-      a child, and for a caller with no thread behind it. */
+  /** The `agents` server — every way of handing work to another worker, the
+      workflow shapes included. Null for a thread that is itself a child (one
+      level, never a tree) and for a caller with no thread behind it. */
   agents: StdioMcpServer | null = null,
   /** The `harness` server — the agent managing this harness. Top-level threads
       only, like `agents`. */
@@ -499,9 +501,7 @@ export async function mcpServersFor(
             ? knowledgeServer(project)
             : s.builtin === "agents"
               ? agents
-              : s.builtin === "workflow"
-                ? workflow
-                : harness;
+              : harness;
       if (built) servers.push(built);
     } else if (s.type === "http") {
       /* An OAuth row is handed to the agent as the shim's loopback URL, never
@@ -561,7 +561,7 @@ export function websearchServer(config: ReturnType<typeof loadConfig>): StdioMcp
  * `pnpm start`, the tests) — and under tsx it is a `.ts` file with no `.js`
  * next to it, so node must be handed tsx's CLI to run it, exactly as pnpm runs
  * the server itself. `script` is a path relative to this module's directory, so a
- * file in a subfolder (`workflows/mcp`) resolves the same way in both modes:
+ * file in a subfolder (`workflows/manual`) resolves the same way in both modes:
  * `tsconfig.build.json` emits `src/**` to `dist/**` with `rootDir: src`, so no
  * build list needs the entry. Blindly appending `.js` pointed every dev server at a
  * file that did not exist, and the agent reported it as the MCP server
@@ -589,21 +589,38 @@ export function knowledgeServer(project: Pick<Project, "id">): StdioMcpServer {
   );
 }
 
-/** The harness's own `workflow` MCP server. The only thing it is handed is the
-    loopback URL that names the calling thread (`/wf/<key>/<sessionId>`): the
-    server process cannot reach the SessionManager, so it drives the run over
-    HTTP, and the key in that path is what lets the route act for exactly this
-    thread and no other. */
-export function workflowServer(session: Pick<Session, "id">, runner: WorkflowUrlSource): StdioMcpServer {
-  return harnessMcpServer(WORKFLOW_SERVER_NAME, "workflows/mcp", [
-    { name: "WORKFLOW_URL", value: runner.urlFor(session) },
+/**
+ * The harness's own `agents` MCP server: the one `agent` tool, and the workflow
+ * library beside it.
+ *
+ * The only thing it is handed is the loopback URL that names the calling thread
+ * (`/wf/<key>/<sessionId>`): the server process cannot reach the SessionManager,
+ * so it drives the run over HTTP, and the key in that path is what lets the
+ * route act for exactly this thread and no other.
+ *
+ * `workflows` is the other half of that address, and it is the RUNTIME's answer
+ * (`AgentDef.workflowsVia === "native"`), not the caller's: a runtime with an
+ * engine of its own is not offered ours, by the rule in
+ * `docs/mcp-and-workflows.md`, and the schema is generated per thread from it
+ * so a capability that is not on offer is not advertised either. It used to be
+ * a second stdio server — `workflow` — which meant a model with two tool
+ * families doing one thing; the tools moved here and the flag says whether the
+ * workflow shapes of `agent` are theirs to use.
+ *
+ * `roles` is the thread's helper-model vocabulary, resolved to model ids: a
+ * role means nothing to another pair, so the tool resolves one on the server
+ * for the thread's own pair only.
+ */
+export function agentsServer(
+  session: Pick<Session, "id">,
+  runner: WorkflowUrlSource,
+  opts: { workflows: boolean; roles: { id: string; label: string; description: string; model: string }[] },
+): StdioMcpServer {
+  return harnessMcpServer(AGENTS_SERVER_NAME, "agents-mcp", [
+    { name: "AGENTS_URL", value: runner.urlFor(session) },
+    ...(opts.workflows ? [{ name: "AGENTS_WORKFLOWS", value: "1" }] : []),
+    ...(opts.roles.length ? [{ name: "AGENTS_ROLES", value: JSON.stringify(opts.roles) }] : []),
   ]);
-}
-
-/** The harness's own `agents` MCP server: `ask_agent` and friends, over the
-    workflow runner's loopback — an ask is a one-step run on another pair. */
-export function agentsServer(session: Pick<Session, "id">, runner: WorkflowUrlSource): StdioMcpServer {
-  return harnessMcpServer(AGENTS_SERVER_NAME, "agents-mcp", [{ name: "AGENTS_URL", value: runner.urlFor(session) }]);
 }
 
 /** The harness's own `harness` MCP server: the agent managing this harness —
@@ -848,6 +865,7 @@ export class SessionManager {
         suggestKinds: suggestKindsOf(row.suggestKinds, row.suggestFollowups),
         // Null on a row from before the set existed: the legacy switch decides.
         uiGroups: uiGroupsOf(row.uiGroups, row.uiBlocks),
+        personaId: row.personaId ?? null,
         askProfiles: row.askProfiles ?? {},
         titleFromPrompt: null,
         profile: null,
@@ -1705,7 +1723,7 @@ export class SessionManager {
       /** Make this a workflow step of that thread. */
       parentSessionId?: string;
       /** Whether that child is an ask or a workflow step, for its sidebar icon. */
-      childKind?: "ask" | "workflow";
+      childKind?: "ask" | "workflow" | "subagent";
       /** The run a workflow step belongs to, which the sidebar folds steps by. */
       childRun?: { id: string; name: string };
       /** A title set before the first prompt, which the title sniff then leaves alone. */
@@ -1721,6 +1739,8 @@ export class SessionManager {
           spawn-input bargain as the suggestions toggle. */
       /** Which component groups the drawn-answers lane teaches; absent = all. */
       uiGroups?: string[];
+      /** The persona picked on the draft; absent or null = none. */
+      personaId?: string | null;
       /** Profile per agent id for `ask_agent`, picked on the draft; absent = ask. */
       askProfiles?: AskProfiles;
       /** The thread's role → model assignment, picked on the draft
@@ -1779,6 +1799,7 @@ export class SessionManager {
         modeId: opts.modeId,
         suggestKinds: opts.suggestKinds,
         uiGroups: opts.uiGroups,
+        personaId: opts.personaId,
         askProfiles: opts.askProfiles,
         helperModels: opts.helperModels,
         title: opts.title,
@@ -1897,12 +1918,13 @@ export class SessionManager {
       modeId?: string | null;
       suggestKinds?: string[];
       uiGroups?: string[];
+      personaId?: string | null;
       /** Profile per agent id for `ask_agent`, picked on the draft; absent = ask. */
       askProfiles?: AskProfiles;
       helperModels?: { role: string; model: string }[];
       title?: string;
       parentSessionId?: string;
-      childKind?: "ask" | "workflow";
+      childKind?: "ask" | "workflow" | "subagent";
       childRun?: { id: string; name: string };
       autonomy?: AutonomyPolicy;
       /** Where a forked thread was branched from — the parent's id and the
@@ -1944,6 +1966,7 @@ export class SessionManager {
       helperModels: opts.helperModels ?? [],
       suggestKinds: opts.suggestKinds ? normalizeSuggestKinds(opts.suggestKinds) : [...DEFAULT_SUGGEST_KINDS],
       uiGroups: opts.uiGroups ? normalizeUiGroups(opts.uiGroups) : [...UI_GROUP_IDS],
+      personaId: opts.personaId || null,
       title: opts.title ?? "New thread",
       titleFromPrompt: null,
       acpSessionProvisional: false,
@@ -2118,6 +2141,9 @@ export class SessionManager {
         task: session.parentSessionId ? null : await taskBrief(session.taskId),
       },
       rules,
+      /* Read now, like the rules: an edit to the persona reaches the next spawn,
+         and a deleted one reads as none. */
+      session.personaId ? await personaLibrary.get(session.personaId) : null,
     );
     const adoptedBy = this.adopting.get(session.id);
     this.adopting.delete(session.id);
@@ -2138,6 +2164,17 @@ export class SessionManager {
            like model and effort, so `start` places it and a revive from the row
            alone carries it. */
         session.helperModels,
+        /* Whether this thread delegates through the harness's `agents` server
+           (`harness`), may not delegate at all (`off`, one level), or has
+           nothing but its own in-process loop (absent: standalone). Read off
+           the server list resolved above rather than inferred by the runtime —
+           a step child has no servers either, and would otherwise get its
+           in-process `task` back and make a tree of the one-level rule. */
+        servers.mcpServers.some((s) => s.name === AGENTS_SERVER_NAME)
+          ? "harness"
+          : session.parentSessionId
+            ? "off"
+            : undefined,
       );
     /* A runtime that takes env per session (`AgentDef.sharedProcess`) is
        spawned with none of the thread's: all of it — gateway URL, key, model
@@ -2214,6 +2251,16 @@ export class SessionManager {
     return bridge;
   }
 
+  /** The thread's helper-model vocabulary, resolved to model ids — what the
+      `agents` server's `role` field offers and what it resolves against. Read
+      at spawn, like the runtime's own `DAEDALUS_AGENT_MODEL_ROLES`: a role's
+      model is fixed for the process, so a change costs a respawn either way. */
+  private async roleDefsFor(session: Session): Promise<{ id: string; label: string; description: string; model: string }[]> {
+    const [agent, profile] = await Promise.all([getAgent(session.agentId), session.profile ?? getProfile(session.profileId)]);
+    if (!agent || !profile) return [];
+    return modelRoleDefs(agent, profile, await listModelRoles(), session.helperModels, session.model);
+  }
+
   /** Everything the thread's agent is handed at `session/new`, and whether the
       harness's web-search server is among them — the bridge turns the runtime's
       own web tools off when it is (`AgentDef.builtinTools`), and usage is
@@ -2250,23 +2297,38 @@ export class SessionManager {
        Enforced here rather than left to whoever edits the profile's links:
        the two decisions are one decision, and a half-applied one silently
        costs the better tool. */
-    const ownsWorkflows = (await getAgent(session.agentId))?.workflowsVia === "native";
-    const workflow =
-      this.workflowRunner && !session.parentSessionId && !ownsWorkflows
-        ? workflowServer(session, this.workflowRunner)
+    const agent = await getAgent(session.agentId);
+    const ownsWorkflows = agent?.workflowsVia === "native";
+    /* One server for every way of handing work to another worker. `workflows`
+       is false on a runtime that brings its own engine (`AgentDef.workflowsVia
+       === "native"`, today Claude Code): the tool is still offered — asking
+       another pair rivals nothing — but its `steps`/`script`/`name` fields are
+       not advertised, so a capability that is not on offer is not promised. */
+    const agents =
+      this.workflowRunner && !session.parentSessionId
+        ? agentsServer(session, this.workflowRunner, {
+            workflows: !ownsWorkflows,
+            roles: await this.roleDefsFor(session),
+          })
         : null;
-    /* Asking another agent is one level too, but not the workflow engine's
-       rival: Claude Code keeps its own Workflow and still gets this. */
-    const agents = this.workflowRunner && !session.parentSessionId ? agentsServer(session, this.workflowRunner) : null;
     /* Managing the harness is one level too: a workflow step or a subagent is
        not the actor a person handed the harness to. */
     const harness = this.workflowRunner && !session.parentSessionId ? harnessServer(session, this.workflowRunner) : null;
+    /* The rows this runtime cannot be without (`AgentDef.requiredMcp`), folded
+       into the thread's links HERE rather than left to whoever edits them: the
+       Daedalus agent's only way to delegate is the `agents` server, so a link
+       set that left it out would silently retire the capability, and unlinking
+       it would change nothing. One level still wins — a child gets neither the
+       row nor the server, whatever its runtime requires. */
     const links = this.effectiveLinks(session, profile);
+    const required = session.parentSessionId ? [] : (agent?.requiredMcp ?? []).filter((id) => !links.mcpServerIds.includes(id));
+    const withRequired: LinkSet = required.length
+      ? { ...links, mcpServerIds: [...links.mcpServerIds, ...required] }
+      : links;
     const { servers: mcpServers, skipped } = await mcpServersFor(
-      links,
+      withRequired,
       project,
       getConfig(),
-      workflow,
       agents,
       harness,
     );
@@ -2278,7 +2340,10 @@ export class SessionManager {
     return {
       mcpServers,
       websearchViaMcp: mcpServers.some((s) => s.name === WEB_SEARCH_SERVER_NAME),
-      workflowViaMcp: mcpServers.some((s) => s.name === WORKFLOW_SERVER_NAME),
+      /* Whether the workflow half of the `agents` server is on offer. Read off
+         the spawned server rather than off the row again, so what the bridge is
+         told and what the tool advertises cannot disagree. */
+      workflowViaMcp: mcpServers.some((s) => s.name === AGENTS_SERVER_NAME) && (agent?.workflowsVia ?? null) !== "native",
     };
   }
 
@@ -2392,6 +2457,7 @@ export class SessionManager {
       effort?: string;
       suggestKinds?: string[];
       uiGroups?: string[];
+      personaId?: string | null;
       helperModels?: { role: string; model: string }[];
     },
     opts: { defer?: boolean; follow?: boolean } = {},
@@ -2443,6 +2509,7 @@ export class SessionManager {
        comes back is the one the user asked for. */
     if (next.suggestKinds !== undefined) session.suggestKinds = normalizeSuggestKinds(next.suggestKinds);
     if (next.uiGroups !== undefined) session.uiGroups = normalizeUiGroups(next.uiGroups);
+    if (next.personaId !== undefined) session.personaId = next.personaId || null;
     /* The role → model map is spawn-time like the toggles above: written here so
        the process that comes back reads it off the session at spawn. */
     if (next.helperModels !== undefined) session.helperModels = next.helperModels;
@@ -2543,6 +2610,7 @@ export class SessionManager {
       effort: session.effort,
       suggestKinds: session.suggestKinds,
       uiGroups: session.uiGroups,
+      personaId: session.personaId,
       helperModels: session.helperModels,
     });
     /* The load came back without the conversation, so the journal is no longer
@@ -2578,6 +2646,7 @@ export class SessionManager {
       effort?: string;
       suggestKinds?: string[];
       uiGroups?: string[];
+      personaId?: string | null;
       helperModels?: { role: string; model: string }[];
     },
   ): StagedConfig {
@@ -2588,6 +2657,7 @@ export class SessionManager {
       ...(next.effort !== undefined ? { effort: next.effort } : {}),
       ...(next.suggestKinds !== undefined ? { suggestKinds: next.suggestKinds } : {}),
       ...(next.uiGroups !== undefined ? { uiGroups: normalizeUiGroups(next.uiGroups) } : {}),
+      ...(next.personaId !== undefined ? { personaId: next.personaId || null } : {}),
       ...(next.helperModels !== undefined ? { helperModels: next.helperModels } : {}),
     };
     this.setStaged(session, staged);
@@ -2714,6 +2784,7 @@ export class SessionManager {
           effort,
           ...(staged.suggestKinds !== undefined ? { suggestKinds: staged.suggestKinds } : {}),
           ...(staged.uiGroups !== undefined ? { uiGroups: staged.uiGroups } : {}),
+          ...(staged.personaId !== undefined ? { personaId: staged.personaId } : {}),
           ...(staged.helperModels !== undefined ? { helperModels: staged.helperModels } : {}),
         },
         { defer: false },
@@ -2833,6 +2904,7 @@ export class SessionManager {
     "Agent",
     "Model",
     "Effort",
+    "Persona",
     "Follow-ups",
     "Drawn UI",
     "MCP",
@@ -2851,6 +2923,7 @@ export class SessionManager {
       Agent: agent?.name ?? session.agentId,
       Model: model?.label || session.model || "Default",
       Effort: session.effort || "Default",
+      Persona: session.personaId ? ((await personaLibrary.get(session.personaId))?.name ?? session.personaId) : "None",
       "Follow-ups": session.suggestKinds.length ? session.suggestKinds.join(", ") : "Off",
       "Drawn UI": !session.uiGroups.length
         ? "Off"
@@ -2910,6 +2983,7 @@ export class SessionManager {
       effort?: string;
       suggestKinds?: string[];
       uiGroups?: string[];
+      personaId?: string | null;
       helperModels?: { role: string; model: string }[];
     },
   ): Promise<boolean> {
@@ -2926,6 +3000,8 @@ export class SessionManager {
     if (next.suggestKinds !== undefined && !sameSuggestKinds(next.suggestKinds, session.suggestKinds)) return false;
     /* As are the drawn-UI lane's instructions, for the same reason. */
     if (next.uiGroups !== undefined && !sameUiGroups(next.uiGroups, session.uiGroups)) return false;
+    /* And the persona, which is the head of that same text. */
+    if (next.personaId !== undefined && (next.personaId || null) !== session.personaId) return false;
     // Mid-respawn, mid-revive, or no process: whatever is about to exist is
     // going to be spawned with these settings anyway.
     if (session.respawnChain || !session.bridge || session.exited) return false;
@@ -2998,6 +3074,7 @@ export class SessionManager {
       effort,
       suggestKinds: session.suggestKinds,
       uiGroups: session.uiGroups,
+      personaId: session.personaId,
       helperModels: session.helperModels,
     });
     /* What moved is said by `applyConfig`, which owns both outcomes and can
@@ -3154,6 +3231,7 @@ export class SessionManager {
          reads them off the session. Same bargain as `applyConfig`'s. */
       if (staged.suggestKinds !== undefined) session.suggestKinds = normalizeSuggestKinds(staged.suggestKinds);
       if (staged.uiGroups !== undefined) session.uiGroups = normalizeUiGroups(staged.uiGroups);
+      if (staged.personaId !== undefined) session.personaId = staged.personaId || null;
       if (staged.helperModels !== undefined) session.helperModels = staged.helperModels;
       await this.applyStagedLinks(session, staged);
     }
@@ -3284,6 +3362,7 @@ export class SessionManager {
         effort: session.effort,
         suggestKinds: session.suggestKinds,
         uiGroups: session.uiGroups,
+        personaId: session.personaId,
         helperModels: session.helperModels,
       });
     }
@@ -3488,6 +3567,7 @@ export class SessionManager {
       modeId: session.modeId,
       suggestKinds: session.suggestKinds,
       uiGroups: session.uiGroups,
+      personaId: session.personaId,
       /* A name the user did not type is still a name the sniff must not
          replace — which is why it is set here rather than left to the
          "New thread" default. */
@@ -3900,6 +3980,7 @@ export class SessionManager {
       helperModels: s.helperModels,
       suggestKinds: s.suggestKinds,
       uiGroups: s.uiGroups,
+      personaId: s.personaId,
       title: s.title,
       ...s.links,
       /* The session anything asking today would mean: a task transcript's
@@ -4114,6 +4195,7 @@ export class SessionManager {
         effort: "",
         suggestKinds: session.suggestKinds,
         uiGroups: session.uiGroups,
+        personaId: session.personaId,
         helperModels: [],
       });
       moved.push(session.id);
@@ -4265,6 +4347,7 @@ function hasSpawnFields(staged: StagedConfig): boolean {
     staged.effort !== undefined ||
     staged.suggestKinds !== undefined ||
     staged.uiGroups !== undefined ||
+    staged.personaId !== undefined ||
     staged.helperModels !== undefined
   );
 }
@@ -4311,6 +4394,7 @@ function rowValues(s: Session) {
     helperModels: s.helperModels,
     suggestKinds: s.suggestKinds,
     uiGroups: normalizeUiGroups(s.uiGroups),
+    personaId: s.personaId,
     title: s.title,
     worktree: s.worktree,
     acpSessionId: s.acpSessionId ?? null,

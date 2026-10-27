@@ -14,7 +14,7 @@ import { READING_MARK } from "@/components/composer/indicator"
 import { useThreadToolLinks } from "@/components/thread-tools/menu"
 import { useMenuShortcut } from "@/hooks/use-hotkey"
 import type { Actions } from "@/lib/actions"
-import { useMcpCatalog } from "@/lib/queries/catalog"
+import { useAgents, useMcpCatalog } from "@/lib/queries/catalog"
 import { settingsPath } from "@/lib/router"
 import { mcpSubtitle, type McpServerDef, type SessionMeta } from "@/lib/settings"
 import { cn } from "@/lib/utils"
@@ -51,12 +51,16 @@ function McpRow({
   server,
   on,
   locked,
+  lockReason,
   needsAuth,
   onChange,
 }: {
   server: McpServerDef
   on: boolean
   locked: boolean
+  /** Why the switch cannot be moved: the profile supplies it, or the agent
+      requires it. */
+  lockReason?: string
   needsAuth: boolean
   onChange: (on: boolean) => void
 }) {
@@ -67,7 +71,7 @@ function McpRow({
     status.tone === "error" || status.tone === "warn"
       ? `${status.label}${status.detail ? ` — ${status.detail}` : ""}`
       : locked
-        ? "from profile"
+        ? (lockReason ?? "from profile")
         : mcpSubtitle(server)
   return (
     <label
@@ -195,6 +199,14 @@ export function McpPicker({
   }, [open])
   const finalFocus = useMenuShortcut("chooseMcp", () => setOpen(!open), keys)
 
+  /* The name of the agent that requires this server, or null. `requiredMcp` is
+     the agent row's (`server/src/registry.ts`), so the client compares no ids
+     and a fork that repoints its runtime repoints this with it. */
+  const agents = useAgents()
+  const threadAgent = agents.find((agent) => agent.id === meta.agentId)
+  const requiredBy = (serverId: string): string | null =>
+    threadAgent?.requiredMcp?.includes(serverId) ? threadAgent.name : null
+
   const isOn = (id: string) => inherited.mcpServerIds.has(id) || own.mcpServerIds.includes(id)
   const selected = mcpServers.filter((server) => isOn(server.id))
   const pending = stagedLinks?.mcpServerIds !== undefined
@@ -270,12 +282,20 @@ export function McpPicker({
                 </div>
                 {group.items.map((server) => {
                   const from = inherited.mcpServerIds.has(server.id)
+                  /* A row the thread's AGENT requires is on and locked too, and
+                     the reason is the agent's rather than the profile's: the
+                     runtime's only way to do something is this server, so a
+                     thread without it has silently lost the capability. Read
+                     off the agent row's `requiredMcp` — the client holds no
+                     table of which runtimes those are. */
+                  const required = requiredBy(server.id)
                   return (
                     <McpRow
                       key={server.id}
                       server={server}
-                      on={isOn(server.id)}
-                      locked={from}
+                      on={isOn(server.id) || required !== null}
+                      locked={from || required !== null}
+                      lockReason={from ? undefined : required ? `required by ${required}` : undefined}
                       needsAuth={needsAuth(server)}
                       onChange={(on) => toggle("mcpServerIds", server.id, on)}
                     />

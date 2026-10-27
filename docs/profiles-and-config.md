@@ -432,21 +432,33 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   simply does not serve the draft's agent. `resolveProfileAgent`'s strict reading is the
   spawn paths' alone.
 
-## Personas and saved prompts (gone)
+## Personas
 
-- **Reusable text is a library slash command.** Personas (chosen at thread start, appended to
-  the system prompt) became saved prompts, and saved prompts became `commands` rows — the
-  library's slash commands (`server/src/legacy-prompts.ts`, once at boot, marker
-  `savedPromptsToCommands`; a row keeps its id and loses its title, a name another command
-  holds is suffixed, a blank description falls back to the title or name). Nothing is
-  linked by the migration: a command is a per-thread (or project-default) link, materialised
-  for runtimes that declare a `workspaceLayout` and absent on codex.
-- **The legacy tables stay declared** (`personas`, `saved_prompts`) so `db:push` does not drop
-  them before the migration has run.
-- **There is no persona on a thread** — no picker, `persona_id`, project/routine default,
-  thinking budget or effort.
-- **The spawn-instruction doors remain** (`personaVia`, `{personaPrompt}`, `{personaFile}`,
-  `resolvePersonaSpawn`) — historical names — because Rules and the spawn trailers ride them.
+- **A persona is instruction text a whole thread runs under** — the per-thread half, where a
+  slash command is the per-message one. Rows in `personas` (Settings › Personas,
+  `/api/personas`, the harness MCP's `library_*` tools); a thread names one in
+  `sessions.persona_id`, a project's new threads start on `projects.default_persona_id`.
+- **It is spawn text.** `resolvePersonaSpawn` puts it first, the rules beneath it, the spawn
+  trailers after, and every door carries the one text (`personaVia`: AIR `customInstructions`,
+  `{personaPrompt}`, `{personaFile}`). The row is read at spawn, so an edit reaches a thread on
+  its next respawn and a deleted persona reads as none — no foreign key, no cascade.
+- **A pick is staged like any spawn input** (`StagedConfig.personaId`, `null` = none):
+  `applyConfigLive` refuses it, so it waits for the next turn, a spawn or Apply now, and is
+  narrated as a `Persona` config row. The pick publishes onto the project like `uiGroups`.
+- **Model and effort stay the profile's.** The first personas carried a thinking budget and
+  an effort; those columns are still declared (a push would drop them) and never read.
+- **A workflow step inherits its parent's persona; an ask does not** — the asked pair works
+  from the brief alone. Codex reads the env door on `session/new` only, so a revived Codex
+  thread keeps the persona it started with, as it does rules.
+
+## Saved prompts (gone)
+
+- **Saved prompts became `commands` rows** — the library's slash commands
+  (`server/src/legacy-prompts.ts`, once at boot, marker `savedPromptsToCommands`; a row keeps
+  its id and loses its title, a name another command holds is suffixed, a blank description
+  falls back to the title or name). `saved_prompts` stays declared so `db:push` does not drop
+  it before the migration has run. A backup's legacy `prompts` key imports the same way; its
+  `personas` key imports as personas.
 
 ## Rules
 

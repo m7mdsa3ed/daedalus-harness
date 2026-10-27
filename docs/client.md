@@ -1108,7 +1108,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   helpers and package.json scripts for commands (the client then draws only lines that name one
   the project defines, so a hallucinated `!` is dropped rather than offered), the runner's
   installed other pairs for agents (a pick fills "Ask <agent> to <task>", naming the pair so
-  `ask_agent` runs without asking which). **A pick fills the box unsent**, always — the
+  the `agent` tool runs without asking which). **A pick fills the box unsent**, always — the
   read-before-it-goes bargain the `!` completer makes. The thread's set is `sessions.suggest_kinds`
   (project default `projects.default_suggest_kinds`; null on an old row reads the legacy boolean,
   `suggestKindsOf`), picked in Session settings › Suggestions, a submenu of switches with each
@@ -1610,9 +1610,9 @@ double-click on a divider evens out the views it separates — in the main dock 
   once and seeing both is the point. The destination travels with the call
   (`OpenPanelOptions.into`, through `openWorkspacePanel`'s `target` and `openTerminal`, across the
   terminal's POST) and so does the tab's own project — it used to be a 2s module-level aim any
-  open could spend, and the project was whatever tab was in front. The timed aim
-  (`targetNext`) survives only for the strip's "+ ▸ New thread", whose tab arrives a
-  navigation later, and only a chat open spends it.
+  open could spend, and the project was whatever tab was in front. The timed aim went with the
+  strip's + menu: the + opens a tab (`openRoute("/", { group })`, so it lands on *this* strip)
+  and nothing else, so there is no panel whose arrival a later navigation has to be aimed at.
   The rows come from `useTabNeighbours`, re-read on dockview's layout change, which is where
   tab-group changes are folded in. The chip's menu (`getTabGroupChipContextMenuItems`,
   `dock-surface.tsx`) is dockview's rename, colour picker and collapse plus two of ours:

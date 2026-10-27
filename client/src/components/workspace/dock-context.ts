@@ -35,8 +35,8 @@ export interface OpenPanelOptions {
   /** Open it without taking focus. */
   background?: boolean
   /** Exactly where it lands, said by the caller rather than remembered: a
-      strip's + and a tab's own menu know the strip, and the open behind them
-      can be a server round trip away. */
+      tab's own menu knows the strip, and the open behind it can be a server
+      round trip away. */
   into?: PanelTarget
 }
 
@@ -70,7 +70,8 @@ export interface WorkspaceDock {
   openPage: (path: string, options?: { newTab?: boolean }) => void
   /** Navigate the tab in front, or open one if it cannot be (a pin, none). */
   navigateActive: (path: string) => void
-  /** A new tab, always — the strip's +. On the New tab page unless told where. */
+  /** A new tab, always — ⌘N, the sidebar's row, the palette. On the New tab
+      page unless told where. */
   openTab: (path?: string) => void
   /**
    * A route a surface outside the dock asked for by name — the sidebar's row
@@ -92,10 +93,6 @@ export interface WorkspaceDock {
   /** Move a panel (`id`, or the one in front of you) into a new column or row
       beside its own. */
   splitActive: (direction: "right" | "below" | "left" | "above", id?: string) => void
-  /** Aim the next *thread* opened at a strip — the strip's "+ ▸ New thread",
-      whose tab arrives a navigation later, so it cannot be passed along the
-      way a panel's `into` is. Spent by the next chat open, within 2s. */
-  targetNext: (group: string) => void
   toggleMaximize: (id?: string) => void
   /** The panel (`id`, or the one in front) takes the whole window — dock, sidebar
       and browser — and a second call puts it all back. */
@@ -190,22 +187,23 @@ export function useDock(): WorkspaceDock {
   return dock
 }
 
-/* ── What the strip's + can open ──
+/* ── What the strip's + opens ──
    Dockview renders the tab strip from components it is handed by name, so
    `TabActions` sits inside this tree with nothing but its own group's props.
-   The two things a + opens — a thread, a panel — are decided in `app-shell`
-   (which project a panel belongs to is the routed thread's, and toggling rather
-   than stacking is the same rule the chords follow), so they come down as a
-   context rather than being written a second time here.
+   What the + opens is decided in `app-shell` (the New tab page, on the strip
+   that asked), so it comes down as a context rather than being written a second
+   time here.
 
    Deliberately the *callbacks* and not the dock: every surface that opens a
-   panel — the header menu, the chords, the palette, this + — calls the one
+   panel — a tab's own menu, the chords, the palette — calls the one
    `openWorkspacePanel`, which is what keeps them from disagreeing about which
    side a panel docks on. */
 export interface DockOpeners {
-  onNewTab?: () => void
+  /** A new tab, on the New tab page. `into` names the strip it was asked from
+      (the strip's +), so it lands where the control standing there says. */
+  onNewTab?: (into?: { group: string }) => void
   /** `reuse` shows the one you have (the chords); `target` says where a new
-      one lands and whose project it acts on (a tab's menu, a strip's +). */
+      one lands and whose project it acts on (a tab's own menu). */
   onOpenPanel?: (kind: PanelKind, reuse?: boolean, target?: OpenerTarget) => void
 }
 

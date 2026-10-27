@@ -81,12 +81,15 @@ export function ToolSection<T extends { id: string; name: string }>({
     <DropdownMenuSub open={open} onOpenChange={setOpen}>
       <DropdownMenuSubTrigger className="gap-2.5">
         {icon}
-        <span className="truncate">{title}</span>
+        <span className="min-w-0 flex-1 truncate">{title}</span>
         {/* The count is the point of the row: it is what the flat menu made
             you open a group to learn. "2 of 9" while picking, a bare figure
             once the thread has spawned and the library is no longer a
-            choice. */}
-        <span className="ml-auto pl-2 text-xs tabular-nums text-muted-foreground">
+            choice. It takes the label's leftover space rather than its own
+            `ml-auto` — the trigger's chevron is the one auto margin, so the
+            figures sit in a single column beside it instead of being pushed
+            to a midpoint that depends on how wide each count happens to be. */}
+        <span className="text-xs tabular-nums text-muted-foreground">
           {editable ? (on === 0 ? `${shown.length}` : `${on} of ${shown.length}`) : on}
         </span>
       </DropdownMenuSubTrigger>

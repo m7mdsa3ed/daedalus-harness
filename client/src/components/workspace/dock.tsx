@@ -72,10 +72,6 @@ import { PANEL_SPECS, panelId, pageKey, parsePanel, type PanelDescriptor } from 
 const SAVE_DEBOUNCE_MS = 300
 /** How many closed panels ⌘⇧T can walk back through. */
 const REOPEN_DEPTH = 10
-/** How long a strip's "+ ▸ New thread" aim waits for the thread's tab, which
-    arrives a navigation later. Panels never use it — they pass `into`.
-    ponytail: 2s window, thread `into` through the draft route if it misfires. */
-const AIM_MS = 2000
 /** How far one press of ⌥⇧+arrow moves a divider, as a share of the dock. A held
     key repeats, so a press is a nudge and a hold is a drag. */
 const RESIZE_STEP = 0.03
@@ -338,21 +334,9 @@ export function useWorkspaceDock(): DockController {
     silently(() => api.removePanel(active))
   }, [silently])
 
-  const targetRef = React.useRef<{ group: string; at: number } | null>(null)
-  const targetNext = React.useCallback((group: string) => {
-    targetRef.current = { group, at: Date.now() }
-  }, [])
-
   const openPanel = React.useCallback(
     (panel: PanelDescriptor, options?: OpenPanelOptions) => {
-      /* The thread aim is spent by a chat and nothing else, so a page or a
-         panel opened in between cannot take it. */
-      let aim = options?.into
-      if (!aim && panel.kind === "chat") {
-        const pending = targetRef.current
-        targetRef.current = null
-        if (pending && Date.now() - pending.at < AIM_MS) aim = { group: pending.group }
-      }
+      const aim = options?.into
       const api = apiRef.current
       if (!api || !PANEL_SPECS[panel.kind].implemented) return
       /* One door for a page, whoever knocks — ⌘⇧T reopening one included. */
@@ -1236,7 +1220,6 @@ export function useWorkspaceDock(): DockController {
       closeToTheRight,
       closeGroup,
       splitActive,
-      targetNext,
       toggleMaximize,
       toggleFullscreen,
       moveTab,
@@ -1287,7 +1270,6 @@ export function useWorkspaceDock(): DockController {
       closeToTheRight,
       closeGroup,
       splitActive,
-      targetNext,
       toggleMaximize,
       toggleFullscreen,
       moveTab,

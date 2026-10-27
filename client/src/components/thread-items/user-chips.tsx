@@ -214,7 +214,7 @@ function PasteChip({ n }: Hast & { n?: string }) {
 
 function QuoteChip({ quote = "" }: Hast & { quote?: string }) {
   return (
-    <span className={chipClass()}>
+    <span className={chipClass({ quote: true })}>
       <ChipBody icon={TextQuoteIcon} {...quoteFace(quote)} preview={<ChipPreview caption="Quote" text={quote} />} />
     </span>
   )

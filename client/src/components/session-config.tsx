@@ -15,7 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { levelOf, withEffortIcons, withModeIcons } from "@/components/composer/option-icons"
-import { type ChoicePick, HelperModelsSub, MenuRow, MenuRowSkeleton, modelChoiceDetails, PILL, PillLabel, SessionSettingsSub, selectChoices } from "@/components/config-menu"
+import { type ChoicePick, HelperModelsSub, MenuRow, MenuRowSkeleton, modelChoiceDetails, PersonaRow, PILL, PillLabel, SessionSettingsSub, selectChoices } from "@/components/config-menu"
 import { DEFAULT_SUGGEST_KINDS } from "@/lib/suggestions"
 import { DEFAULT_UI_GROUPS } from "@/lib/openui/groups"
 import { DraftConfigPopover } from "@/components/draft-config"
@@ -389,6 +389,7 @@ export function SessionConfigPopover({
           ) : (
             unanswered && <MenuRowSkeleton label="Effort" />
           )}
+          <PersonaRow value={meta.personaId} onSelect={(personaId) => actions.changeThreadPersona(row, personaId)} />
           <AskAgentsSub
             value={meta.askProfiles ?? {}}
             onChange={(askProfiles) =>

@@ -578,7 +578,7 @@ function useTabMenuItems({
      thread's. A board or a page has none, and the opener falls back. */
   const projectId =
     descriptor && "projectId" in descriptor ? descriptor.projectId : (meta?.projectId ?? undefined)
-  /* The same opener the strip's + and the chords call, so "open it with this
+  /* The same opener the header menu and the chords call, so "open it with this
      tab" and "open it" differ in where it lands and in nothing else. */
   const { onOpenPanel } = useDockOpeners()
 

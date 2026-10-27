@@ -35,6 +35,7 @@ import {
   SparklesIcon,
   SquareTerminalIcon,
   UsersIcon,
+  VenetianMaskIcon,
   XIcon,
 } from "lucide-react"
 
@@ -42,7 +43,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Actions } from "@/lib/actions"
 import { configChanges, type ConfigChange } from "@/lib/actions"
-import { useCommands, useMcpServers, useProfiles, useSkills } from "@/lib/queries/catalog"
+import { useCommands, useMcpServers, usePersonas, useProfiles, useSkills } from "@/lib/queries/catalog"
 import { reportError } from "@/lib/errors"
 import type { ThreadState } from "@/lib/store"
 
@@ -62,6 +63,7 @@ const CHANGE_ICONS: Record<ConfigChange["kind"], typeof CpuIcon> = {
   effort: GaugeIcon,
   suggestions: SparklesIcon,
   ui: LayoutGridIcon,
+  persona: VenetianMaskIcon,
   helpers: UsersIcon,
   mode: ShieldIcon,
   option: SlidersHorizontalIcon,
@@ -104,6 +106,7 @@ export function PendingSettings({
   const mcpServers = useMcpServers()
   const skills = useSkills()
   const commands = useCommands()
+  const personas = usePersonas()
   const pending = thread.pendingConfig
   const held = thread.stagedConfig
   /* "Apply now" is a request this device is waiting on — and, until it lands,
@@ -118,7 +121,7 @@ export function PendingSettings({
   if (!patch) return null
   const applying = pending !== null || applyingNow
   const action = thread.turnActive ? "Steer now" : "Apply now"
-  const changes = configChanges(patch, profiles, thread)
+  const changes = configChanges(patch, profiles, thread, personas)
   const links = [
     { icon: LINK_ICONS.mcpServerIds, label: "MCP", value: toolNames(mcpServers, patch.mcpServerIds) },
     { icon: LINK_ICONS.skillIds, label: "Skills", value: toolNames(skills, patch.skillIds) },

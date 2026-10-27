@@ -163,12 +163,14 @@ export const ThreadRow = React.memo(function ThreadRow({
           the workflow glyph for a step. The words are for a screen reader. */}
       {childKind && (
         <>
-          {childKind === "ask" ? (
-            <UsersIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-          ) : (
+          {childKind === "workflow" ? (
             <WorkflowIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <UsersIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
           )}
-          <span className="sr-only">{childKind === "ask" ? "Ask: " : "Workflow step: "}</span>
+          <span className="sr-only">
+            {childKind === "workflow" ? "Workflow step: " : childKind === "ask" ? "Ask: " : "Subagent: "}
+          </span>
         </>
       )}
       <span

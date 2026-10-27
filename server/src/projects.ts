@@ -75,6 +75,8 @@ export interface ProjectDefaults {
   /** The component groups drawn answers teach (`UI_GROUP_IDS`); empty = drawn
       answers off, otherwise "layout" is always in. */
   uiGroups: string[];
+  /** The persona a new thread starts under; "" = none. */
+  personaId: string;
   /** "" = no say: the thread's profile, then the global default, picks. */
   voiceProvider: string;
   /** Profile per agent id a new thread's `ask_agent` starts with. */
@@ -95,6 +97,7 @@ export const emptyDefaults = (): ProjectDefaults => ({
   commandIds: [],
   suggestKinds: [...DEFAULT_SUGGEST_KINDS],
   uiGroups: [...UI_GROUP_IDS],
+  personaId: "",
   voiceProvider: "",
   askProfiles: {},
 });
@@ -118,6 +121,7 @@ export const ProjectDefaultsPatchSchema = z.object({
   commandIds: z.array(z.string()).optional(),
   suggestKinds: z.array(z.string()).optional(),
   uiGroups: z.array(z.string()).optional(),
+  personaId: z.string().optional(),
   voiceProvider: z.string().optional(),
   askProfiles: z.record(z.string(), z.object({ profileId: z.string(), model: z.string().optional() })).optional(),
 });
@@ -141,6 +145,7 @@ export function projectDefaultsColumns(patch: ProjectDefaultsPatch) {
   if (patch.commandIds !== undefined) out.defaultCommandIds = patch.commandIds;
   if (patch.suggestKinds !== undefined) out.defaultSuggestKinds = normalizeSuggestKinds(patch.suggestKinds);
   if (patch.uiGroups !== undefined) out.defaultUiGroups = normalizeUiGroups(patch.uiGroups);
+  if (patch.personaId !== undefined) out.defaultPersonaId = patch.personaId || null;
   if (patch.voiceProvider !== undefined) out.defaultVoiceProvider = patch.voiceProvider || null;
   if (patch.askProfiles !== undefined) out.defaultAskProfiles = Object.keys(patch.askProfiles).length ? patch.askProfiles : null;
   return out;
@@ -161,6 +166,7 @@ export const projectDefaultsOf = (row: typeof projectsTable.$inferSelect): Proje
   commandIds: row.defaultCommandIds ?? [],
   suggestKinds: suggestKindsOf(row.defaultSuggestKinds, row.defaultSuggestFollowups),
   uiGroups: uiGroupsOf(row.defaultUiGroups, row.defaultUiBlocks),
+  personaId: row.defaultPersonaId ?? "",
   voiceProvider: row.defaultVoiceProvider ?? "",
   askProfiles: row.defaultAskProfiles ?? {},
 });
@@ -188,6 +194,7 @@ export function withoutDefaults(row: typeof projectsTable.$inferSelect) {
     defaultSuggestKinds: _sk,
     defaultUiBlocks: _ui,
     defaultUiGroups: _ug,
+    defaultPersonaId: _persona,
     defaultVoiceProvider: _vp,
     spaceId: _space,
     ...rest

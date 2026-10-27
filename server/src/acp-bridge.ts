@@ -121,6 +121,11 @@ export async function resolveAgentSpawn(
       the session by the caller — `resolveSpawn` is synchronous and cannot query.
       Absent for the probe, which has no thread. */
   helperModels?: { role: string; model: string }[],
+  /** How this spawn delegates (`AgentDef.requiredMcp` / the `agents` server the
+      caller resolved for it): `"harness"` when the thread actually has that
+      server, `"off"` for a child, absent when it has neither. Decided by the
+      caller because only it knows the server list. */
+  subagents?: "harness" | "off",
 ): Promise<SpawnSpec> {
   const agent = await getAgent(agentId);
   if (!agent) throw new Error(`unknown agent: ${agentId}`);
@@ -144,6 +149,7 @@ export async function resolveAgentSpawn(
     agent.personaVia === "env" ? persona : undefined,
     await listModelRoles(),
     helperModels,
+    subagents,
   );
   if (unattended) env.DAEDALUS_AGENT_HOLD_ON_ERROR = "0";
   return { command, args, env, cwd };
@@ -2684,6 +2690,7 @@ export type ConfigNoticeLabel =
   | "Effort"
   | "Profile"
   | "Agent"
+  | "Persona"
   | "Follow-ups"
   | "Drawn UI"
   | "MCP"

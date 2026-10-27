@@ -245,6 +245,24 @@ export interface AgentDef {
    */
   workspaceLayout?: WorkspaceLayout | null;
   /**
+   * Built-in library rows this runtime's threads always receive, whatever the
+   * profile or thread links say.
+   *
+   * A runtime whose *only* way to do something is one of the harness's own
+   * servers has that server as a fact about the runtime, not a preference: the
+   * Daedalus agent delegates through `agents`, so a thread of it without that
+   * row had silently lost the capability — and the in-process fallback it used
+   * instead was the thing this replaced. Seeded `["builtin:agents"]` for
+   * `daedalus`, null elsewhere; a fork that repoints `command` repoints this
+   * with it, by the registry rule.
+   *
+   * `serversFor` folds it into the thread's effective links before the library
+   * is filtered on `linked`, so no stored link set — a profile's, a thread's
+   * pick, an old row — can leave it out, and a one-level child (a step, an ask)
+   * still gets nothing: the rule that a step cannot start a step outranks this.
+   */
+  requiredMcp?: string[] | null;
+  /**
    * The runtime's own tools that a harness MCP server stands in for.
    *
    * Only claude-code declares these, but the *rule* is not claude-code's: a
@@ -664,6 +682,14 @@ const BEHAVIOR: Record<string, AgentBehaviorSwitch[]> = {
       fallback: true,
     },
   ],
+};
+
+/** The built-in library rows a runtime's threads always get (`AgentDef.requiredMcp`).
+    Only the harness's own agent, whose single way to hand work to another worker
+    is the `agents` server — the in-process `task` it used to fall back on is
+    retired under the harness (docs/plans/agent-tool.md). */
+const REQUIRED_MCP: Record<string, string[]> = {
+  daedalus: ["builtin:agents"],
 };
 
 type Seed20 = Pick<AgentDef, "workspaceLayout" | "builtinTools" | "catalogProbe" | "discovery" | "install" | "icon">;
@@ -1211,7 +1237,13 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // typing a `NAME=value` line into the row's raw env box. Declared, not
     // copied into the template — `resolveSpawn` writes only the ones a person
     // changed, so an untouched switch is still the runtime's own default.
-    since: 38,
+    // Seed 39 says which built-in server this runtime always needs
+    // (`requiredMcp`: the `agents` row, its only way to hand work to another
+    // worker) and adds `{subagents}` (`DAEDALUS_AGENT_SUBAGENTS`) — how this
+    // spawn should delegate, written by the server per thread: `harness` on a
+    // top-level thread, `off` on a child (one level, never a tree), absent
+    // standalone. Env changed, so the probe cache is dropped once.
+    since: 39,
     introduced: 14,
     backfill: (existing) => ({
       ...backfill20(existing),
@@ -1228,10 +1260,15 @@ const DEFAULT_AGENTS: SeedAgent[] = [
         DAEDALUS_AGENT_MODEL_ROLES: "{modelRoles}",
         // Seed 37: the wire protocol, same bargain.
         DAEDALUS_AGENT_PROTOCOL: "{protocol}",
+        // Seed 39: how this spawn delegates, written per thread.
+        DAEDALUS_AGENT_SUBAGENTS: "{subagents}",
         ...existing.env,
       },
       subagentModelsVia: existing.subagentModelsVia ?? "acp-env",
       rewindVia: existing.rewindVia ?? "acp-fork-point",
+      // Seed 39: the built-in server this runtime needs. A row that already
+      // names its own keeps it — the field is the runtime's, not a preference.
+      requiredMcp: existing.requiredMcp ?? REQUIRED_MCP[existing.id] ?? null,
       // Seed 38: the switches, and whatever the row already had turned stays
       // turned — the values are the person's half of this field.
       behavior: {
@@ -1251,6 +1288,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     rewindVia: "acp-fork-point",
     callsVia: CALLS_VIA.daedalus,
     behavior: { switches: BEHAVIOR.daedalus ?? [] },
+    requiredMcp: REQUIRED_MCP.daedalus ?? null,
     env: {
       DAEDALUS_AGENT_API_KEY: "{apiKey}",
       DAEDALUS_AGENT_BASE_URL: "{gatewayUrl}",
@@ -1264,6 +1302,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       DAEDALUS_AGENT_MODEL_ROLES: "{modelRoles}",
       DAEDALUS_AGENT_MODEL_PROMPTS_FILE: "{modelPromptsFile}",
       DAEDALUS_AGENT_PROJECT_INSTRUCTIONS: "1",
+      DAEDALUS_AGENT_SUBAGENTS: "{subagents}",
     },
   },
 ];
@@ -1310,6 +1349,7 @@ export async function seedAgents(): Promise<void> {
           pauseVia: agent.pauseVia ?? null,
           callsVia: agent.callsVia ?? null,
           workspaceLayout: agent.workspaceLayout ?? null,
+          requiredMcp: agent.requiredMcp ?? null,
           builtinTools: agent.builtinTools ?? null,
           catalogProbe: agent.catalogProbe ?? null,
           discovery: agent.discovery ?? null,
@@ -1340,6 +1380,7 @@ export async function seedAgents(): Promise<void> {
         pauseVia: existing.pauseVia ?? agent.pauseVia ?? null,
         callsVia: existing.callsVia ?? agent.callsVia ?? null,
         workspaceLayout: existing.workspaceLayout ?? agent.workspaceLayout ?? null,
+        requiredMcp: existing.requiredMcp ?? agent.requiredMcp ?? null,
         builtinTools: existing.builtinTools ?? agent.builtinTools ?? null,
         catalogProbe: existing.catalogProbe ?? agent.catalogProbe ?? null,
         discovery: existing.discovery ?? agent.discovery ?? null,
@@ -1498,6 +1539,7 @@ export async function resetAgent(id: string): Promise<AgentDef | undefined> {
       pauseVia: seed.pauseVia ?? null,
       callsVia: seed.callsVia ?? null,
       workspaceLayout: seed.workspaceLayout ?? null,
+      requiredMcp: seed.requiredMcp ?? null,
       builtinTools: seed.builtinTools ?? null,
       /* Seed 38: a reset restores the switch *declarations* and clears the
          values, which is the whole of "put it back the way it ships" for a
@@ -1792,6 +1834,13 @@ export function resolveSpawn(
       for a probe or a thread that names no helper — the map and the default
       subagent model both prune away. */
   helpers: { role: string; model: string }[] = [],
+  /** How this spawn should hand work to another worker
+      (`DAEDALUS_AGENT_SUBAGENTS`): `"harness"` for a top-level thread, whose
+      `agents` server does it; `"off"` for a child, where one level is the rule.
+      Absent (undefined) = standalone or a probe: the runtime's own in-process
+      loop, which is all an agent spawned by something that is not this harness
+      has. Read by `agent/src/tools/index.ts`. */
+  subagents?: "harness" | "off",
 ) {
   const resolvedModel = model || profile.defaultModel || "";
   // Catalog metadata for the selected model. Fills unquoted JSON slots, so the
@@ -1853,6 +1902,7 @@ export function resolveSpawn(
     modelRoles: modelRoleMap(agent, profile, modelRoles, helpers, resolvedModel),
     cwd: project.cwd,
     daedalusAgentEntry: DAEDALUS_AGENT_ENTRY,
+    subagents: subagents ?? "",
     /* JSON-escaped, and only ever correct inside a JSON string literal — which
        is the only place a template names it. A persona is multi-line prose with
        quotes and apostrophes in it; substituted raw, it closed the string it

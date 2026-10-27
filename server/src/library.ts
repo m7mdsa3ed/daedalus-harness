@@ -1,11 +1,12 @@
 import type { BuiltinMcp } from "./db/schema.js";
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
   commands as commandsTable,
   db,
   mcpServers as mcpServersTable,
+  personas as personasTable,
   skills as skillsTable,
 } from "./db/index.js";
 
@@ -34,17 +35,11 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
     name: "Knowledge base",
     description: "A per-project knowledge base the agent can read and write, scoped to the thread's project.",
   },
-  workflow: {
-    id: "builtin:workflow",
-    name: "Workflows",
-    description:
-      "Run a declarative multi-step workflow: every step is a real thread on this server, mirrored into the calling thread as a subagent. Works on any agent; replaces Claude Code's built-in Workflow tool on threads that link it.",
-  },
   agents: {
     id: "builtin:agents",
-    name: "Ask agents",
+    name: "Agents",
     description:
-      "Ask another profile and agent pair — Codex, Claude Code, the Daedalus agent, on any provider — to do a task in a new thread of this project; its answer comes back to the caller, drawn as a subagent.",
+      "Hand work to another worker with one tool: a subagent on this thread's own model, an ask of another profile and agent pair, or a multi-step workflow where every step is a real thread of this project. Its answer comes back to the caller, drawn as a subagent; the Daedalus agent always has this server, because it is that runtime's only way to delegate.",
   },
   harness: {
     id: "builtin:harness",
@@ -64,7 +59,7 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
  * `knowledge` (on the project). Kept here, beside `BUILTIN_MCP`, in the module
  * that owns the built-in kinds and low enough that nothing imports it upward.
  */
-const THREAD_SCOPED_BUILTINS = new Set<BuiltinMcp>(["workflow", "agents", "harness"]);
+const THREAD_SCOPED_BUILTINS = new Set<BuiltinMcp>(["agents", "harness"]);
 
 /** Whether a built-in only exists as a thread's own server — see above. */
 export function isThreadScopedBuiltin(kind: BuiltinMcp): boolean {
@@ -81,6 +76,12 @@ export async function retitleBuiltinMcp(): Promise<void> {
   await db.delete(mcpServersTable).where(eq(mcpServersTable.id, "builtin:browser"));
   // `builtin:video` (video-mcp) was removed too; its links cascade.
   await db.delete(mcpServersTable).where(eq(mcpServersTable.id, "builtin:video"));
+  /* `builtin:workflow` is the same removal one release on: its three tools moved
+     under the `agents` server's one `agent` tool (docs/plans/agent-tool.md), so
+     the row nobody can link any more is dropped and its links cascade. A thread
+     that had it keeps working — `agents` is a row of its own, and the Daedalus
+     agent requires it. */
+  await db.delete(mcpServersTable).where(eq(mcpServersTable.id, "builtin:workflow"));
   for (const [kind, { id, name }] of Object.entries(BUILTIN_MCP)) {
     await db.update(mcpServersTable).set({ name })
       .where(and(eq(mcpServersTable.id, id), eq(mcpServersTable.name, kind)));
@@ -95,7 +96,7 @@ export const McpServerInputSchema = z.union([
   z.object({
     type: z.literal("builtin"),
     name: z.string().min(1),
-    builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness"]),
+    builtin: z.enum(["web-search", "knowledge", "agents", "harness"]),
   }),
   z.object({
     type: z.literal("http"),
@@ -137,6 +138,16 @@ export const CommandInputSchema = z.object({
   content: z.string().min(1),
 });
 
+/** A persona (`personas` table): instruction text a whole thread runs under. */
+export const PersonaInputSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().default(""),
+  /** Appended to the agent's own prompt, above the rules (`personas.ts`). */
+  prompt: z.string().min(1),
+  /** Order in every menu; ties break by name. */
+  sortOrder: z.number().int().default(0),
+});
+
 export type McpServerInput = z.infer<typeof McpServerInputSchema>;
 export type SkillInput = z.infer<typeof SkillInputSchema>;
 export type CommandInput = z.infer<typeof CommandInputSchema>;
@@ -145,6 +156,8 @@ export type CommandInput = z.infer<typeof CommandInputSchema>;
 export type McpServerDef = McpServerInput & { id: string; threadScoped?: boolean };
 export type SkillDef = SkillInput & { id: string };
 export type CommandDef = CommandInput & { id: string };
+export type PersonaInput = z.infer<typeof PersonaInputSchema>;
+export type PersonaDef = PersonaInput & { id: string };
 
 type McpRow = typeof mcpServersTable.$inferSelect;
 
@@ -245,6 +258,32 @@ export const commands = {
   },
   remove: async (id: string): Promise<boolean> =>
     ((await db.delete(commandsTable).where(eq(commandsTable.id, id))).rowCount ?? 0) > 0,
+};
+
+const personaColumns = {
+  id: personasTable.id,
+  name: personasTable.name,
+  description: personasTable.description,
+  prompt: personasTable.prompt,
+  sortOrder: personasTable.sortOrder,
+};
+
+export const personas = {
+  list: async (): Promise<PersonaDef[]> =>
+    await db.select(personaColumns).from(personasTable).orderBy(asc(personasTable.sortOrder), asc(personasTable.name)),
+  get: async (id: string): Promise<PersonaDef | undefined> =>
+    (await db.select(personaColumns).from(personasTable).where(eq(personasTable.id, id)).limit(1))[0],
+  async create(input: PersonaInput): Promise<PersonaDef> {
+    const persona: PersonaDef = { id: randomUUID(), ...input };
+    await db.insert(personasTable).values(persona);
+    return persona;
+  },
+  async update(id: string, input: PersonaInput): Promise<PersonaDef | undefined> {
+    const changed = ((await db.update(personasTable).set(input).where(eq(personasTable.id, id))).rowCount ?? 0);
+    return changed > 0 ? { id, ...input } : undefined;
+  },
+  remove: async (id: string): Promise<boolean> =>
+    ((await db.delete(personasTable).where(eq(personasTable.id, id))).rowCount ?? 0) > 0,
 };
 
 export const skills = {

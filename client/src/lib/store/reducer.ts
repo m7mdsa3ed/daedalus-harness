@@ -54,6 +54,7 @@ export type Action =
           | "modeId"
           | "suggestKinds"
           | "uiGroups"
+          | "personaId"
           | "askProfiles"
           | "helperModels"
           | "mcpServerIds"
@@ -75,6 +76,7 @@ export type Action =
       effort: string
       suggestKinds?: string[]
       uiGroups?: string[]
+      personaId?: string | null
       helperModels?: { role: string; model: string }[]
     }
   /** This device's own optimism about a config change, or the end of it.
@@ -363,6 +365,7 @@ export function reducer(state: State, action: Action): State {
                 // Omitted by a server that predates the toggle — same bargain.
                 ...(action.suggestKinds === undefined ? {} : { suggestKinds: action.suggestKinds }),
                 ...(action.uiGroups === undefined ? {} : { uiGroups: action.uiGroups }),
+                ...(action.personaId === undefined ? {} : { personaId: action.personaId }),
                 ...(action.helperModels === undefined ? {} : { helperModels: action.helperModels }),
               }
             : session

@@ -41,6 +41,9 @@ export function testEnv(overrides: Partial<AgentEnv> = {}): AgentEnv {
     /* Off: a scripted model hands its scripts out in order, and a title call
        would take the next turn's. title.test.ts turns it on. */
     autoTitle: false,
+    /* `local`: a test process is standalone, so the in-process `task` loop is
+       what the agent has — which is what the subagent tests exercise. */
+    subagents: "local",
     modelPromptsFile: null,
     home: mkdtempSync(join(tmpdir(), "daedalus-agent-test-")),
     ...overrides,
