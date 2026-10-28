@@ -33,7 +33,6 @@ import {
   KeyRound,
   Palette,
   Plug,
-  Search,
   Server,
   Settings2,
   Lightbulb,
@@ -256,15 +255,6 @@ export const SETTINGS_SECTIONS = [
       "Export everything this server stores as one JSON file, or restore one — profiles, projects, the library, knowledge, threads, schedules, tasks and the web-search backend.",
   },
   {
-    id: "web-search",
-    page: lazyPage(() => import("./web-search"), "WebSearchPage"),
-    label: "Web search",
-    icon: Search,
-    title: "Web search",
-    description:
-      "The default search/fetch backend the harness's own web-search MCP server answers against. Profiles can override it.",
-  },
-  {
     id: "voice",
     page: lazyPage(() => import("./voice"), "VoicePage"),
     sub: [{ path: ":entryId", page: lazyPage(() => import("./voice"), "VoiceFormPage") }],
@@ -343,6 +333,6 @@ export const SETTINGS_NAV_GROUPS: readonly {
   { label: "Workspace", sections: ["projects", "files", "knowledge", "rules"] },
   { label: "Tools", sections: ["mcp", "skills", "commands", "personas"] },
   { label: "AI & models", sections: ["profiles", "agents", "model-roles", "model-prompts", "ai"] },
-  { label: "Services", sections: ["usage", "web-search", "voice"] },
+  { label: "Services", sections: ["usage", "voice"] },
   { label: "Server", sections: ["backup"] },
 ] as const

@@ -13,6 +13,10 @@ line: keep each bullet on a single line.
 
 ## [Unreleased]
 
+### 2026-10-28
+
+- **Settings › Web search is removed; the web-search backend is set in `data/config.json` only.** The page and its `GET`/`PUT /api/config/web-search` routes are gone, so the config file's `webSearch` block is the one source (a backup restore still writes it); the built-in web-search row's hint in Settings › MCP now points there.
+
 ### 2026-10-27
 
 - **Personas are back, alongside slash commands.** A persona is instruction text a whole thread runs under — picked in the thread's config menu (draft and started) like the model, remembered per project (`projects.default_persona_id`) and stored on the thread (`sessions.persona_id`); its text heads the spawn instructions above the rules (`resolvePersonaSpawn`), so it reaches every runtime through the same door, and a pick is staged and costs a respawn like the drawn-UI groups. Settings › Personas (Tools) lists, creates and edits them over `/api/personas` (also the harness MCP's `library_*` tools), the existing `personas` rows come back as they were, a backup exports and imports them, a workflow step inherits its parent's persona (an ask does not), and the boot migration no longer copies personas into commands. Commands made from the old personas are left as they are.

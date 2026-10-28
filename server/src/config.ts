@@ -186,8 +186,8 @@ export function loadConfig(): ServerConfig {
 /** `loadConfig()`, once. `loadConfig` re-reads and re-parses config.json on
     every call, which is fine at boot and wasteful on every spawn
     (`SessionManager.serversFor`). The file is bootstrap and hand-edited only
-    while the server is down — the one runtime writer is `saveWebSearch`, which
-    invalidates this cache, so a web-search edit still reaches the next spawn. */
+    while the server is down — the one runtime writer is `saveWebSearch` (backup restore), which
+    invalidates this cache, so a restored web-search block still reaches the next spawn. */
 let cachedConfig: ServerConfig | null = null;
 export function getConfig(): ServerConfig {
   return (cachedConfig ??= loadConfig());

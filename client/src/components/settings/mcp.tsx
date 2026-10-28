@@ -101,7 +101,7 @@ const BUILTINS: {
   hint: string
   detail: string
 }[] = [
-  { kind: "web-search", label: "Web search", detail: "web search + fetch", hint: "The harness's web search + fetch tools, on the backend in Settings › Web search" },
+  { kind: "web-search", label: "Web search", detail: "web search + fetch", hint: "The harness's web search + fetch tools, on the backend set in data/config.json" },
   { kind: "knowledge", label: "Knowledge base", detail: "per-project knowledge base", hint: "A per-project knowledge base the agent can read and write" },
   { kind: "agents", label: "Agents", detail: "agents and workflows", hint: "Let the agent hand work to another worker: a subagent on its own model, another profile and agent pair (Codex, Claude Code, Daedalus), or a multi-step workflow — each drawn as a subagent in the calling thread" },
   { kind: "harness", label: "Harness", detail: "manage the harness", hint: "Let the agent manage the harness itself — read and write tasks on the board, list projects, and add profiles" },

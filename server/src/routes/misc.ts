@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 import { z } from "zod";
-import { readWebSearch, saveWebSearch, type loadConfig } from "../config.js";
+import { readWebSearch, type loadConfig } from "../config.js";
 import { getWebSearchUsage } from "../websearch-usage.js";
 import { SPEND_GROUPS, spendBy, type SpendGroupBy } from "../model-calls/index.js";
 import { SEARCH_LIMIT, searchEvents } from "../search.js";
@@ -32,26 +32,6 @@ import { API, FEATURES, MIN_CLIENT_API } from "../compat.js";
 import { resolveLinkPreview } from "../link-preview.js";
 import { CATEGORIES, PROFILES, mapsConfig, nearby, placePhoto, route, searchPlaces } from "../geo.js";
 import { bearerToken, workspace } from "./helpers.js";
-
-// Server-global web-search backend. This is the default a profile inherits when
-// it does not set its own overrides. The token is read-only: a PUT with an
-// empty token keeps the stored one (the client never sees it, like apiKey).
-const WebSearchConfigSchema = z.object({
-  searchApiBaseUrl: z.string().min(1),
-  searchApiToken: z.string().optional().default(""),
-  searchModel: z.string().min(1),
-  fetchModel: z.string().min(1),
-});
-
-/** The client-facing shape: all four fields except the token, plus a boolean
-    for the "leave empty to keep it" hint. The token key is never set so it
-    cannot leak even in a serialized payload. */
-const webSearchResponse = (ws: { searchApiBaseUrl: string; searchModel: string; fetchModel: string; searchApiToken?: string }) => ({
-  searchApiBaseUrl: ws.searchApiBaseUrl,
-  searchModel: ws.searchModel,
-  fetchModel: ws.fetchModel,
-  hasToken: Boolean(ws.searchApiToken),
-});
 
 /* A dockview's own shape and nothing deeper: its panels and its grid. */
 
@@ -150,25 +130,6 @@ export function miscRoutes(
   /* A pasted link's title and mark for its composer chip — fetched here and
      inlined (`link-preview.ts`), so the browser asks the page nothing. */
   app.get("/api/link-preview", async (c) => c.json(await resolveLinkPreview(c.req.query("url") ?? "")));
-
-  app.get("/api/config/web-search", (c) => {
-    const webSearch = readWebSearch();
-    if (!webSearch) return c.json({ configured: false });
-    return c.json({ configured: true, ...webSearchResponse(webSearch) });
-  });
-
-  app.put("/api/config/web-search", async (c) => {
-    const parsed = WebSearchConfigSchema.safeParse(await c.req.json());
-    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    const existing = readWebSearch();
-    // Empty token in an update means "keep the stored one" (never shown back).
-    const input = {
-      ...parsed.data,
-      searchApiToken: parsed.data.searchApiToken || (existing?.searchApiToken ?? ""),
-    };
-    const saved = saveWebSearch(input);
-    return c.json({ configured: true, ...webSearchResponse(saved) });
-  });
 
   /* Rules: standing instructions every thread spawns with, beneath
      any project's own rules (rules.ts). Individual rules with titles
