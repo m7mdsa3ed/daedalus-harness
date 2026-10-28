@@ -159,31 +159,84 @@ export async function createTerminal(projectId: string, options: CreateTerminalO
   if (existing.length >= MAX_PER_PROJECT)
     throw fail(409, `this project already has ${MAX_PER_PROJECT} terminals`);
 
-  const cols = clamp(options.cols ?? 80, 2, 500);
-  const rows = clamp(options.rows ?? 24, 2, 200);
   const { file, args } = shellFor(options.command);
-
-  const id = randomUUID();
-  const proc = pty.spawn(file, args, {
-    name: "xterm-256color",
+  return startTerminal({
+    projectId,
+    sessionId: options.sessionId || null,
+    title: options.title,
+    cols: options.cols,
+    rows: options.rows,
     cwd,
-    cols,
-    rows,
+    file,
+    args,
     env: {
-      ...(process.env as Record<string, string>),
-      TERM: "xterm-256color",
       // So a shell prompt, and anything that greps the environment, can say
       // where it is running. Nothing reads these back.
       DAEDALUS_PROJECT: project?.name ?? projectId,
       ...options.env,
     },
   });
+}
+
+/** The project id a setup terminal is filed under. No project row has it, so
+    `POST /api/projects/setup/terminals` stays a 404 (`projectRoot`), and the
+    terminal socket's project check works unchanged. */
+export const SETUP_PROJECT = "setup";
+
+/**
+ * A terminal that belongs to no project — logging an agent in, which happens
+ * before there is one. Not a shell: `file` and `args` are spawned as an argv,
+ * with nothing in between to interpret them, and the only caller resolves them
+ * from what the agent itself offered (`agent-login.ts`). The cwd is the
+ * caller's fixed one, never a request's.
+ */
+export function createSetupTerminal(spec: {
+  title: string;
+  file: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd: string;
+  onExit: (exitCode: number) => void;
+}): TerminalInfo {
+  if (listTerminals(SETUP_PROJECT).length >= MAX_PER_PROJECT)
+    throw fail(409, `already ${MAX_PER_PROJECT} setup terminals`);
+  return startTerminal({ projectId: SETUP_PROJECT, sessionId: null, ...spec });
+}
+
+function startTerminal(spec: {
+  projectId: string;
+  sessionId: string | null;
+  title?: string;
+  cols?: number;
+  rows?: number;
+  cwd: string;
+  file: string;
+  args: string[];
+  env: Record<string, string>;
+  onExit?: (exitCode: number) => void;
+}): TerminalInfo {
+  const cols = clamp(spec.cols ?? 80, 2, 500);
+  const rows = clamp(spec.rows ?? 24, 2, 200);
+  const { projectId } = spec;
+
+  const id = randomUUID();
+  const proc = pty.spawn(spec.file, spec.args, {
+    name: "xterm-256color",
+    cwd: spec.cwd,
+    cols,
+    rows,
+    env: {
+      ...(process.env as Record<string, string>),
+      TERM: "xterm-256color",
+      ...spec.env,
+    },
+  });
 
   const terminal: Terminal = {
     id,
     projectId,
-    sessionId: options.sessionId || null,
-    title: options.title?.trim() || null,
+    sessionId: spec.sessionId,
+    title: spec.title?.trim() || null,
     proc,
     peer: null,
     scrollback: "",
@@ -207,6 +260,7 @@ export async function createTerminal(projectId: string, options: CreateTerminalO
     terminal.proc = null;
     terminal.lastActivity = Date.now();
     send(terminal.peer, { t: "exit", exitCode, signal: signal ?? null });
+    spec.onExit?.(exitCode);
     /* The row stays: a peer attaching after the process died should be told it
        died, with the output that led there, rather than getting a 404 that
        reads like the terminal never existed. The sweeper collects it. */

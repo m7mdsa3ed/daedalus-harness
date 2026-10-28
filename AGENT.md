@@ -541,7 +541,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   in View options, **off by default**: a started thread keeps the full box until they ask for the
   small one, and the switch is read during render so it moves a box already on screen.
   `ThreadView` hands `Composer` `compact` (the thread is not empty), and the mini box is the editor, the toggle and Send on one line:
-  the scope row, the add menu, the pickers and the readings come back with the toggle
+  **the two faces — the project's mark and the pair's avatars — stand down while the reader is
+  writing** (`marksDown`: the box has the caret or holds words, said by `ComposerEditor`'s
+  `onFocusChange`), folded to zero width with an ease rather than unmounted so the words do not
+  jump under the caret; the "+" stays, since adding to a message is done while writing it.
+  The scope row, the add menu, the pickers and the readings come back with the toggle
   (remembered per thread for the life of the page, `ADVANCED_THREADS`). A draft and the landing
   console are the full box — the first message is written in it. `ThreadView` also hands it the
   scroller's own pin (`useFollowStream.pinned`) as `collapsed`: leaving the tail folds an advanced

@@ -5,8 +5,9 @@ import { promisify } from "node:util";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import * as acp from "./acp.js";
 import { withAgentConnection } from "./probe.js";
-import { defaultProfileFor } from "./profiles.js";
+import { defaultProfileFor, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
+import { getQuota, quotaCwd } from "./quota.js";
 import { getAgent, resolveSpawn, type AgentDef } from "./registry.js";
 
 /*
@@ -55,8 +56,59 @@ export interface AgentStatus {
       vendor. Null for a curl script, a local build, or an unreachable
       registry: not knowing is an answer, never a failure. */
   latest: string | null;
+  /** The ways the harness can log this agent in, as the agent itself named
+      them in `initialize` (`loginMethods`) — empty for one that offers none. */
+  login: LoginMethod[];
+  /** Measured, never assumed: true logged in, false known logged out, null
+      could not tell (drawn as "not checked", never as logged out). */
+  authenticated: boolean | null;
   checkedAt: number;
 }
+
+/** An ACP auth method the harness can run. `terminal`: the agent's own
+    invocation plus the method's `args`, in a PTY a person answers.
+    `agent`: ACP `authenticate`, which may raise a URL elicitation. */
+export interface LoginMethod {
+  id: string;
+  name: string;
+  description: string | null;
+  kind: "terminal" | "agent";
+}
+
+/** `_meta` keys on an auth method that mean "hand me a credential" — an API
+    key, a gateway's settings. Those are what a *profile* carries; a login door
+    that took them would be a second, unaudited place to plant one. */
+const CREDENTIAL_META = ["api-key", "gateway"];
+
+/** The methods a person can be walked through, from what the agent offered. */
+export function loginMethods(methods: readonly acp.AuthMethod[] | null | undefined): LoginMethod[] {
+  return (methods ?? []).flatMap((method): LoginMethod[] => {
+    const kind = "type" in method && method.type === "terminal" ? "terminal" : "agent";
+    const meta = (method as { _meta?: Record<string, unknown> | null })._meta ?? {};
+    if (kind === "agent" && CREDENTIAL_META.some((key) => key in meta)) return [];
+    return [{ id: method.id, name: method.name, description: method.description ?? null, kind }];
+  });
+}
+
+/** The methods each agent last offered, whole — `args` and `env` included,
+    which the client never needs. Read by the login routes, so a login runs
+    exactly what the probe saw and never a second spawn's answer. */
+const offered = new Map<string, readonly acp.AuthMethod[]>();
+
+export const offeredMethod = (agentId: string, methodId: string): acp.AuthMethod | null =>
+  offered.get(agentId)?.find((method) => method.id === methodId) ?? null;
+
+/** claude-agent-acp's identity push (`dist/auth-status.d.ts`): sent, never
+    answered — first from a probe `initialize` starts and does not wait for.
+    `kind: "none"` is logged out; silence is "cannot tell". */
+export const AUTH_STATUS_UPDATE = "_auth/status_update";
+/** The adapter caps its own CLI read at 5 s; a little past it. */
+const AUTH_STATUS_WAIT_MS = 6_000;
+
+export const parseAuthStatus = (params: unknown): boolean | null => {
+  const kind = (params as { authStatus?: { kind?: unknown } } | null)?.authStatus?.kind;
+  return typeof kind === "string" ? kind !== "none" : null;
+};
 
 export interface AgentsStatus {
   /** The harness's half of the protocol: the SDK it speaks through and the
@@ -261,8 +313,15 @@ export function evictAgentStatus(agentId: string): void {
 
 /** The cwd the handshake runs in. An agent's version is the same in every
     directory, so the server's own is fine, and requiring a project would make
-    the settings page depend on there being one. */
-const statusProject = (): Project => ({ id: "", name: "", cwd: process.cwd(), description: null });
+    the settings page depend on there being one. A login runs here too, so the
+    probe and the login see the same config. */
+export const statusProject = (): Project => ({ id: "", name: "", cwd: process.cwd(), description: null });
+
+/** Set on the probe's own spawn, never `process.env` or a profile: it makes
+    both shipped adapters offer only the logins that reach a person who is not
+    at the server's screen (a pasted code, a device code). The probe's process
+    is its own (`withAgentConnection`), so a thread never sees it. */
+export const LOGIN_PROBE_ENV = { NO_BROWSER: "1" };
 
 export function getAgentStatus(agent: AgentDef, { refresh = false } = {}): Promise<AgentStatus> {
   if (!refresh) {
@@ -299,6 +358,8 @@ async function measure(agent: AgentDef, refresh = false): Promise<AgentStatus> {
     agent: null,
     error: null,
     latest: await latestFor(agent, refresh),
+    login: [],
+    authenticated: null,
     checkedAt: Date.now(),
   };
   /* A binary that is not there has nothing to say; spawning it would only
@@ -307,21 +368,56 @@ async function measure(agent: AgentDef, refresh = false): Promise<AgentStatus> {
   /* Re-read the row: the caller's copy may predate an edit, and it is the
      command on the row that is about to be spawned. */
   if (!await getAgent(agent.id)) return base;
+  const profile = defaultProfileFor(agent.id, agent.name);
+  let pushed: boolean | null = null;
+  let heard: (() => void) | null = null;
   try {
     const answered = await withAgentConnection(
-      defaultProfileFor(agent.id, agent.name),
+      profile,
       agent.id,
       project,
-      { name: "daedalus-status" },
-      async (_conn, init) => ({
-        protocolVersion: init.protocolVersion,
-        agent: init.agentInfo
-          ? { name: init.agentInfo.name, title: init.agentInfo.title ?? null, version: init.agentInfo.version ?? null }
-          : null,
-      }),
+      {
+        name: "daedalus-status",
+        env: LOGIN_PROBE_ENV,
+        /* Registered before `initialize`, because the first push is the
+           answer to the probe `initialize` starts. */
+        handlers: (app) =>
+          app.onNotification(AUTH_STATUS_UPDATE, (params) => params, (ctx) => {
+            pushed = parseAuthStatus(ctx.params);
+            heard?.();
+          }),
+      },
+      async (_conn, init) => {
+        /* Only an agent that says it pushes its identity is waited for. */
+        const pushes = Boolean((init.agentCapabilities?._meta as Record<string, unknown> | undefined)?.authStatus);
+        if (pushes && pushed === null) {
+          await new Promise<void>((done) => {
+            heard = done;
+            setTimeout(done, AUTH_STATUS_WAIT_MS).unref();
+          });
+        }
+        offered.set(agent.id, init.authMethods ?? []);
+        return {
+          protocolVersion: init.protocolVersion,
+          agent: init.agentInfo
+            ? { name: init.agentInfo.name, title: init.agentInfo.title ?? null, version: init.agentInfo.version ?? null }
+            : null,
+          login: loginMethods(init.authMethods),
+        };
+      },
     );
-    return { ...base, ...answered };
+    return { ...base, ...answered, authenticated: pushed ?? (await quotaAuthenticated(agent, profile, refresh)) };
   } catch (err) {
     return { ...base, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/** The fallback reading: the quota probe already asks the runtime's own CLI
+    who is logged in (`quota.ts`). `unsupported`/`error` say nothing either way. */
+async function quotaAuthenticated(agent: AgentDef, profile: Profile, refresh: boolean): Promise<boolean | null> {
+  if (!agent.quotaProbe) return null;
+  const snapshot = await getQuota(agent, profile, quotaCwd(), { refresh });
+  if (snapshot.status === "unauthenticated") return false;
+  if (snapshot.status === "subscription" || snapshot.status === "api-key") return true;
+  return null;
 }

@@ -1,4 +1,5 @@
 import type { Context, Hono } from "hono";
+import { stream } from "hono/streaming";
 import { z } from "zod";
 import {
   ProfileInputSchema,
@@ -18,6 +19,7 @@ import {
 } from "../profiles.js";
 import { AgentInputSchema, getAgent, isBuiltInAgent, listAgents, resetAgent, updateAgent } from "../registry.js";
 import { evictAgentStatus, getAgentsStatus, installAgent } from "../agent-status.js";
+import { beginAgentLogin, startTerminalLogin } from "../agent-login.js";
 import { getProject } from "../projects.js";
 import { clearProbeCache, probeAgentOptions } from "../probe.js";
 import { modelsDevProviders, searchModelsDev, toCandidate } from "../models-dev.js";
@@ -64,6 +66,37 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
        does, carrying the command's own output — which is the only thing that
        says *why* an install failed. */
     return result.ok ? c.json(result) : c.json({ error: result.output }, 500);
+  });
+  /* Logging an agent in (agent-login.ts). The body names a method the status
+     probe returned and nothing else of it is read. A terminal login answers
+     the setup terminal to attach a panel to; the probe re-measures when it
+     exits. */
+  const LoginSchema = z.object({ methodId: z.string().min(1) });
+  const loginMethodId = async (c: Context): Promise<string | null> =>
+    LoginSchema.safeParse(await c.req.json().catch(() => ({}))).data?.methodId ?? null;
+  app.post("/api/agents/:id/login", async (c) => {
+    const agent = await getAgent(c.req.param("id"));
+    if (!agent) return c.json({ error: "not found" }, 404);
+    const methodId = await loginMethodId(c);
+    if (!methodId) return c.json({ error: "methodId is required" }, 400);
+    return c.json(await startTerminalLogin(agent, methodId));
+  });
+  /* An agent-handled login, as NDJSON while it runs: `{elicitation}` (a link
+     and a code to show), then `{done, ok}`. Closing the stream is the cancel —
+     it declines what is open and ends the process. */
+  app.post("/api/agents/:id/authenticate", async (c) => {
+    const agent = await getAgent(c.req.param("id"));
+    if (!agent) return c.json({ error: "not found" }, 404);
+    const methodId = await loginMethodId(c);
+    if (!methodId) return c.json({ error: "methodId is required" }, 400);
+    const run = await beginAgentLogin(agent, methodId);
+    c.header("Content-Type", "application/x-ndjson");
+    c.header("Cache-Control", "no-store");
+    return stream(c, async (s) => {
+      const abort = new AbortController();
+      s.onAbort(() => abort.abort());
+      await run((event) => void s.write(JSON.stringify(event) + "\n"), abort.signal);
+    });
   });
   const agentCrud = crud(AgentInputSchema);
   app.put(

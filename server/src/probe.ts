@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import * as acp from "./acp.js";
 import { createHash } from "node:crypto";
 import { agentOptions as agentOptionsTable, db } from "./db/index.js";
-import { AcpBridge, CLIENT_CAPABILITIES, type SessionNotification, agentStream, resolveAgentSpawn, spawnAgent, spawnProcess } from "./acp-bridge.js";
+import { AcpBridge, CLIENT_CAPABILITIES, type SessionNotification, agentStream, resolveAgentSpawn, spawnProcess } from "./acp-bridge.js";
 import { AcpPool, SINK, pool } from "./acp-connection.js";
 import { emptyLinks } from "./db/links.js";
 import { ensureProjectDir, materializeModelAllowlist, materializeWorkspace } from "./materialize.js";
@@ -243,11 +243,22 @@ export async function withAgentConnection<T>(
     materialize?: { allowlist: string[] };
     /** Every `session/update` the agent sends while connected. */
     onUpdate?: (notification: SessionNotification) => void;
+    /** Extra env for *this* process only — never the profile's, so nothing set
+        here can reach a thread's spawn (the login probe's `NO_BROWSER`). */
+    env?: Record<string, string>;
+    /** Replaces `PROBE_TIMEOUT_MS`: a login waits on a person, not a handshake. */
+    timeoutMs?: number;
+    /** Ends the connection (and the process) early — a login's stream closing. */
+    signal?: AbortSignal;
+    /** More handlers on the client before it connects: an extension
+        notification, an elicitation. */
+    handlers?: (app: ReturnType<typeof acp.client>) => void;
   },
   fn: (agent: acp.ClientContext, init: acp.InitializeResponse) => Promise<T>,
 ): Promise<T> {
   if (opts.materialize) await prepareWorkspace(agentId, project, opts.materialize.allowlist);
-  const proc = await spawnAgent(profile, agentId, project);
+  const spec = await resolveAgentSpawn(profile, agentId, project);
+  const proc = await spawnProcess({ ...spec, env: { ...spec.env, ...opts.env } });
 
   const stderr: string[] = [];
   proc.stderr.on("data", (chunk: Buffer) => {
@@ -275,21 +286,25 @@ export async function withAgentConnection<T>(
      the peer's eventual response, and a wedged agent has none to give. */
   let expire: ReturnType<typeof setTimeout>;
   const deadline = new Promise<never>((_, reject) => {
-    expire = setTimeout(() => reject(new Error("the agent did not answer in time")), PROBE_TIMEOUT_MS);
+    expire = setTimeout(() => reject(new Error("the agent did not answer in time")), opts.timeoutMs ?? PROBE_TIMEOUT_MS);
     expire.unref();
   });
   deadline.catch(() => {});
 
+  const aborted = new Promise<never>((_, reject) => {
+    if (opts.signal?.aborted) reject(new Error("cancelled"));
+    opts.signal?.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+  });
+  aborted.catch(() => {});
+
+  const app = acp.client({ name: opts.name });
+  if (opts.onUpdate)
+    app.onNotification(acp.methods.client.session.update, (ctx) => opts.onUpdate!(ctx.params as SessionNotification));
+  opts.handlers?.(app);
+
   try {
     return await Promise.race([
-      (opts.onUpdate
-        ? acp
-            .client({ name: opts.name })
-            .onNotification(acp.methods.client.session.update, (ctx) =>
-              opts.onUpdate!(ctx.params as SessionNotification),
-            )
-        : acp.client({ name: opts.name })
-      ).connectWith(agentStream(proc), async (agent) => {
+      app.connectWith(agentStream(proc), async (agent) => {
         const init = await agent.request(acp.methods.agent.initialize, {
           protocolVersion: acp.PROTOCOL_VERSION,
           /* The same claims a thread's process makes, so the probe is
@@ -303,6 +318,7 @@ export async function withAgentConnection<T>(
       }),
       died,
       deadline,
+      aborted,
     ]);
   } finally {
     clearTimeout(expire!);

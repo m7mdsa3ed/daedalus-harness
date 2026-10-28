@@ -423,6 +423,13 @@ export const CLIENT_CAPABILITIES: acp.ClientCapabilities = {
   // badly. Advertising it turns the tool back on and routes it (plus
   // MCP elicitations and codex's question bridge) to `park`.
   elicitation: { form: {}, url: {} },
+  // And for logging in: an agent may only offer a `type: "terminal"` auth
+  // method (its own invocation plus `args`, run in a PTY the person answers)
+  // to a client that claims this — claude-agent-acp offers no login the
+  // harness can drive without it. The status probe reads the methods and the
+  // login routes run them (`agent-login.ts`); codex's device-code login rides
+  // the `url` elicitation claimed above instead.
+  auth: { terminal: true },
   // The fourth bargain, and the one that decides whether a subagent's
   // work is visible at all. Nothing in ACP v1 nests; the draft subagent
   // RFD (see protocol.ts `SubagentSpawned`) does, and an agent that

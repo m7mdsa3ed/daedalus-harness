@@ -69,7 +69,7 @@ test("a config edited as text keeps its placeholders and goes back whole", () =>
   const env = { ...SEEDED, [CONFIG_KEY]: config };
   const split = splitEnv(env, SEEDED);
   const text = '{"permission":"ask","model":"{model}"}';
-  const merged = { ...mergeEnv(split, split.mine), [CONFIG_KEY]: text };
+  const merged: Record<string, string> = { ...mergeEnv(split, split.mine), [CONFIG_KEY]: text };
   assert.equal(merged[CONFIG_KEY], text);
   assert.equal(merged.ANTHROPIC_API_KEY, "{apiKey}", "the wiring is still there");
 });

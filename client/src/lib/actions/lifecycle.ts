@@ -6,6 +6,7 @@
 import { uuid } from "../uuid"
 import { api, type AskProfiles } from "../settings"
 import { forgetDraft, patchDraft } from "../draft-sessions"
+import { cancelPrewarm } from "../prewarm"
 import { postJson, type ActionsCore } from "./core"
 
 export function lifecycleActions(core: ActionsCore) {
@@ -111,6 +112,10 @@ export function lifecycleActions(core: ActionsCore) {
       if (!session || session.draft) {
         dispatch({ type: "drop-draft-session", id: sessionId })
         forgetDraft(settings.id, sessionId)
+        /* Unconditional and unknown-inclusive: the branch above is exactly the
+           set of ids a prewarm could be holding, and asking about one the
+           server never warmed is a 404 nobody reads. */
+        cancelPrewarm(settings, sessionId)
         return
       }
       threads.destroy(sessionId)
@@ -136,6 +141,7 @@ export function lifecycleActions(core: ActionsCore) {
           if (drafts.has(id)) {
             dispatch({ type: "drop-draft-session", id })
             forgetDraft(settings.id, id)
+            cancelPrewarm(settings, id)
             continue
           }
           threads.destroy(id)
@@ -157,6 +163,7 @@ export function lifecycleActions(core: ActionsCore) {
       if (getState().sessions.find((s) => s.id === sessionId)?.draft) {
         dispatch({ type: "drop-draft-session", id: sessionId })
         forgetDraft(settings.id, sessionId)
+        cancelPrewarm(settings, sessionId)
         return
       }
       threads.destroy(sessionId)

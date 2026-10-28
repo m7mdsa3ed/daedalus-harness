@@ -980,7 +980,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 - **A slash command is either the agent's or the harness's, and the composer draws one
   list.** Agent commands come from `available_commands_update` and are ordinary prompts —
-  `/name args` is sent, the agent resolves it, the send path is untouched. The harness's own
+  `/name args` is sent, the agent resolves it, the send path is untouched. Library slash
+  commands are available in every thread whose runtime declares a command workspace layout;
+  they are materialized globally and listed on drafts, not selected per thread. Their content
+  is not injected into ordinary prompts: it applies only when the user invokes `/name`. The
+  harness's own
   (`HARNESS_COMMANDS` in `components/slash-commands.tsx`, declared in the same
   `acp.AvailableCommand` shape) are the exception the send path knows about:
   `harnessCommandFor` reads the composed text in `Composer`'s `send` (`components/composer/composer.tsx`) and, for

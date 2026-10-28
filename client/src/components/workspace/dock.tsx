@@ -42,6 +42,7 @@ import {
 } from "@/components/workspace/dock-context"
 import { navigateTo, routedThreadId, threadPath } from "@/lib/router"
 import { loadSettings } from "@/lib/settings"
+import { cancelPrewarm } from "@/lib/prewarm"
 import { useStoreHandle } from "@/lib/store"
 import { useHotkey, useShortcut } from "@/hooks/use-hotkey"
 import { MOBILE_BREAKPOINT } from "@/hooks/use-device"
@@ -189,6 +190,34 @@ export function useWorkspaceDock(): DockController {
   const isNavigable = (panel: IDockviewPanel) =>
     panel.api.component === "chat" || panel.api.component === "page"
 
+  /* ── A draft's warm process goes with the last tab showing it ──
+     A prewarmed process belongs to the draft, not to a tab (`lib/prewarm.ts`),
+     so the moment nobody can send it the server should stop holding it. Three
+     things remove a chat tab — the reader's Close, a route repointing the tab in
+     front, and a panel opened in a place another one occupied — and the last two
+     go through `silently`, so this is a function they all call rather than a
+     block inside one of them.
+
+     Two tabs of one thread are legal (`openTab` shows a thread again), so the
+     check is whether *another* panel still holds this session. And it is a
+     draft or nothing: a thread with a row owns the process it spawned, which no
+     tab closing may take away. Fire and forget, because the TTL and the cap are
+     the guarantee and this is only promptness. */
+  const releaseDraft = React.useCallback((panel: IDockviewPanel, api: DockviewApi) => {
+    const descriptor = descriptorOf(panel)
+    if (descriptor?.kind !== "chat") return
+    const { sessionId } = descriptor
+    if (!store.getState().sessions.find((s) => s.id === sessionId)?.draft) return
+    const stillShown = api.panels.some((other) => {
+      if (other === panel) return false
+      const there = descriptorOf(other)
+      return there?.kind === "chat" && there.sessionId === sessionId
+    })
+    if (stillShown) return
+    const settings = loadSettings()
+    if (settings) cancelPrewarm(settings, sessionId)
+  }, [store])
+
   const findPanel = React.useCallback((id: string) => apiRef.current?.getPanel(id), [])
 
   /** The panel a tab's menu names, or the one in front of you. */
@@ -262,10 +291,13 @@ export function useWorkspaceDock(): DockController {
             : undefined,
       })
       const replaced = place?.replace
-      if (replaced) silently(() => api.removePanel(replaced))
+      if (replaced) {
+        releaseDraft(replaced, api)
+        silently(() => api.removePanel(replaced))
+      }
       return added
     },
-    [silently]
+    [releaseDraft, silently]
   )
 
   const navigateActive = React.useCallback(
@@ -426,7 +458,10 @@ export function useWorkspaceDock(): DockController {
       })
 
       const replaced = navigates ? active : current
-      if (replace && replaced && !beside) silently(() => api.removePanel(replaced))
+      if (replace && replaced && !beside) {
+        releaseDraft(replaced, api)
+        silently(() => api.removePanel(replaced))
+      }
       /* With the tab it was opened from: its tab group, made for the two of
          them if it has none — only now that the panel exists, so an open that
          failed upstream never left a group of one behind. */
@@ -445,7 +480,7 @@ export function useWorkspaceDock(): DockController {
         })
       }
     },
-    [silently, openPage]
+    [releaseDraft, silently, openPage]
   )
 
   const openChat = React.useCallback(
@@ -470,9 +505,10 @@ export function useWorkspaceDock(): DockController {
         ...closedRef.current.filter((entry) => panelId(entry.panel) !== panel.id),
       ].slice(0, REOPEN_DEPTH)
     }
+    releaseDraft(panel, api)
     api.removePanel(panel)
     return true
-  }, [])
+  }, [releaseDraft])
 
   const closePanel = React.useCallback(
     async (id: string) => {

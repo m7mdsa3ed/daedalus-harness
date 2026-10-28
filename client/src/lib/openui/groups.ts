@@ -14,8 +14,8 @@ export const UI_GROUPS: UiGroup[] = [
   {
     id: "text",
     label: "Text",
-    caption: "Verdicts, tables, verdict grids, lists, links, triage rows, callouts, comparisons and quotes for prose-shaped answers.",
-    components: ["Verdict", "List", "Table", "Matrix", "Callout", "KeyValue", "Badges", "EmptyState", "Compare", "People", "Quote", "Link", "Links", "Rows"],
+    caption: "Markdown, verdicts, tables, verdict grids, lists, links, triage rows, callouts, comparisons and quotes for prose-shaped answers.",
+    components: ["Markdown", "Verdict", "List", "Table", "Matrix", "Callout", "KeyValue", "Badges", "EmptyState", "Compare", "People", "Quote", "Link", "Links", "Rows"],
   },
   {
     id: "interactive",

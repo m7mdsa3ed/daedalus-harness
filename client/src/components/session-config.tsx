@@ -5,6 +5,7 @@ import { BotIcon, CheckIcon, ClockIcon, Loader2Icon, XIcon } from "lucide-react"
 import { AgentIcon, EntityIcon, ModelIcon, ProfileIcon } from "@/components/entity-icon"
 import { AvatarGroup } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -72,6 +73,7 @@ export function SessionConfigPopover({
   actions,
   thread,
   trigger,
+  iconOnly = false,
   shell,
 }: {
   sessionId: string
@@ -85,6 +87,9 @@ export function SessionConfigPopover({
       chip's own styling names the composer (`ring-composer`, its type scale),
       which is exactly why it is not reusable as-is. */
   trigger?: React.ReactNode
+  /** The chip as its marks alone — the mini composer's door, where a line has
+      no room for the model's name. The words stay in the title. */
+  iconOnly?: boolean
 }) {
   /* This popover lives in the composer row of a live transcript, so it reads
      its own session row and the three catalogs it lists — never the whole
@@ -318,8 +323,9 @@ export function SessionConfigPopover({
             /* Width is the row's, not the device's: the label is capped and
                ellipsized, and what will not fit scrolls with the rest of the
                control cluster. The title still carries the settings whole. */
-            className={PILL}
+            className={cn(PILL, iconOnly && "pe-1 pointer-coarse:pe-2")}
             title={triggerLabel}
+            aria-label={iconOnly ? triggerLabel || "Session settings" : undefined}
           >
             {/* The model's own icon replaces the profile's logo in the pair —
                 the two marks stay, it is only the second one that changes. A
@@ -350,6 +356,7 @@ export function SessionConfigPopover({
             )}
             {/* The mode rides along in the trigger: a silently-active "accept
                 edits" is the one setting you must see. */}
+            {!iconOnly && (
             <PillLabel
               model={modelLabel}
               effort={effortLabel}
@@ -366,6 +373,7 @@ export function SessionConfigPopover({
               mode={modeLabel}
               modeId={modes?.currentModeId}
             />
+            )}
           </Button>
           )
         }
@@ -500,6 +508,7 @@ export function ConfigPopover({
   actions,
   thread,
   keys = false,
+  iconOnly = false,
 }: {
   meta: SessionMeta
   sessionId: string
@@ -507,6 +516,8 @@ export function ConfigPopover({
   thread: ThreadState
   /** Answer `changeModel` — only the composer in front of you may. */
   keys?: boolean
+  /** Draw the trigger as the agent's marks only (the mini composer). */
+  iconOnly?: boolean
 }) {
   const [open, setOpen] = React.useState(false)
   const finalFocus = useMenuShortcut("changeModel", () => setOpen(!open), keys)
@@ -514,8 +525,8 @@ export function ConfigPopover({
   const shell = { open, setOpen, finalFocus }
   const ready = !meta.draft && profiles.some((p) => p.id === meta.profileId)
   return ready ? (
-    <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} shell={shell} />
+    <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} shell={shell} iconOnly={iconOnly} />
   ) : (
-    <DraftConfigPopover meta={meta} actions={actions} shell={shell} />
+    <DraftConfigPopover meta={meta} actions={actions} shell={shell} iconOnly={iconOnly} />
   )
 }

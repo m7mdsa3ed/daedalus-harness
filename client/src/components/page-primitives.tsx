@@ -10,13 +10,13 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 /* How wide a page's column may get. `wide` is every list, detail, dashboard
-   and settings section; `form` is a single form's measure (the landing setup);
+   and settings section;
    `xl` the two surfaces that are several panes side by side (Settings › Files,
-   the theme studio). */
+   the theme studio); `full` the panel's whole width (the landing setup). */
 const PAGE_WIDTH = {
-  form: "mx-auto max-w-3xl",
   wide: "mx-auto max-w-5xl",
   xl: "mx-auto max-w-7xl",
+  full: "",
 } as const
 
 /** The h1 every page header draws, in one place. */

@@ -137,7 +137,13 @@ async function generate() {
        second bundled react would be a second React. Only the entry and its
        local imports are compiled. */
     packages: "external",
-    alias: { "@": join(ROOT, "src") },
+    alias: {
+      "@": join(ROOT, "src"),
+      "@daedalus/delivery": join(ROOT, "../server/src/delivery.ts"),
+      "@daedalus/compat": join(ROOT, "../server/src/compat.ts"),
+      "@daedalus/tps": join(ROOT, "../server/src/tps.ts"),
+      "@daedalus/peak": join(ROOT, "../server/src/peak.ts"),
+    },
     /* The Map's Google Maps half is a lazy browser-only chunk (it touches `window` and imports CSS);
        the prompt needs only the specs, so it is compiled as nothing. */
     plugins: [

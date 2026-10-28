@@ -3,6 +3,7 @@ const path = require("node:path")
 const fs = require("node:fs")
 const http = require("node:http")
 const { installTray, setActivity, refreshTray } = require("./tray.cjs")
+const { installSsh } = require("./ssh.cjs")
 
 const DEV_URL = process.env.ELECTRON_DEV_URL || ""
 
@@ -721,6 +722,9 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on("second-instance", () => void showMain())
+
+  // SSH connect (ssh.cjs): its IPC, and its tunnels ended on quit.
+  installSsh(ipcMain, app, () => BrowserWindow.getAllWindows())
 
   app.whenReady().then(() => {
     installMenu()

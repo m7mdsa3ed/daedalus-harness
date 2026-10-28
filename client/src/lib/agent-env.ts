@@ -27,7 +27,7 @@
    The one property that matters: **merging never changes a key it did not mean
    to change.** A reading can be wrong and only mislabels a row; a merge that
    dropped a seeded template would break the spawn and still say "saved". */
-import { type KeyValueRow } from "@/lib/key-value-rows"
+import { type KeyValueRow } from "./key-value-rows.js"
 
 /** A template's placeholders: `{model}`, `{baseUrl?daedalus/}`, `{longContext?[1m]}`. */
 const PLACEHOLDER = /\{(\w+)(\?[^}]*)?\}/g

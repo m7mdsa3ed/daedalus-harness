@@ -16,6 +16,17 @@ export interface ServerSettings {
   name: string
   url: string
   token: string
+  /** Reached over SSH from the desktop app: `url` is the local end of a tunnel
+      the shell opens before connecting (`lib/ssh.ts`), on a port chosen once
+      for this host so the URL — and so this entry — stays the same. */
+  ssh?: SshTarget
+}
+
+export interface SshTarget {
+  host: string
+  dir: string
+  remotePort: number
+  localPort: number
 }
 
 interface ServerStore {
@@ -78,6 +89,24 @@ export function loadServers(): ServerSettings[] {
 }
 
 /** The connection every request in the app uses, or null when there is none. */
+/** A server handed over in the URL — `?server=<url>&token=<token>`, the link
+    `setup.sh` prints — taken once, at load, and stripped from the address bar
+    before the router or anything else can read or record it. Never stored by
+    this: the connect screen verifies it against `/api/health` like a typed one,
+    and only a server that answers is saved. */
+export const connectLink: { url: string; token: string } | null = (() => {
+  if (typeof window === "undefined") return null
+  const params = new URLSearchParams(window.location.search)
+  const url = params.get("server")
+  const token = params.get("token")
+  if (!url && !token) return null
+  params.delete("server")
+  params.delete("token")
+  const rest = params.toString()
+  window.history.replaceState(window.history.state, "", window.location.pathname + (rest ? `?${rest}` : "") + window.location.hash)
+  return url && token ? { url: url.replace(/\/+$/, ""), token } : null
+})()
+
 export function loadSettings(): ServerSettings | null {
   const { servers, activeId } = read()
   return servers.find((s) => s.id === activeId) ?? servers[0] ?? null
@@ -282,7 +311,22 @@ export interface AgentStatus {
   /** The newest published version, when the row's install line names an npm
       package. Null means "not askable", never "up to date". */
   latest: string | null
+  /** The ways the harness can log this agent in, as the agent named them over
+      ACP. Absent from a server without the `agentLogin` feature. */
+  login?: AgentLoginMethod[]
+  /** True logged in, false known logged out, null could not tell — drawn as
+      "not checked", never as logged out. */
+  authenticated?: boolean | null
   checkedAt: number
+}
+
+/** `terminal`: a PTY the person answers (a URL to open, a code to paste).
+    `agent`: the agent runs it and may show a link and a one-time code. */
+export interface AgentLoginMethod {
+  id: string
+  name: string
+  description: string | null
+  kind: "terminal" | "agent"
 }
 
 /** What the `agent` tool uses for one agent: a profile, and optionally one of its

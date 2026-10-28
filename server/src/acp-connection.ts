@@ -460,6 +460,18 @@ export class AcpPool {
     conn.idleTimer.unref();
   }
 
+  /** Stop this agent's warm processes nobody is on, so the next thread spawns
+      fresh. A login changed what a process `initialize`d against; one with a
+      session on it is left alone — it re-reads its account at the next prompt
+      (claude-agent-acp) or ends with its thread. */
+  retireIdle(agentId: string): void {
+    for (const [key, conn] of this.shared) {
+      if (conn.agentId !== agentId || conn.sessionCount > 0) continue;
+      this.shared.delete(key);
+      conn.kill();
+    }
+  }
+
   /** Stop every shared process — shutdown and tests. */
   drain(): void {
     for (const conn of this.shared.values()) conn.kill();

@@ -53,7 +53,8 @@ import type { Actions } from "@/lib/actions"
 import { useDesktopBridge } from "@/lib/desktop"
 import { HEADER_CHIP, STRIP_GROUND } from "@/lib/header-chrome"
 import { useChord } from "@/lib/keybindings"
-import { useActiveSpace, useCatalogLoaded, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useActiveSpace, useProjects } from "@/lib/queries/catalog"
+import { useSetupState } from "@/lib/agent-setup"
 import {
   currentThreadId,
   NavigationBridge,
@@ -120,16 +121,18 @@ export function AppShell({
   const sessions = useStoreSelect((state) => state.sessions)
   const storeHandle = useStoreHandle()
   const projects = useProjects()
-  const profiles = useProfiles()
   /* The space in front of you. Switching it swaps the dock (see the effect
      below) — each space keeps its own tabs. */
   const { id: activeSpaceId, setActive: setActiveSpace } = useActiveSpace()
   /* `bootstrap` answers for the session list alone — each catalog is its own
      query — so the loading gate is the two together. Without it an empty
      catalog mid-read draws the "Finish the setup" screen at every boot. */
-  const catalogLoaded = useCatalogLoaded()
-  const loading = bootLoading || !catalogLoaded
-  const ready = !loading && projects.length > 0 && profiles.length > 0
+  const setupState = useSetupState()
+  const loading = bootLoading || setupState.loading
+  /* Measured (`useSetupState`): a project, and a profile that can actually
+     run — the virtual Defaults always exist, so counting profiles was never
+     the question. */
+  const ready = !loading && setupState.ready
   const location = useLocation()
   const navigate = useNavigate()
   const sidebar = useSidebarWidth()

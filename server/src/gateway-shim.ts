@@ -149,6 +149,31 @@ export function setGatewaySessionResolver(resolver: SessionResolver): void {
   resolveSession = resolver;
 }
 
+type DraftResolver = (sessionId: string) => Promise<GatewaySession | undefined> | GatewaySession | undefined;
+
+let resolveDraft: DraftResolver = () => undefined;
+
+/**
+ * The one other source an `s`-scoped URL may be answered from, and the reason
+ * it is separate from `resolveSession`.
+ *
+ * A prewarmed draft process is spawned with `sessionId` = the draft's id, so
+ * its gateway URL is thread-shaped (the `s` form) and stays right after the
+ * handover at create. But `initialize` happens *before* the thread's row
+ * exists, so the manager knows nothing about that id and the child's first
+ * provider calls would 404. This answers for exactly those ids, and it is a
+ * second resolver on purpose: `resolveSession` keeps its one meaning — the
+ * live row — so a real thread never takes a provider answer from anywhere but
+ * the manager, and a profile change is still seen on the very next request.
+ *
+ * The answer is a draft's, so it carries no model: `model` and `effort` are
+ * "" and `rewriteModel` is false. A draft has no model on any row yet, and
+ * rewriting what the child asked for would be a guess at a billing decision.
+ */
+export function setGatewayDraftResolver(resolver: DraftResolver): void {
+  resolveDraft = resolver;
+}
+
 /* ── The model-call tap ──
  *
  * The `proxy` door (model-calls/sources/proxy.ts) sees a thread's provider
@@ -621,7 +646,12 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
      the thread's *current* provider answers — that is what makes moving a
      thread between profiles instant. A profile-scoped one (the probe) is the
      older, static case and stays exactly as it was. */
-  const thread = parsed.kind === "s" ? await resolveSession(parsed.id) : undefined;
+  const known = parsed.kind === "s" ? await resolveSession(parsed.id) : undefined;
+  /* A prewarmed draft is spawned against its id before any row names it, so
+     `initialize` and its first calls arrive here for a thread the manager has
+     never heard of. Nothing else is allowed to answer for a real thread: the
+     draft resolver is only asked when the manager already said no. */
+  const thread = known ?? (parsed.kind === "s" ? await resolveDraft(parsed.id) : undefined);
   if (parsed.kind === "s" && !thread) return notFound("unknown thread");
   const agentId = thread?.agentId ?? parsed.agentId;
   const profile = await getProfile(thread?.profileId ?? parsed.id);

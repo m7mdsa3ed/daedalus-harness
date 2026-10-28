@@ -504,11 +504,14 @@ export function DraftConfigPopover({
   actions,
   remember = true,
   shell,
+  iconOnly = false,
 }: {
   meta: SessionMeta;
   actions: Actions;
   /** See `DraftScopeRow`. */
   remember?: boolean;
+  /** The trigger as its marks alone; see `SessionConfigPopover`. */
+  iconOnly?: boolean;
   /** Open state owned by `ConfigPopover`, so it survives the swap to the session body. */
   shell?: PopoverShell;
 }) {
@@ -734,10 +737,16 @@ export function DraftConfigPopover({
             /* Ellipsized rather than collapsed, on a phone as in a narrow dock
                panel — same rule as SessionConfigPopover's trigger, which
                replaces this one the moment the thread starts. */
-            className={PILL}
+            className={cn(PILL, iconOnly && "pe-1 pointer-coarse:pe-2")}
             title={[modelLabel, effortLabel, modeLabel]
               .filter(Boolean)
               .join(" · ")}
+            aria-label={
+              iconOnly
+                ? [modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · ") ||
+                  "Session settings"
+                : undefined
+            }
           >
             {/* The model's own icon replaces the profile's logo in the pair —
                 the two marks stay, it is only the second one that changes. A
@@ -781,19 +790,21 @@ export function DraftConfigPopover({
             )}
             {/* Same words the started thread's trigger reads — the agent is
                 named by its mark above. */}
-            <PillLabel
-              model={modelLabel}
-              effort={effortLabel}
-              effortLevel={
-                profileEffort
-                  ? levelOf(spawnEfforts, meta.effort)
-                  : liveEffort
-                    ? levelOf(selectChoices(liveEffort).map((c) => c.value), optionValue(liveEffort))
-                    : null
-              }
-              mode={modeLabel}
-              modeId={modeId}
-            />
+            {!iconOnly && (
+              <PillLabel
+                model={modelLabel}
+                effort={effortLabel}
+                effortLevel={
+                  profileEffort
+                    ? levelOf(spawnEfforts, meta.effort)
+                    : liveEffort
+                      ? levelOf(selectChoices(liveEffort).map((c) => c.value), optionValue(liveEffort))
+                      : null
+                }
+                mode={modeLabel}
+                modeId={modeId}
+              />
+            )}
           </Button>
         }
       />

@@ -47,6 +47,19 @@ export const FEATURES = [
       misread either. This name is what a later reader gates on instead of that
       inference. */
   "agentTool",
+  /** Logging an agent in from the app: `AgentStatus.login`/`authenticated`,
+      `POST /api/agents/:id/login` (a setup terminal) and
+      `POST /api/agents/:id/authenticate` (NDJSON, device code). */
+  "agentLogin",
+  /** Warming a draft's agent: `POST /api/prewarm` and
+      `DELETE /api/prewarm/:id` (`routes/prewarm.ts`, `prewarm.ts`). With this
+      name the client may ask for a draft's agent to be started early, behind
+      the keystrokes, so its first message resumes at `session/new` instead of
+      paying the whole cold start. **The draft still creates no row and sends no
+      prompt** — nothing is journaled and no token is spent — and both routes
+      answer `{ ok }` whatever happens, so a client that cannot warm (a hosted
+      sandbox answers `false`) sends exactly as it always did. */
+  "draftPrewarm",
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];

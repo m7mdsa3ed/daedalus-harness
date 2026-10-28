@@ -27,7 +27,9 @@ import { api, inSpace, profileAgentIds, type Profile, type Project, type Session
 import { emptyThread } from "../store"
 import { loadActiveSpace } from "../spaces"
 import { patchDraft, rememberDraft } from "../draft-sessions"
-import { saveDraft } from "../drafts"
+import { saveDraft, loadDraft } from "../drafts"
+import { appMetaQuery } from "../queries/surfaces"
+import { cancelPrewarm as cancelWarm, schedulePrewarm } from "../prewarm"
 import type { ActionsCore } from "./core"
 
 export function draftActions(core: ActionsCore) {
@@ -427,6 +429,121 @@ export function draftActions(core: ActionsCore) {
       })
       const current = core.getState().sessions.find((s) => s.id === id)
       if (current && remember) publish(next, current)
+      /* A pick here can make the warm process a different one — so it stops
+         answering for this draft, and the next keystroke asks again. See
+         `dropsSpawn` for which picks and why. An agent or profile change
+         always is one; model and effort only where the profile owns a
+         catalog, which is the only case the server puts them in the spawn.
+         Read off the patch and the row as it stood, never off `getState`: the
+         store is written in a layout effect, so a read here is the row from
+         *before* this dispatch. */
+      const profileId = next.profileId ?? before?.profileId
+      const ownsCatalog = (catalog.profiles().find((p) => p.id === profileId)?.models.length ?? 0) > 0
+      if (dropsSpawn(next, ownsCatalog)) cancelWarm(settings, id)
+    },
+
+    /** Ask for this draft's agent process early, so its first message resumes
+        at `session/new` instead of paying the whole cold start with the words
+        already written (`docs/plans/prewarm.md`). Called from a debounced
+        keystroke, never from a render and never from page load: an untyped
+        draft must spawn nothing, and a New tab page is opened and abandoned far
+        more often than it is typed in.
+     *
+     * **The draft still creates nothing.** No row, no journal, no prompt, not
+     * one token: the server spawns a process, waits for `initialize` and holds
+     * it for this id (`server/src/prewarm.ts`). `send` is untouched by any of
+     * it — `createSession` claims the process if its spawn still matches and
+     * spawns cold if it does not, so a send works identically whether the
+     * prewarm happened, is still in flight, or failed.
+     *
+     * Every refusal below is silent, and so is every failure: the only
+     * observable of a prewarm that did not happen is a send as slow as it
+     * always was. */
+    prewarmDraft(id: string) {
+      const draft = core.getState().sessions.find((s) => s.id === id)
+      /* Sent is not warmable: `create` has the id, and a second process for it
+         would be work the claim refuses. */
+      if (!draft?.draft) return
+      if (!draft.profileId || !draft.projectId) return
+      /* An older server has the route or it does not, and it says so by name
+         (`FEATURES`, `server/src/compat.ts`). `ensureQueryData` rather than a
+         plain cache read: nothing else on a fresh page fetches `/api/meta`
+         before the first keystroke, so a cache-only test would answer "no" to
+         every server on the one screen a draft is typed into. It is one request
+         and then cached for five minutes, and the decision is made inside the
+         debounced fire so a keystroke never waits on it. Absent from the answer
+         reads as "no", which costs a warm process and never a wrong one — the
+         send is unaffected either way. */
+      schedulePrewarm(id, () => {
+        /* Everything is re-read at the moment it fires, the words included: the
+           box hands its text to `saveDraft` from an effect, so a read on the
+           keystroke that scheduled this would be a character behind — typing
+           one letter and stopping would ask for nothing. 400ms is long enough
+           for the draft to have been sent, emptied or retuned too, and the picks
+           travel *now*, because the process is spawned on them. */
+        const now = core.getState().sessions.find((s) => s.id === id)
+        if (!now?.draft || !loadDraft(id).trim()) return
+        void queryClient
+          .ensureQueryData(appMetaQuery(settings))
+          .then((meta) => {
+            if (!meta.features?.includes("draftPrewarm")) return
+            /* Asked again, after the await: a draft sent or deleted while the
+               meta was in flight has an id `create` already owns. */
+            const latest = core.getState().sessions.find((s) => s.id === id)
+            if (!latest?.draft || !loadDraft(id).trim()) return
+            return api<{ ok: boolean }>(settings, "/api/prewarm", {
+              method: "POST",
+              body: JSON.stringify({
+                id,
+                profileId: latest.profileId,
+                agentId: latest.agentId,
+                projectId: latest.projectId,
+                model: latest.model,
+                effort: latest.effort,
+                helperModels: latest.helperModels ?? [],
+              }),
+            })
+          })
+          .catch((error) => {
+            /* A failed prewarm is not a failed keystroke: the send that follows
+               spawns cold, exactly as it does on a server that cannot warm. */
+            console.warn("Couldn't prewarm this draft", error)
+          })
+      })
+    },
+
+    /** Forget a draft's warm process: the box was emptied, the tab closed, or
+        the draft was deleted. Best effort and never awaited — the server's TTL
+        and cap are the guarantee, and this is promptness. A no-op for a thread
+        the server knows, whose process belongs to a row and is its own. */
+    cancelPrewarm(id: string) {
+      const draft = core.getState().sessions.find((s) => s.id === id)
+      if (!draft?.draft) return
+      cancelWarm(settings, id)
     },
   }
+}
+
+/**
+ * Whether this pick makes the process a different one — the kill rule
+ * (`docs/plans/prewarm.md`, "What kills a warm process").
+ *
+ * A warm process is only ever handed to a thread whose spawn it still matches,
+ * so this is never a correctness fix: it is what stops a process nobody will
+ * claim from sitting under the cap until the TTL. The list is therefore the
+ * picks that are **env at spawn**, and nothing else.
+ *
+ * - Profile, agent, project: a different base URL, binary and cwd.
+ * - Model and effort: only where the profile owns a catalog, because that is
+ *   the only case `resolveAgentSpawn` puts them in the env (`prewarm.ts` makes
+ *   the same call). Otherwise they are placed at `session/new`.
+ * - Persona, mode, config options, the tool picks and the text are *not* here:
+ *   they are read at `session/new` or applied after it, so the process the
+ *   draft already has is the one it needs.
+ */
+function dropsSpawn(next: Partial<SessionMeta>, ownsCatalog: boolean): boolean {
+  if (next.profileId !== undefined || next.agentId !== undefined || next.projectId !== undefined) {
+    return true
+  }
+  return ownsCatalog && (next.model !== undefined || next.effort !== undefined)
 }

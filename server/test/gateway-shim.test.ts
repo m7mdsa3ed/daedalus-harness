@@ -22,6 +22,7 @@ import {
   normalizeMessagesResponse,
   parseGatewayPath,
   proxyGatewayRequest,
+  setGatewayDraftResolver,
   setGatewaySessionResolver,
   type GatewaySession,
 } from "../src/gateway-shim.js";
@@ -641,6 +642,68 @@ await test("the credential travels as the thread's profile, not as the child's",
   // Claude Code's side-job and alias models, pinned into its env at spawn,
   // would otherwise keep naming the previous provider's ids.
   assert.equal((JSON.parse(seen.at(-1)!.body) as { model: string }).model, "gateway/model-b");
+});
+
+/* ── the draft resolver: an `s`-scoped id with no row yet ── */
+
+/* A prewarmed draft's process is spawned against the draft's id, so its first
+   calls arrive thread-scoped before `POST /api/sessions` has made the row. The
+   manager says no; the draft resolver answers, with no model to rewrite. */
+const draft = (id: string): GatewaySession | undefined =>
+  id === "draft-1"
+    ? { profileId: "gw-draft", agentId: "codex", model: "", effort: "", rewriteModel: false }
+    : undefined;
+setGatewayDraftResolver((id) => draft(id));
+
+await db.insert(profilesTable)
+  .values({
+    id: "gw-draft",
+    name: "gw draft",
+    agents: { codex: {} },
+    baseUrl: `http://127.0.0.1:${fakePort}/v1/`,
+    apiKey: "sk-draft",
+    models: [],
+    defaultModel: "",
+  } as never)
+  ;
+
+const draftBase = gatewayUrlFor("gw-draft", "codex", "x", "draft-1");
+
+await test("a thread-shaped id neither the manager nor a draft knows is still a 404", async () => {
+  const key = base.split("/gw/")[1]!.split("/")[0];
+  const res = await fetch(`http://127.0.0.1:${shimPort}/gw/${key}/s/draft-nope/codex/v1/models`);
+  assert.equal(res.status, 404);
+});
+
+await test("a prewarmed draft forwards on the draft's profile, and nothing is rewritten", async () => {
+  const body = JSON.stringify({ model: "spawned-model", input: [] });
+  const res = await fetch(`${draftBase}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer sk-draft" },
+    body,
+  });
+  assert.equal(res.status, 200);
+  // The draft's own base URL answered, with the draft's credential.
+  assert.equal(seen.at(-1)!.path, "/v1/v1/responses");
+  assert.equal(seen.at(-1)!.headers.authorization, "Bearer sk-draft");
+  // A draft has no model on any row, so the child's own is forwarded as written.
+  assert.equal(seen.at(-1)!.body, body);
+});
+
+await test("the manager wins over a draft answer for the same id", async () => {
+  // `sess-1` is the manager's; a draft claiming it too must not be consulted.
+  setGatewayDraftResolver((id) =>
+    id === "sess-1"
+      ? { profileId: "gw-draft", agentId: "codex", model: "", effort: "", rewriteModel: false }
+      : draft(id),
+  );
+  await fetch(`${sessionBase}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer stale-key" },
+    body: JSON.stringify({ model: "spawned-model", input: [] }),
+  });
+  assert.equal(seen.at(-1)!.headers.authorization, "Bearer sk");
+  setGatewayDraftResolver((id) => draft(id));
 });
 
 /* ── the model-call tap: the proxy door ── */

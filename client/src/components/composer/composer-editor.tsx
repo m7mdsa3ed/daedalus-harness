@@ -345,6 +345,7 @@ export function ComposerEditor({
   onPaste,
   onKeyDown,
   onOverflowChange,
+  onFocusChange,
   expanded,
   coarse,
   pastes,
@@ -361,6 +362,9 @@ export function ComposerEditor({
   onChange: (text: string) => void
   /** The caret moved — the `@` completer's cue. */
   onSelect: () => void
+  /** The box took or lost the caret. The mini line reads it to stand its marks
+      down while the reader is writing in it. */
+  onFocusChange?: (focused: boolean) => void
   /** Return true when the paste was taken; otherwise it goes in as plain text. */
   onPaste: (event: ClipboardEvent) => boolean
   onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void
@@ -387,8 +391,8 @@ export function ComposerEditor({
      not it came from outside (a pick, a recall, a quote) and is loaded; one
      that is, is the editor's own echo and is left alone. */
   const agreed = React.useRef(value)
-  const latest = React.useRef({ onChange, onSelect, onPaste, placeholder, onAcceptGhost })
-  latest.current = { onChange, onSelect, onPaste, placeholder, onAcceptGhost }
+  const latest = React.useRef({ onChange, onSelect, onPaste, onFocusChange, placeholder, onAcceptGhost })
+  latest.current = { onChange, onSelect, onPaste, onFocusChange, placeholder, onAcceptGhost }
   const editorContentRef = React.useRef<HTMLDivElement>(null)
   /* What the decorations read. A ref, not state: the plugin asks on every
      redraw, and the effect below is what redraws it. */
@@ -484,6 +488,8 @@ export function ComposerEditor({
       latest.current.onChange(text)
     },
     onSelectionUpdate: () => latest.current.onSelect(),
+    onFocus: () => latest.current.onFocusChange?.(true),
+    onBlur: () => latest.current.onFocusChange?.(false),
   })
 
   React.useEffect(() => {

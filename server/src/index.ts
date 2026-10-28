@@ -49,6 +49,7 @@ import { attachmentRoutes } from "./routes/attachments.js";
 import { fileRoutes } from "./routes/files.js";
 import { libraryRoutes } from "./routes/library.js";
 import { sessionRoutes } from "./routes/sessions.js";
+import { prewarmRoutes } from "./routes/prewarm.js";
 import { taskRoutes } from "./routes/tasks.js";
 import { mentionRoutes } from "./routes/mentions.js";
 
@@ -301,6 +302,7 @@ attachmentRoutes(app);
 fileRoutes(app);
 libraryRoutes(app, { sessions });
 sessionRoutes(app, { sessions });
+prewarmRoutes(app, { sessions });
 voiceRoutes(app, { sessions });
 taskRoutes(app, { sessions, tasks });
 mentionRoutes(app, { sessions });

@@ -7,6 +7,11 @@ export function bearerToken(header: string | undefined, query: string | undefine
   return query ?? "";
 }
 
+/** A client-minted session id, which is what a draft is until its first
+    message. Create, the config route and prewarm all refuse anything else
+    before it can reach a row, a socket or a spawn. */
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /* ── Workspace filesystem ──
    Project-scoped, unlike `/api/fs/list`: every path here is relative and
    resolved against the project's own cwd, and a WorkspaceError carries the

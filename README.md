@@ -12,11 +12,27 @@ client (Vite React + Electron shell)  ──WS raw ACP──►  server (Node)  
 
 ## Run
 
-```bash
-# server — prints the access token on first start
-cd server && pnpm install && pnpm dev          # http://0.0.0.0:8791, data/ auto-created
+You need git, Node 22+, pnpm and a PostgreSQL server you can reach.
 
-# web client
+```bash
+git clone <this repo> daedalus-harness && cd daedalus-harness
+./setup.sh            # checks, installs, builds, creates the database, starts, prints a link
+```
+
+`setup.sh` never installs system software: a missing prerequisite (or a PostgreSQL it cannot
+reach) stops it with the line that fixes it. It starts the server under pm2 when pm2 is
+installed (port 4001), else prints `pnpm --dir server serve`. The schema is created by the
+server itself on its first boot. Flags: `--local` binds to 127.0.0.1 only, `--port <n>`,
+`--no-start`.
+
+Open the link it prints — it carries the server URL and the access token, which the client
+verifies and then strips from the address bar. From there the app's first-run wizard walks
+through the rest: install and log in an agent (Claude Code, Codex, … — logins run on the server,
+by terminal or device code), choose what it runs on, create a project, start a thread.
+
+```bash
+# development, instead of setup.sh's built server
+cd server && pnpm install && pnpm dev          # prints the access token on first start
 cd client && pnpm install && pnpm dev          # open http://localhost:5173, enter server URL + token
 
 # desktop (Electron shell merged into the client project)

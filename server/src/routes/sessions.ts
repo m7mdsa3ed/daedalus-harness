@@ -20,13 +20,11 @@ import { recordShellRun } from "../shell-history.js";
 import { runShellLine } from "../shell.js";
 import type { Scope } from "../turn-changes.js";
 import { containedPath, projectRoot } from "../workspace-fs.js";
-import { workspace } from "./helpers.js";
+import { UUID_RE, workspace } from "./helpers.js";
 import { normalizeSuggestKinds, normalizeUiGroups } from "../personas.js";
 
 /** Which profile (and model) `ask_agent` uses, by agent id. */
 const AskProfilesSchema = z.record(z.string(), z.object({ profileId: z.string().min(1), model: z.string().min(1).optional() }));
-
-const UUID_RE =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /* The sidebar's page size, and the ceiling a caller may ask for. A page is a
    screenful-and-then-some of threads; the top end is the most a single read of

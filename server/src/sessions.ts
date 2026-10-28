@@ -35,9 +35,10 @@ import { defaultProfileFor, getProfile, listProfiles, profileBaseUrl, profileSup
 import { listModelRoles } from "./model-roles.js";
 import { agentModelId, bareModelId, getAgent, modelAllowlistFor, modelRoleDefs, type AgentDef } from "./registry.js";
 import type { WorkspaceLayout } from "./db/schema.js";
-import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
+import { gatewayUrlFor, setGatewayDraftResolver, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
 import { addTps } from "./tps.js";
 import { pauseHookUrlFor } from "./pause-hooks.js";
+import { claim as claimPrewarmed, draftPairOf, specKeyFor, sweepPrewarm } from "./prewarm.js";
 import { HttpError } from "./http-error.js";
 import * as git from "./git.js";
 import { getProject } from "./projects.js";
@@ -45,7 +46,7 @@ import { databaseUrl, getConfig, loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
-import { AcpBridge, resolveAgentSpawn, spawnProcess, toWireError, type BridgeHost, type ConfigNoticeLabel } from "./acp-bridge.js";
+import { AcpBridge, resolveAgentSpawn, spawnProcess, toWireError, type BridgeHost, type ConfigNoticeLabel, type SpawnSpec } from "./acp-bridge.js";
 import { AcpPool, detachAllConnections, flushAllProcessStates, pool, type AcpConnection } from "./acp-connection.js";
 import { makeBridgeHost, makeCallThread } from "./bridge-host.js";
 import { chooseDoor, fileCall, recordCall, usageFallback, type ChosenDoor } from "./model-calls/index.js";
@@ -795,8 +796,26 @@ export class SessionManager {
        credentials and model behind a running child are still ours to change"
        — see `applyConfig`. */
     setGatewaySessionResolver(async (id) => await this.gatewayStateOf(id));
+    /* And what answers the same question for a *draft*, which has no row yet —
+       a prewarmed process is spawned against its id before `create` is called,
+       so its first calls arrive for a thread the manager has never heard of.
+       The shim only asks this after `gatewayStateOf` said no, and the registry
+       forgets the pair on the same claim that gives the process away, so a real
+       thread is never answered from here. */
+    setGatewayDraftResolver((id) => {
+      const pair = draftPairOf(id);
+      if (!pair) return undefined;
+      /* A draft's answer carries no model: nothing has picked one for a thread
+         that does not exist, and rewriting the child's id would be a guess at a
+         billing decision. It is the pair and nothing else. */
+      return { ...pair, model: "", effort: "", rewriteModel: false };
+    });
     this.idleMinutes = idleMinutes;
     setInterval(() => this.sweepIdle(), 60_000).unref();
+    /* A warm process nobody claimed, on the same clock as the idle sweep: one
+       timer for the whole registry rather than one per entry, and the TTL —
+       not a client's cancel, which may never arrive — is what ends it. */
+    setInterval(() => sweepPrewarm(), 60_000).unref();
     // Retention is checked at boot and then hourly, so a server that runs for
     // months does not accumulate every thread it ever ran.
     setInterval(async () => this.pruneJournals(), 3_600_000).unref();
@@ -1707,6 +1726,45 @@ export class SessionManager {
 
   private collapsed = new WeakSet<AcpBridge>();
 
+  /**
+   * Take this thread's prewarmed process, if it has one, and register it for
+   * `start` the way boot adoption does. Null = spawn cold, as always.
+   *
+   * Claimed on the spec `start` has already resolved, and never on one resolved
+   * again here: `specKeyFor` is only honest over the final spec, and the final
+   * spec does not exist until the model allowlist is written, the persona and
+   * its rules are read, the model-calls door is chosen and that door's env is
+   * merged in. Asking `create` to resolve its own copy would duplicate all of
+   * it and then disagree with the copy that matters.
+   *
+   * The draft it was warmed under is single use (`prewarm.ts`): the claim takes
+   * the entry whether or not the key matched, so a second spawn in the same
+   * draft — a respawn, a fork — never finds it twice, and a mismatch kills the
+   * process instead of handing a thread somebody else's profile.
+   *
+   * A claimed process is a process the pool has never seen: it was built by the
+   * registry, unshared and unkeyed, so it is the thread's alone from here. That
+   * is the same bargain a cold spawn for a runtime that cannot share gets.
+   */
+  private takePrewarmed(session: Session, spec: SpawnSpec): AcpConnection | null {
+    const conn = claimPrewarmed(session.id, specKeyFor(spec));
+    if (!conn) return null;
+    /* Died between the sweep and this call: the registry held a connection
+       whose process is already gone, and `session/new` on it is a failed create
+       with nobody to blame. The cold spawn is the answer, and nothing is lost
+       by it — the entry is out of the registry either way. */
+    if (!conn.alive) {
+      conn.kill();
+      return null;
+    }
+    /* Nothing to do at the moment the bridge is wired: the process answered
+       `initialize` and no more, so `session/new` is the first thing it is asked
+       and `bridge.ready` is where create waits for it, exactly as for a
+       process this call would have spawned. */
+    this.adopting.set(session.id, { conn, made: () => {} });
+    return conn;
+  }
+
   /** `id` lets the client name the thread it has already routed to; the caller
       is responsible for having checked that it is a free UUID. Without one the
       server names it, which is still the path the API takes when asked. */
@@ -2188,9 +2246,24 @@ export class SessionManager {
     session.calls = await chooseDoor(this.callThreadOf(session), agent?.callsVia ?? []);
     if (session.calls.attached?.spawnEnv) Object.assign(spec.env, session.calls.attached.spawnEnv);
     const shared = agent?.sharedProcess === "acp-meta";
+    /* A process booted ahead of the first message, if this draft has one and it
+       is still the process this spawn would have been — `specKeyFor` over the
+       resolved spec is the whole comparison, and a mismatch drops it rather than
+       handing a thread somebody else's provider. Claimed HERE, after the spec
+       and not in `create`, because only here is the spec's every input settled:
+       the model allowlist has been written, the persona and its rules resolved,
+       the model-calls door chosen and its env merged. Resolving any of that a
+       second time in `create` to ask the same question is the duplicate this
+       deliberately does not have. Nothing else about the claim is special: the
+       connection goes in the same map boot adoption uses, so `session/new` and
+       the handshake below run exactly as they always do. */
+    const claimed = adoptedBy ? null : this.takePrewarmed(session, spec);
     const sessionEnv = shared ? spec.env : undefined;
+    /* After the claim, never before: a shared runtime's spec env is what a
+       warmed process was spawned with, and emptying it first would make the key
+       a draft can never match. */
     if (shared) spec.env = {};
-    const conn = adoptedBy?.conn ?? await pool.acquire(session.agentId, shared ? AcpPool.key(spec) : null, () => spawnProcess(spec));
+    const conn = adoptedBy?.conn ?? claimed ?? await pool.acquire(session.agentId, shared ? AcpPool.key(spec) : null, () => spawnProcess(spec));
     const proc = conn.proc;
     const { mcpServers, websearchViaMcp, workflowViaMcp } = servers;
     session.websearchViaMcp = websearchViaMcp;

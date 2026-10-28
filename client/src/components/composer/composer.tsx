@@ -84,7 +84,8 @@ import {
 import { Button } from "@/components/ui/busy-button"
 import { Spinner } from "@/components/ui/spinner"
 import { McpPicker } from "@/components/composer/mcp-picker"
-import { KEY_MARK } from "@/components/composer/indicator"
+import { KEY_MARK, READING_MARK } from "@/components/composer/indicator"
+import { ProjectIcon } from "@/components/entity-icon"
 import { optionKey, useAgentCommands } from "@/lib/agent-options"
 import {
   AgentsIndicator,
@@ -296,6 +297,12 @@ export const Composer = React.memo(function Composer({
   React.useEffect(() => {
     if (!collapsed) setRevealed(false)
   }, [collapsed])
+  /* Whether the box has the caret. The mini line's marks — where it runs and
+     who answers — are readings of the thread, and the one thing being typed
+     into is the message, so they stand down while it is being written in: on
+     focus, and for as long as it holds words. They come back to an idle,
+     empty box, which is the state they are for. */
+  const [focused, setFocused] = React.useState(false)
   /* The reader's own switch (Settings › Appearance › Layout › Mini composer),
      off unless they turned it on: the mini form is a shape a thread can be
      given, never one it is forced into. Read during render, so flipping it
@@ -313,6 +320,25 @@ export const Composer = React.memo(function Composer({
   textRef.current = text
   React.useEffect(() => setText(loadDraft(sessionId)), [sessionId])
   React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
+  /* ── Warming the draft's agent behind the keystrokes ──
+     A draft has no process, so its first send pays the whole cold start. Typing
+     is the only moment the server can be told to start one early, and it is
+     asked here rather than in a render: `saveDraft` above is what writes these
+     words, and `actions.prewarmDraft` reads them back once the typing pauses —
+     so an untyped draft, which writes `""`, asks for nothing at all. The
+     trigger is the draft's text change and nothing else; page load, a pick and
+     a tab coming to the front are not typing.
+
+     Emptying the box is the cancel: a draft nobody is writing is one whose
+     agent should not be booted. A draft that is sent clears its text through
+     the same path, but by then it is no longer a draft (`createSession`'s
+     `promote-draft`), and `cancelPrewarm` refuses a thread that has a row. */
+  const changeText = (next: string) => {
+    setText(next)
+    if (!draft) return
+    if (next.trim()) actions.prewarmDraft(sessionId)
+    else actions.cancelPrewarm(sessionId)
+  }
   /* The sidecar for long pastes: the body is parked here and a token stands in
      for it in `text` (lib/pastes). Same per-session localStorage bargain as the
      draft, in a second key rather than a widened value — every caller of
@@ -596,12 +622,12 @@ export const Composer = React.memo(function Composer({
           ],
     [draft, thread.canCompact, mcpServers],
   )
-  /* A draft has no process to advertise anything, so it is offered what the
-     spawn will materialise (the library commands it has picked, where its
-     runtime reads commands out of the workspace at all) plus the catalog the
-     option probe's throwaway session advertised — built-ins, user skills,
-     plugins. The thread that follows replaces both with its own
-     `available_commands_update`. */
+  /* A draft has no process to advertise anything, so it is offered every
+     library slash command (where its runtime reads commands out of the
+     workspace) plus the catalog the option probe's throwaway session
+     advertised — built-ins, user skills, plugins. These appear for invocation
+     only; their content is not appended to ordinary prompts. The thread that
+     follows replaces both with its own `available_commands_update`. */
   const libraryCommands = useCommands()
   const agents = useAgents()
   const probedCommands = useAgentCommands(
@@ -611,21 +637,18 @@ export const Composer = React.memo(function Composer({
   const draftCommands = React.useMemo((): acp.AvailableCommand[] => {
     if (!draft) return []
     const agent = agents.find((a) => a.id === meta?.agentId)
-    const picked = new Set(meta?.commandIds ?? [])
     const own =
       agent && !agent.workspaceLayout?.commands
         ? []
-        : libraryCommands
-            .filter((c) => picked.has(c.id))
-            .map((c) => ({
-              name: c.name,
-              description: c.description,
-              ...(c.argumentHint ? { input: { hint: c.argumentHint } } : {}),
-            }))
+        : libraryCommands.map((c) => ({
+            name: c.name,
+            description: c.description,
+            ...(c.argumentHint ? { input: { hint: c.argumentHint } } : {}),
+          }))
     // What the probe's session advertised, minus a name the picks already say.
     const taken = new Set(own.map((c) => c.name))
     return [...own, ...probedCommands.filter((c) => !taken.has(c.name))]
-  }, [draft, agents, meta?.agentId, meta?.commandIds, libraryCommands, probedCommands])
+  }, [draft, agents, meta?.agentId, libraryCommands, probedCommands])
   const agentCommands = draft ? draftCommands : thread.availableCommands
   const slash = useSlashCommands(text, agentCommands, setText, harnessCommands)
   const hasCommands = agentCommands.length > 0 || harnessCommands.length > 0
@@ -799,6 +822,10 @@ export const Composer = React.memo(function Composer({
     clearDraft(sessionId)
     clearPastes(sessionId)
     files.clear()
+    /* Emptying the box is the cancel, and Clear is the one door that empties it
+       without going through `changeText` — the other four `setText("")`s are
+       sends, where the thread takes the process over. */
+    if (draft) actions.cancelPrewarm(sessionId)
     requestAnimationFrame(() => composerRef.current?.focus())
   }
 
@@ -901,6 +928,11 @@ export const Composer = React.memo(function Composer({
   const lines = chars === 0 ? 0 : text.split("\n").length
   const long = chars >= LONG_PROMPT_CHARS || lines >= LONG_PROMPT_LINES
   const hasContent = text.trim().length > 0 || files.attachments.length > 0 || shownPastes.length > 0
+  /* The mini line's marks stand down while the message is being written: the
+     reader is looking at the words, and the project and the pair are readings
+     of a thread they have already chosen. Back the moment the box is idle and
+     empty, which is when they are worth drawing. */
+  const marksDown = mini && (focused || hasContent)
   const canSend =
     !disabled &&
     !gated &&
@@ -922,6 +954,39 @@ export const Composer = React.memo(function Composer({
       : thread.turnActive
         ? `Queue (${steerChord} steers the running turn instead)`
         : "Send"
+
+  /* The "+" menu, drawn in both shapes: at the head of the advanced row, and
+     at the start of the mini line beside the agent's marks. */
+  const addMenu = (
+    <ComposerAddMenu
+      disabled={disabled || gated}
+      size={iconSize}
+      coarse={coarse}
+      onFiles={files.add}
+      onLibraryFile={files.addFromLibrary}
+      canMention={Boolean(meta?.projectId)}
+      hasCommands={hasCommands}
+      hasProjectCommands={helpers.length > 0 || scripts.length > 0}
+      hasHistory={composerHistory.items.length > 0}
+      hasContent={hasContent}
+      onMention={insertMention}
+      onCommand={insertCommand}
+      onProjectCommand={insertProjectCommand}
+      onCodeBlock={insertCodeBlock}
+      /* Picking replaces the box rather than appending: this is "recall
+         that prompt", the same act Up performs. */
+      onHistory={(picked) => {
+        setText(picked)
+        requestAnimationFrame(() => {
+          const el = composerRef.current
+          if (!el) return
+          el.focus()
+          el.setSelectionRange(el.value.length, el.value.length)
+        })
+      }}
+      onClear={clearAll}
+    />
+  )
 
   /* Away for the whole of a voice call, whose controls take the box's place. */
   const away = inCall
@@ -1161,12 +1226,62 @@ export const Composer = React.memo(function Composer({
           />
         </div>
         )}
+        {/* Mini: the line opens with where it runs, who answers and the "+"
+            menu — kept when the rest folds away. The project is a read-out, as
+            the scope row draws it on a started thread (its project is the
+            agent's cwd, fixed); the agent's marks are the advanced row's
+            settings chip without its words.
+
+            The two faces — the project's and the pair's — stand down as soon
+            as the reader is writing (`marksDown`): they are a reading of a
+            thread already chosen, and the line is a line. Folded rather than
+            unmounted, so the width goes with an ease instead of snapping the
+            words sideways under the caret; the "+" stays, because adding to a
+            message is something done while writing it. */}
+        {mini && (
+          <div className="flex min-h-(--composer-mini-line) shrink-0 items-center gap-0.5 self-center">
+            {(project || meta) && (
+              <div
+                aria-hidden={marksDown || undefined}
+                inert={marksDown || undefined}
+                className={cn(
+                  "flex items-center gap-0.5 overflow-hidden",
+                  "transition-[max-width,opacity] duration-200 ease-out motion-reduce:transition-none",
+                  marksDown ? "pointer-events-none max-w-0 opacity-0" : "max-w-40 opacity-100"
+                )}
+              >
+                {project && (
+                  <span
+                    className="flex shrink-0 items-center px-1"
+                    title={project.cwd ? `${project.name} · ${project.cwd}` : project.name}
+                    aria-label={`Project: ${project.name}`}
+                    role="img"
+                  >
+                    <ProjectIcon project={project} className={READING_MARK} />
+                  </span>
+                )}
+                {meta && (
+                  <ConfigPopover
+                    meta={meta}
+                    sessionId={sessionId}
+                    actions={actions}
+                    thread={thread}
+                    keys={routed || autoFocus}
+                    iconOnly
+                  />
+                )}
+              </div>
+            )}
+            {addMenu}
+          </div>
+        )}
         <ComposerEditor
           ref={composerRef}
           value={text}
-          onChange={setText}
+          onChange={changeText}
           onSelect={mentions.onSelect}
           onPaste={onPaste}
+          onFocusChange={setFocused}
           pastes={shownPastes}
           ghost={fim.ghost}
           onAcceptGhost={coarse ? fim.accept : undefined}
@@ -1250,34 +1365,7 @@ export const Composer = React.memo(function Composer({
         >
           {!mini && (
             <>
-          <ComposerAddMenu
-            disabled={disabled || gated}
-            size={iconSize}
-            coarse={coarse}
-            onFiles={files.add}
-            onLibraryFile={files.addFromLibrary}
-            canMention={Boolean(meta?.projectId)}
-            hasCommands={hasCommands}
-            hasProjectCommands={helpers.length > 0 || scripts.length > 0}
-            hasHistory={composerHistory.items.length > 0}
-            hasContent={hasContent}
-            onMention={insertMention}
-            onCommand={insertCommand}
-            onProjectCommand={insertProjectCommand}
-            onCodeBlock={insertCodeBlock}
-            /* Picking replaces the box rather than appending: this is "recall
-               that prompt", the same act Up performs. */
-            onHistory={(picked) => {
-              setText(picked)
-              requestAnimationFrame(() => {
-                const el = composerRef.current
-                if (!el) return
-                el.focus()
-                el.setSelectionRange(el.value.length, el.value.length)
-              })
-            }}
-            onClear={clearAll}
-          />
+          {addMenu}
           <div className="flex min-w-0 flex-1 animate-in items-center gap-1 overflow-x-auto fade-in-0 slide-in-from-bottom-1 duration-300 [scrollbar-width:none] motion-reduce:animate-none [&::-webkit-scrollbar]:hidden">
             {/* Who answers. */}
             {/* `keys`: Alt+M / Alt+S open these from anywhere in the thread in

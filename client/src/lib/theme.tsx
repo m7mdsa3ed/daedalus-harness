@@ -317,7 +317,23 @@ declare global {
       }
       /** A ShortcutId the native menu / tray / hotkey wants run; returns an unsubscribe. */
       onShortcut?: (handler: (id: string) => void) => () => void
+      /** Connecting over the system's ssh (electron/ssh.cjs). */
+      ssh?: DesktopSsh
     }
+  }
+  type SshAnswer<T = object> = Promise<({ ok: true } & T) | { ok: false; error: string }>
+  interface DesktopSsh {
+    available: () => SshAnswer<{ available: boolean }>
+    hosts: () => SshAnswer<{ hosts: string[] }>
+    hostKey: (host: string) => SshAnswer<{ known: boolean; fingerprints: string[] }>
+    trust: (host: string) => SshAnswer
+    probe: (host: string, dir: string) => SshAnswer<{ dir: "checkout" | "occupied" | "absent"; token: string | null; port: number | null }>
+    install: (host: string, dir: string, repo: string, port: number) => SshAnswer<{ code: number }>
+    freePort: () => SshAnswer<{ port: number }>
+    tunnel: (host: string, localPort: number, remotePort: number) => SshAnswer<{ port: number }>
+    stop: (host: string) => SshAnswer
+    onOutput: (handler: (payload: { host: string; text: string }) => void) => () => void
+    onStatus: (handler: (payload: { host: string; state: "connecting" | "open" | "down"; port: number; error: string | null }) => void) => () => void
   }
   interface DesktopActivity {
     running: number

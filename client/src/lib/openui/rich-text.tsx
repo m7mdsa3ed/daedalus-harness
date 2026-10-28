@@ -12,9 +12,10 @@
    page title over the network (`MarkdownLink` does, on purpose, for an answer),
    and the type comes from the component's own scale rather than `.prose`. */
 import * as React from "react"
-import type { Components } from "react-markdown"
+import Markdown, { type Components } from "react-markdown"
+import remarkGfm from "remark-gfm"
 import { cn } from "@/lib/utils"
-import { InlineMarkdown } from "@/components/prose"
+import { InlineMarkdown, MARKDOWN_COMPONENTS } from "@/components/prose"
 
 /** A URL a generated view may draw. Only `http(s)`: `javascript:` and `data:`
     documents are addresses a page the thread read could have talked the model
@@ -83,6 +84,23 @@ const VIEW_MARKDOWN: Components = {
 /* Anything at all that markdown reads. A cell of plain words — the common case
    in a table of forty — costs a regex and no parse. */
 const MARKUP = /[*_`[~]/
+const BLOCK_MARKDOWN = /(^|\n)\s*(#{1,6} |[-*+] |\d+\. |> |\|)|```/
+const BLOCK_REMARK = [remarkGfm]
+
+/** A document drawn with the transcript's markdown renderer and link policy. */
+export const MarkdownBlock = React.memo(function MarkdownBlock({ text }: { text: string }) {
+  const value = text.trim()
+  if (!value) return null
+  if (!BLOCK_MARKDOWN.test(value)) return <RichText text={value} />
+  return (
+    <div className="prose prose-sm min-w-0 max-w-none break-words">
+      <Markdown remarkPlugins={BLOCK_REMARK} components={MARKDOWN_COMPONENTS}>
+        {value}
+      </Markdown>
+    </div>
+  )
+})
+MarkdownBlock.displayName = "MarkdownBlock"
 
 /** A string drawn with its inline markdown. */
 export const RichText = React.memo(function RichText({ text }: { text: string }) {

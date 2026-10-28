@@ -51,10 +51,10 @@ export function ensureProjectDir(cwd: string): void {
 export function materializeWorkspace(
   cwd: string,
   layout: WorkspaceLayout,
-  links: Pick<LinkSet, "skillIds" | "commandIds">,
+  links: Pick<LinkSet, "skillIds">,
 ): void {
   if (layout.skills) materializeSkills(join(cwd, layout.dir, layout.skills), links.skillIds);
-  if (layout.commands) materializeCommands(join(cwd, layout.dir, layout.commands), links.commandIds, layout);
+  if (layout.commands) materializeCommands(join(cwd, layout.dir, layout.commands), layout);
 }
 
 /* ── The model allowlist ──
@@ -219,8 +219,8 @@ function renderCommand(command: CommandDef, layout: WorkspaceLayout): string {
   return `${frontmatter}\n${MANAGED_MARKER}\n\n${command.content}\n`;
 }
 
-async function materializeCommands(commandsDir: string, commandIds: string[], layout: WorkspaceLayout): Promise<void> {
-  const linked = (await commandLibrary.list()).filter((c) => commandIds.includes(c.id));
+async function materializeCommands(commandsDir: string, layout: WorkspaceLayout): Promise<void> {
+  const linked = await commandLibrary.list();
   mkdirSync(commandsDir, { recursive: true });
   for (const entry of readdirSync(commandsDir)) {
     if (!entry.endsWith(".md")) continue;

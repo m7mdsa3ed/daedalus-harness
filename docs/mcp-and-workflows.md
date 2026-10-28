@@ -738,52 +738,34 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
 
 ## Two owners: profile and thread
 
-- **MCP servers, skills and commands have two owners, and the agent gets the union.**
-  A profile links them (the provider setup: a gateway's own servers, the skills that go with
-  a house style), and a thread picks its own on the draft's composer strip
-  (`ThreadToolsMenu` in `components/thread-tools/menu.tsx`, where the profile's show checked and
-  locked, so the thread's picks are exactly the additions). **MCP servers are the exception
-  to where**: they are picked on the composer's own chip beside the model pill (`McpPicker`,
-  `components/composer/mcp-picker.tsx`) — its face is the servers' logos, its menu the
-  library as a checklist — on a draft and a started thread alike (staged for the next send),
-  through the same `useThreadToolLinks`; the model menu's Tools group keeps skills and
-  commands only. **That control outlives the
-  draft**: the same component, `editable={false}`, sits in the composer's control row beside
-  `SessionConfigPopover` for the whole of a started thread and reads the kit back — what the
-  agent was spawned with, each entry saying whether it came from the profile or from the
-  thread — because the picks were only ever visible while they were still hypothetical, and
-  vanished at the moment they started mattering. It is a read-out and not a picker there:
-  the links are written once at create and are what a revive spawns with, so there is
-  nothing to toggle. A read-out lists only what is linked (a started thread has no use for
-  the rest of the library) and draws nothing at all when a thread carries no tools. A
-  project links nothing — it is the directory, not the toolset; the `project_*` link tables
-  it once had are gone. Both
-  owners are join tables with `ON DELETE CASCADE` — `profile_*`, `session_*` — read and
-  written through one descriptor-driven helper, `server/src/db/links.ts`
-  (`readLinks`/`writeLinks`/`unionLinks`), so a stale id links nothing and nothing filters.
-  The thread's picks arrive in `POST /api/sessions` (`mcpServerIds`/`skillIds`/`commandIds`),
-  are written once at create, reported back by `list()`, and are what a revive spawns with.
-  `SessionManager.effectiveLinks` is the union; `serversFor` passes its MCP servers to
-  `session/new`. Skills and commands are the awkward half: they are **materialised into the
-  project's cwd**, which every thread of the project shares, and the materialiser sweeps
-  whatever it did not write — so `materializeFor` hands `materializeWorkspace` the union
-  across *every live thread in that cwd* plus the one spawning, never one thread's set alone
-  (that pulled the symlinks out from under the thread next to it). "That cwd" is the
-  *thread's* (`threadCwd`): an isolated thread's is its git worktree, so its links are
-  written there and swept against only the threads in the same worktree (see `docs/ops.md`,
-  "A thread's own worktree"). It runs in
-  `SessionManager.start`, not in `spawnAgent`, because only the manager knows the other
-  threads; the probe materialises the profile's own set itself, which is additive and safe.
-  **Which directory is the runtime's** (`AgentDef.workspaceLayout`, seed 20), so the sweep is
-  per *layout* and not per cwd: the keep-set is the union across the live threads that share
-  the layout being swept, two runtimes that read the same directory (claude-code and the
-  harness's own agent, both `.claude`) share one sweep, and a runtime that declares no
-  directory — Codex — is written nothing at all. Before that this wrote `.claude/…` for every
-  thread whatever ran it, which is two silent wrongs: a link that landed where its runtime
-  never looks, and a `.claude/` directory in a project nobody had run Claude Code in. The
-  frontmatter follows the layout too (`argumentHintKey`: Claude Code's `argument-hint`,
-  nothing for OpenCode). A layout with no slot is said out loud in the link pickers
-  (`components/thread-tools/menu.tsx`) rather than left as a silence. One consequence worth
+- **MCP servers and skills are selected; library slash commands are globally available.**
+  Profiles and threads link MCP servers and skills. MCP servers are picked on the composer's
+  chip (`McpPicker`, `components/composer/mcp-picker.tsx`); skills are picked in the thread
+  Tools menu (`ThreadToolsMenu`, `components/thread-tools/menu.tsx`). Library commands are
+  different: they are not injected into ordinary prompts and are not a per-thread selection.
+  Every library command is available to invoke by `/name` on runtimes with a declared command
+  workspace layout; the client surfaces the library catalog on drafts and the runtime's
+  `available_commands_update` after spawn. Invoking one sends `/name args` as the prompt, so
+  only the selected command's content applies. Deleting a library command removes it from
+  future materializations. The old `session_commands` links and `commandIds` request fields
+  remain for stored-data/API compatibility but no longer gate command availability.
+  MCP-server and skill links use join tables with `ON DELETE CASCADE`, read and written through
+  `server/src/db/links.ts` (`readLinks`/`writeLinks`/`unionLinks`). `SessionManager.effectiveLinks`
+  supplies the thread's own MCP servers to `session/new`; skills and slash commands are
+  materialised into the project's cwd, which every thread of the project shares. The
+  materialiser sweeps what it did not write, so `materializeFor` hands `materializeWorkspace`
+  the union of selected skills across every live thread in that cwd plus the one spawning —
+  and all library commands — never one thread's set alone. "That cwd" is the thread's
+  (`threadCwd`): an isolated thread's is its git worktree, so materialized files are scoped
+  there (see `docs/ops.md`, "A thread's own worktree"). It runs in `SessionManager.start`,
+  not in `spawnAgent`, because only the manager knows the other threads; the probe writes no
+  user-selected skills but can still offer the global command catalog. **Which directory is
+  the runtime's** (`AgentDef.workspaceLayout`, seed 20), so the sweep is per layout and not per
+  cwd: runtimes sharing a directory share one sweep, and a runtime declaring no directory —
+  Codex — is written nothing at all. The frontmatter follows the layout too
+  (`argumentHintKey`: Claude Code's `argument-hint`, nothing for OpenCode). A runtime with no
+  command workspace cannot expose the library commands natively; the UI says so rather than
+  implying otherwise. One consequence worth
   knowing: the cwd used to be created as a side effect of `mkdir -p <cwd>/.claude/skills`, so
   it is now made deliberately by `ensureProjectDir` on the same path — a spawn into a
   directory that does not exist fails as an `ENOENT` naming the *command*, which reads as a

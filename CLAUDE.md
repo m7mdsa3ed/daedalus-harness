@@ -57,7 +57,16 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   repoints these with it, and nothing outside `registry.ts` spells a vendor's tool name,
   config path, install line or id.
 - **Whether an agent is installed is measured, never assumed** (`server/src/agent-status.ts`),
-  and versions come from the ACP `initialize` answer, never a parsed `--version`.
+  and versions come from the ACP `initialize` answer, never a parsed `--version`. **So is
+  whether it is logged in, and logging in is the agent's own `authMethods`, never a vendor
+  command** (`agent-login.ts`): a `terminal` method runs in a setup terminal, an agent-handled
+  one is ACP `authenticate` streamed as NDJSON; only a method the probe returned runs,
+  credential-taking ones stay a profile's, and `NO_BROWSER` is the probe's spawn env alone.
+- **First run is measured, never flagged**: `setup.sh` gets a clone to a running server, the
+  client's `?server=&token=` link is stripped on read, and the landing wizard's steps and the
+  app's `ready` are one reading (`useSetupState`) — a virtual Default counts only when its agent
+  can run. The desktop app's SSH connect trusts a host only by a confirmed fingerprint and keeps
+  one tunnel per host on a fixed local port. → `docs/plans/first-run.md`.
 - **Deployed built, not with tsx**: `pnpm pm2:start` builds, pushes the schema and
   starts on port **4001** from `DAEDALUS_PORT` (env wins over `data/config.json` for
   `host`/`port` and only those). One instance, fork mode.
@@ -141,6 +150,17 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   without a second `initialize`. A change to spawn, stdio or turn settlement must hold under both.
   Loopback keys are derived from `data/loopback-secret`, so they survive a restart.
   → `docs/protocol.md` "Durable agent processes".
+- **A draft creates nothing; a prewarmed process is the one thing that exists early**
+  (`prewarm.ts`, feature `draftPrewarm`). Typing boots an agent ahead of the first message, and it
+  stops at `initialize` -- no row, no journal, no `session/new`, no token -- because everything past
+  the handshake is one thread's picks, which the draft is still changing. **It is claimed only
+  when the spawn it would have done is byte-identical** (`specKeyFor` over the spec `start` has
+  already resolved, compared at `sessions.ts:1749`); a mismatch kills it and the thread spawns
+  cold, which is also what a runtime that cannot be prewarmed, a hosted sandbox, and every
+  failure simply do. **A runtime whose threads share one process is warmed in the pool instead**
+  (`warmShared`), because `start` spawns it keyed on a spec without the thread's env — the env
+  rides `_meta` — so a draft-keyed entry could never be claimed; the pool entry is what its own
+  `pool.acquire` finds.
 - **Importing a thread writes a pointer, never a transcript.** Listing is ACP's
   `session/list`, never a runtime's files.
 - **The harness is an AIR client** (`_meta.jetbrains.air` in `CLIENT_CAPABILITIES`), declared
@@ -605,8 +625,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   at something.
 - **After the first message the composer is the mini one, and the advanced form is a toggle on it
   — nothing is hidden behind a button of its own.** `ThreadView` hands `Composer` `compact`
-  (the thread is not empty), and the mini box is the editor, the toggle and Send on one line:
-  the scope row, the add menu, the pickers and the readings come back with the toggle
+  (the thread is not empty), and the mini box is the project's mark (a read-out), the agent's
+  marks (the settings chip, `iconOnly`), the add menu, the editor, the toggle and Send on one line:
+  **the two faces stand down while the reader is writing** (`marksDown` — the box has the caret
+  or holds words), folded to zero width with an ease rather than unmounted so the words do not
+  jump under the caret, because a reading of a thread already chosen is not what a line being
+  typed into is for; the "+" stays, since adding to a message is done while writing it. The
+  scope row, the chip's words, the MCP picker and the readings come back with the toggle
   (remembered per thread for the life of the page, `ADVANCED_THREADS`). A draft and the landing
   console are the full box — the first message is written in it. `ThreadView` also hands it the
   scroller's own pin (`useFollowStream.pinned`) as `collapsed`: leaving the tail folds an advanced

@@ -39,6 +39,8 @@ export function ToolSection<T extends { id: string; name: string }>({
   /** What this runtime does not read out of the workspace, in words ("skills"),
       or null when it reads this kind — see the menu, which decides it. */
   unreadable,
+  /** Every item is available to invoke, without a per-thread selection. */
+  alwaysAvailable = false,
   agentName,
   onToggle,
 }: {
@@ -54,15 +56,16 @@ export function ToolSection<T extends { id: string; name: string }>({
   editable: boolean
   needsAuth: (item: { id: string }) => boolean
   unreadable: string | null
+  alwaysAvailable?: boolean
   agentName: string | undefined
   onToggle: (id: string, on: boolean) => void
 }) {
   /* A draft or an editable thread can pick from the catalog; a read-out only
      lists what the thread actually carries. */
-  const shown = editable
+  const shown = editable || alwaysAvailable
     ? items
     : items.filter((item) => inherited.has(item.id) || own.includes(item.id))
-  if (!editable && shown.length === 0) return null
+  if (!editable && !alwaysAvailable && shown.length === 0) return null
   const [open, setOpen] = React.useState(false)
   const [query, setQuery] = React.useState("")
   // The box is about *this* opening of the submenu, never the last one.
@@ -90,14 +93,20 @@ export function ToolSection<T extends { id: string; name: string }>({
             figures sit in a single column beside it instead of being pushed
             to a midpoint that depends on how wide each count happens to be. */}
         <span className="text-xs tabular-nums text-muted-foreground">
-          {editable ? (on === 0 ? `${shown.length}` : `${on} of ${shown.length}`) : on}
+          {alwaysAvailable ? shown.length : editable ? (on === 0 ? `${shown.length}` : `${on} of ${shown.length}`) : on}
         </span>
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="w-64">
         {unreadable && (
           <div className="px-3 py-2 text-xs text-muted-foreground">
-            {agentName} does not read {unreadable} from the project — these are linked, but it
-            will not see them.
+            {alwaysAvailable
+              ? `${agentName} does not support library ${unreadable}.`
+              : `${agentName} does not read ${unreadable} from the project — these are linked, but it will not see them.`}
+          </div>
+        )}
+        {alwaysAvailable && !unreadable && (
+          <div className="px-3 py-2 text-xs text-muted-foreground">
+            Available to invoke with /name; command text is only sent when invoked.
           </div>
         )}
         {searchable && <MenuSearchInput label={title} value={query} onChange={setQuery} />}
@@ -117,8 +126,8 @@ export function ToolSection<T extends { id: string; name: string }>({
                 key={item.id}
                 name={item.name}
                 icon={itemIcon?.(item)}
-                checked={from || own.includes(item.id)}
-                disabled={from || !editable}
+                checked={alwaysAvailable || from || own.includes(item.id)}
+                disabled={alwaysAvailable || from || !editable}
                 from={from}
                 needsAuth={needsAuth(item)}
                 hint={hint(item)}

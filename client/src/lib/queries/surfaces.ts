@@ -30,16 +30,22 @@ export type ChangelogEntry = { version: string; date: string | null; markdown: s
 /** `features` is absent on a server older than versioning, which reads as []. */
 export type AppMeta = { version: string; changelog: ChangelogEntry[]; features?: string[] }
 
-/** `settings` names a server other than the active one (the compatibility
-    gate's); omitted, it is the active connection like every other hook. */
-export function useAppMeta(settings?: ServerSettings) {
-  const active = useServer()
-  const server = settings ?? active
-  return useQuery({
+/** The one definition of the deployment's version and feature list, so the
+    hook below and an action that cannot open a hook (`prewarmDraft`, which
+    gates on `draftPrewarm` from a debounced keystroke) share the key and the
+    fetcher — the same bargain `healthQuery` makes for the gate. */
+export const appMetaQuery = (server: ServerSettings) =>
+  queryOptions({
     queryKey: appMetaKey(server),
     queryFn: ({ signal }) => api<AppMeta>(server, "/api/meta", { signal }),
     staleTime: 5 * 60_000,
   })
+
+/** `settings` names a server other than the active one (the compatibility
+    gate's); omitted, it is the active connection like every other hook. */
+export function useAppMeta(settings?: ServerSettings) {
+  const active = useServer()
+  return useQuery(appMetaQuery(settings ?? active))
 }
 
 /** Whether the server offers an additive capability (`FEATURES` in

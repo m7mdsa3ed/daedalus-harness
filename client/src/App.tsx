@@ -7,11 +7,12 @@ import { ConfirmProvider } from "@/components/confirm-dialog"
 import { PromptProvider } from "@/components/prompt-dialog"
 import { CatalogFormProvider } from "@/lib/catalog-add"
 import { ConnectScreen } from "@/components/connect-screen"
+import { SshGate } from "@/components/ssh-connect"
 import { IncompatibleServer } from "@/components/incompatible-server"
 import { useActions } from "@/lib/actions"
 import { refreshNotificationOffer } from "@/lib/notifications"
 import { setupPush } from "@/lib/push"
-import { loadSettings, subscribeActiveServer, type ServerSettings } from "@/lib/settings"
+import { connectLink, loadSettings, subscribeActiveServer, type ServerSettings } from "@/lib/settings"
 import { pruneAgentOptions } from "@/lib/agent-options"
 import { mountThemeSync } from "@/lib/custom-theme-sync"
 import { makeQueryClient } from "@/lib/queries/client"
@@ -30,7 +31,11 @@ function App() {
   const [settings, setSettings] = React.useState<ServerSettings | null>(loadSettings)
   // "Add server" reuses the connect screen over the shell; connecting activates
   // the new server, and the reload below is what re-bootstraps against it.
-  const [adding, setAdding] = React.useState(false)
+  /* A connect link for a server this device is not already on opens the
+     connect screen over the shell, prefilled (`connectLink`). */
+  const [adding, setAdding] = React.useState(
+    () => !!connectLink && !!settings && settings.url.replace(/\/+$/, "") !== connectLink.url
+  )
   /* Switching connections is a state change, not a reload: `Connected` and the
      store below are keyed by the server id, so the new server starts cold —
      one query cache, one reducer, one bootstrap. What React cannot unmount is
@@ -58,7 +63,9 @@ function App() {
         <PromptProvider>
           <StoreProvider key={settings?.id ?? "none"}>
             {settings && !adding ? (
-              <Connected key={settings.id} settings={settings} onAddServer={() => setAdding(true)} />
+              <SshGate key={settings.id} settings={settings} onChooseAnother={() => setAdding(true)}>
+                <Connected key={settings.id} settings={settings} onAddServer={() => setAdding(true)} />
+              </SshGate>
             ) : (
               <ConnectScreen
                 onConnected={(next) => {

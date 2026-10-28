@@ -108,10 +108,9 @@ export function ThreadToolsSections({
 }) {
   const { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable, stagedLinks } =
     useThreadToolLinks(meta, actions, remember)
-  const extra = own.skillIds.length + own.commandIds.length
-  /* A started thread's links are picked here too — staged for the next send
-     (`useThreadToolLinks.toggle`). This menu is where tools are chosen; the
-     strip only reads them. */
+  const extra = own.skillIds.length
+  /* Skills are selectable per thread; slash commands are always available in
+     supported runtimes and are only invoked when the user types `/name`. */
   const canEdit = editable || !meta.draft
   const common = { editable: canEdit, needsAuth, agentName: agent?.name }
   return (
@@ -139,14 +138,13 @@ export function ThreadToolsSections({
         inherited={inherited.commandIds}
         own={own.commandIds}
         unreadable={unreadable("commandIds")}
+        alwaysAvailable
         onToggle={(id, on) => toggle("commandIds", id, on)}
       />
       {/* Only when there is something of the thread's own to take back. */}
       {editable && extra > 0 && (
         <DropdownMenuItem
-          onClick={() =>
-            actions.configureDraft(meta.id, { skillIds: [], commandIds: [] }, remember)
-          }
+          onClick={() => actions.configureDraft(meta.id, { skillIds: [] }, remember)}
         >
           Clear this thread&rsquo;s tools
         </DropdownMenuItem>

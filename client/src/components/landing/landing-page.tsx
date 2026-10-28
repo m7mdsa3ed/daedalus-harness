@@ -32,6 +32,7 @@ import { useNavigate, useSearchParams } from "react-router"
 import { LandingActions } from "@/components/landing/landing-actions"
 import { LandingConsoleContext, type LandingConsole } from "@/components/landing/landing-console"
 import { LandingSetup } from "@/components/landing/landing-setup"
+import { useSetupState } from "@/lib/agent-setup"
 import { LandingSkeleton } from "@/components/landing/landing-skeleton"
 import { ThreadDock } from "@/components/workspace/thread-dock"
 import type { Actions } from "@/lib/actions"
@@ -54,19 +55,17 @@ export function LandingPage({
   actions: Actions
   onOpenSettings: (section?: SettingsSectionId) => void
 }) {
-  const projects = useProjects()
-  const profiles = useProfiles()
+  const setupState = useSetupState()
 
   if (loading) return <LandingSkeleton />
   if (!ready) {
-    /* Nothing can run yet, so there is no composer to draw: the page is the two
-       things standing in the way. Its own container, because the setup list is
+    /* Nothing can run yet, so there is no composer to draw: the page is the
+       steps standing in the way. Its own container, because the setup list is
        a document to read and the composer below is a box to be centred. */
     return (
-      <PageFrame width="form">
+      <PageFrame width="full">
         <LandingSetup
-          projects={projects.length}
-          profiles={profiles.length}
+          state={setupState}
           onOpenProjects={() => onOpenSettings("projects")}
           onOpenProfiles={() => onOpenSettings("profiles")}
         />

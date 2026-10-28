@@ -1081,8 +1081,16 @@
    phone, as the stock Input/Textarea are (`text-base md:text-sm`). These three
    cannot say it with a utility — the composer and task editors are Tiptap
    under an unlayered `.prose`/`.text-sm`, which these selectors outrank, and
-   CommandInput is a registry file. Desktop is untouched. */
+   CommandInput is a registry file. Desktop is untouched.
+   The read surfaces step up with it: the composer reads at the size of the
+   messages it answers, and a 16px editor under 15px messages was the one
+   place on a phone where the two disagreed. Controls inside keep their stock
+   14px through the reset above, which outranks this. */
 @media (width < 48rem) {
+  :is(.thread-transcript, [data-slot="composer-card"], [data-read-surface]) {
+    --text-sm: 1rem;
+    --text-sm--line-height: 1.5rem;
+  }
   [data-slot="composer-card"] .composer-editor,
   .task-editor .prose,
   [data-slot="command-input"] {

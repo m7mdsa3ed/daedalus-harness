@@ -22,7 +22,9 @@
    not a `--version` flag parsed per CLI, so every runtime reads the same. */
 import * as React from "react"
 import { Navigate, useNavigate, useParams } from "react-router"
-import { CopyIcon, Cpu, DownloadIcon, EraserIcon, PencilIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react"
+import { CopyIcon, Cpu, DownloadIcon, EraserIcon, LogInIcon, PencilIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react"
+import { AgentSetupRow } from "@/components/agent-setup-row"
+import { useAgentSetup } from "@/lib/agent-setup"
 import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/busy-button"
 import { useTableFilter } from "@/lib/use-table-filter"
@@ -68,6 +70,7 @@ export function AgentsPage() {
   const agents = useAgents()
   const { status, loading, error, refresh } = useAgentsStatus()
   const navigate = useNavigate()
+  const setup = useAgentSetup()
   const [checking, setChecking] = React.useState(false)
   const [installing, setInstalling] = React.useState<ReadonlySet<string>>(() => new Set())
   const byAgent = React.useMemo(
@@ -125,9 +128,9 @@ export function AgentsPage() {
 
   /* The handlers read the latest of the page through one ref, so the table's
      memoised actions are rebuilt only when a reading changes. */
-  const live = React.useRef({ install, navigate })
+  const live = React.useRef({ install, navigate, setup })
   React.useLayoutEffect(() => {
-    live.current = { install, navigate }
+    live.current = { install, navigate, setup }
   })
 
   const f = useTableFilter(agents, {
@@ -196,13 +199,13 @@ export function AgentsPage() {
             <StatusBadges
               status={byAgent.get(row.original.id)}
               pending={pending}
-              busy={installing.has(row.original.id)}
+              busy={installing.has(row.original.id) || setup.busy(row.original.id) !== null}
             />
           </div>
         ),
       },
     ],
-    [byAgent, usesByAgent, pending, installing],
+    [byAgent, usesByAgent, pending, installing, setup],
   )
 
   const actions = React.useMemo<TableAction<AgentDef>[]>(
@@ -228,6 +231,22 @@ export function AgentsPage() {
           return !s || !s.install || !outdated(s)
         },
         onClick: (a) => void live.current.install(a, true),
+      },
+      /* The agent's own first way in; several are drawn by name in the
+         wizard, and every one is reachable from there too. */
+      {
+        id: "login",
+        label: "Log in",
+        icon: <LogInIcon />,
+        tone: "primary",
+        hidden: (a) => {
+          const s = byAgent.get(a.id)
+          return !s?.installed || !!s.error || s.authenticated === true || !s.login?.length
+        },
+        onClick: (a) => {
+          const method = byAgent.get(a.id)?.login?.[0]
+          if (method) void live.current.setup.login(a, method)
+        },
       },
       { id: "edit", label: "Edit", icon: <PencilIcon />, onClick: (a) => void live.current.navigate(settingsFormPath("agents", a.id)) },
     ],
@@ -256,7 +275,7 @@ export function AgentsPage() {
               <div className="truncate text-sm font-medium">{agent.name}</div>
               <div className="truncate font-mono text-xs text-muted-foreground">{commandLine(agent)}</div>
               <div className="flex flex-wrap gap-1">
-                <StatusBadges status={status} pending={pending} busy={installing.has(agent.id)} showVersion />
+                <StatusBadges status={status} pending={pending} busy={installing.has(agent.id) || setup.busy(agent.id) !== null} showVersion />
               </div>
               {status && (!status.installed || status.error) && (
                 <div className="text-xs text-muted-foreground">
@@ -268,7 +287,7 @@ export function AgentsPage() {
         )
       },
     }),
-    [byAgent, pending, installing],
+    [byAgent, pending, installing, setup],
   )
 
   /* The strip's numbers are the measured ones; until the first answer they are
@@ -322,6 +341,19 @@ export function AgentsPage() {
       {error && (
         <Section>
           <ErrorNote error={inlineFromQuery(error, "Couldn't check the agents")} />
+        </Section>
+      )}
+      {/* A login waiting on the person — a link and a code — is drawn where it
+          can be read, whichever row started it. */}
+      {agents.some((a) => setup.deviceCode(a.id)) && (
+        <Section>
+          <div className="space-y-2">
+            {agents
+              .filter((a) => setup.deviceCode(a.id))
+              .map((a) => (
+                <AgentSetupRow key={a.id} agent={a} status={byAgent.get(a.id)} setup={setup} />
+              ))}
+          </div>
         </Section>
       )}
       {agents.length === 0 && !loading ? (
@@ -393,6 +425,7 @@ function StatusBadges({
           <StatusBadge tone="ok">Installed</StatusBadge>
         )}
       </span>
+      {status.authenticated === false && <StatusBadge tone="warn">Not logged in</StatusBadge>}
       {outdated(status) && <StatusBadge tone="info" dot={false}>v{status.latest} available</StatusBadge>}
       {status.protocolVersion !== null && <StatusBadge dot={false}>ACP v{status.protocolVersion}</StatusBadge>}
     </>

@@ -83,7 +83,7 @@ import { FileTree } from "@/lib/openui/components/FileTree"
 import { Button, Checkbox, Form, FormControl, Input, Select, SelectItem, Slider, Textarea } from "@/lib/openui/components/interactive"
 import { Quadrant } from "@/lib/openui/components/Quadrant"
 import { Quote } from "@/lib/openui/components/Quote"
-import { LinkAnchor, linkTarget, plainText, RichText } from "@/lib/openui/rich-text"
+import { LinkAnchor, linkTarget, plainText, RichText, MarkdownBlock as RenderMarkdownBlock } from "@/lib/openui/rich-text"
 import { Sequence } from "@/lib/openui/components/Sequence"
 import { Steps } from "@/lib/openui/components/Steps"
 import { Terminal } from "@/lib/openui/components/Terminal"
@@ -607,6 +607,14 @@ const Badges = defineComponent({
       ))}
     </div>
   ),
+})
+
+/* ── Markdown ── */
+const Markdown = defineComponent({
+  name: "Markdown",
+  description: "A block of Markdown: headings, lists, tables, quotes, links and fenced code.",
+  props: z.object({ text: z.string() }),
+  component: ({ props }) => <RenderMarkdownBlock text={props.text} />,
 })
 
 /* ── Links ──
@@ -1946,6 +1954,8 @@ const GROUP_NOTES: Record<string, string[]> = {
     "- Tabs for alternatives the reader picks between (per OS, before/after); Accordion for FAQs; Details for one optional fold.",
   ],
   text: [
+    "- Use `Markdown(text)` for a document-shaped passage with headings, paragraphs, lists, tables, blockquotes or fenced code; use `Section` or other structured components for data and status.",
+    "- Markdown links open only http(s) addresses, in a new tab; never include a URL you were not given.",
     "- Verdict opens an answer that has a conclusion: `Verdict(\"Safe to merge\", \"success\", \"One sentence of why.\", [\"3 files\", \"tests pass\"])`. Headline first, then tone (neutral, info, success, warn, error), then one supporting sentence and up to four short facts. Use it at most once, as the first thing in the view; never for a result that is not a conclusion.",
     "- Write each table row as its own array of strings, in the SAME order as `columns`.",
     "- Choose the grid by what a cell holds: Table for values and words, Matrix when most cells are a yes/no/partial answer, Rows when two cells are paragraphs.",
@@ -2030,6 +2040,7 @@ export const openuiLibrary = createLibrary({
     StatRow,
     Stat,
     Sparkline,
+    Markdown,
     Heatmap,
     Map,
     Funnel,

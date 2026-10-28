@@ -333,3 +333,46 @@ its findings were checked against the code before being folded in.
 - **Narrowed**: "`NO_BROWSER` leaks into real threads". The probe already spawns its own
   process (`probe.ts:250`), so it cannot, provided it is set on that spawn's env and never
   on `process.env` — kept as a rule and a test (step 3), not a design change.
+
+## Implemented (2026-10-28)
+
+All four phases landed. Where the build departed from the plan above, and why:
+
+- **Only the standard `auth: { terminal: true }` is advertised**, not `_meta["terminal-auth"]`.
+  ACP's `AuthMethodTerminal` says how to run one — the agent's configured invocation plus the
+  method's `args`/`env`, exit 0 is success — so the non-standard `{command, args}` (an absolute
+  `process.execPath`) is never needed. `agent-login.ts` runs `resolveAgentSpawn`'s command
+  (located on PATH) + args + the method's args as an argv, no shell.
+- **The login runs in the status probe's cwd (the server's own), not `$HOME`.** Moving the probe
+  to `$HOME` would break any agent row whose command is a relative path; the requirement was
+  only that probe and login share one.
+- **The probe's full methods are kept in memory** (`offeredMethod`), so a terminal login runs
+  exactly what the probe saw rather than a second spawn's answer. The wire carries only
+  `{id, name, description, kind}` (`AgentStatus.login`).
+- **Device-code login has no answer endpoint.** Codex completes the login on the provider's
+  side and returns from `authenticate` by itself; the elicitation only has to be *shown*.
+  Closing the NDJSON stream declines it (codex then calls `accountLoginCancel`) and kills the
+  process. The route validates and takes the per-agent lock *before* opening the stream
+  (`beginAgentLogin`), so a 400/409 is a status, not a line in a 200.
+- **The 424 "not installed" card in a thread is unchanged.** Its error item carries no agent
+  id; it already links to Settings › Agents, which now has Install and Log in.
+- **`setup.sh` runs no `db:push`.** The server pushes the whole schema into an empty database
+  on its first boot (`db/index.ts` `ensureSchema`) — the "fresh database boots against
+  nothing" claim in Context was wrong. The script only creates the database. pm2's own
+  `pm2:start` still pushes, as before.
+- **`setup.sh` has no `--yes` or `--dir`.** It never asks anything, and it sets up the checkout
+  it lives in; the SSH install clones (only into a spot that does not exist) and runs
+  `<dir>/setup.sh`. `--local`/`--port` are written to both `server/.env` (which pm2 spreads
+  over its own `DAEDALUS_PORT=4001`) and `data/config.json` (which `pnpm serve` reads).
+- **The renderer's origin never changes with the tunnel.** Electron serves the client from a
+  fixed `127.0.0.1:43917`, so the service worker and push are untouched by SSH; the fixed
+  per-host tunnel port is what keeps the *saved server URL* — and so the entry — stable.
+- **The SSH host check is a strict whitelist** (`checkHost`: no leading `-`, no spaces), so a
+  host field cannot become an `ssh` option; remote paths are single-quoted with a leading `~/`
+  kept as `"$HOME"`.
+- **A local port already taken is an error naming it**, checked before `ssh -L` starts,
+  because another program on it would pass the readiness check.
+
+Not built: the optional "Finish setting up" card (MCP import, rules, notifications, theme).
+Each of those already has its settings page; add the card when a measured "done" for each is
+worth the reads.

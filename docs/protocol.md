@@ -477,6 +477,16 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   An empty thread centres its composer over an animated wash (`styles/thread-hero.css`) and
   docks it on the first message — both driven by one `data-empty` flag on a grid whose
   spacer row animates `1fr` → `0fr`.
+- **The one thing a draft may have running is a process nobody has claimed.** Typing asks
+  `POST /api/prewarm` (`docs/plans/prewarm.md`), which spawns the agent the draft would spawn,
+  waits for `initialize` and registers it under the draft id — **no row, no journal, no
+  `session/new`, no prompt, no token**, because everything past the handshake is one thread's
+  picks and the draft is still changing them. `create` then claims it in `start` only where
+  `specKeyFor` over the fully resolved spec matches, so a draft retuned while it was being
+  written spawns cold rather than running somebody else's profile; a runtime whose threads
+  share one process is warmed in the pool instead (`warmShared`), since its spawn is keyed on
+  a spec without the thread's env. The TTL and the cap are the guarantee, a client's `DELETE`
+  is only promptness, and under `DAEDALUS_SANDBOX=hosted` nothing is warmed at all.
 
 ## An agent session id is earned, not announced
 
@@ -1258,3 +1268,8 @@ Goal: `pm2 restart` of the server does not kill running agents. Off by default
   answer is ignored by the agent); after SIGKILL some updates can journal twice (progress is
   persisted at most 500 ms late); `turnChanges.closeOrphans()` still closes an adopted turn's
   measurement. Terminals (node-pty) are not hosted and still die with the server.
+- **A prewarmed draft is off here** (`prewarmEnabled`, `server/src/prewarm.ts`): boot adoption
+  resurrects a surviving agent by the `agent_processes` row that names it, and a prewarmed one
+  has no row, so a hosted process would outlive the server with no thread and no reader. Under
+  `direct` a leftover is this server's child and dies with it, which is why only this switch
+  turns warming off; both routes still answer `{ ok }` so the client needs no second path.

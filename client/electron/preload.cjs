@@ -60,6 +60,29 @@ contextBridge.exposeInMainWorld("desktop", {
         install: () => ipcRenderer.invoke("update:install"),
       }
     : undefined,
+  /** Connecting to a harness over the system's ssh (main ssh.cjs). Every call
+      resolves `{ok:true, ...}` or `{ok:false, error}`. */
+  ssh: {
+    available: () => ipcRenderer.invoke("ssh:available"),
+    hosts: () => ipcRenderer.invoke("ssh:hosts"),
+    hostKey: (host) => ipcRenderer.invoke("ssh:host-key", host),
+    trust: (host) => ipcRenderer.invoke("ssh:trust", host),
+    probe: (host, dir) => ipcRenderer.invoke("ssh:probe", host, dir),
+    install: (host, dir, repo, port) => ipcRenderer.invoke("ssh:install", host, dir, repo, port),
+    freePort: () => ipcRenderer.invoke("ssh:free-port"),
+    tunnel: (host, localPort, remotePort) => ipcRenderer.invoke("ssh:tunnel", host, localPort, remotePort),
+    stop: (host) => ipcRenderer.invoke("ssh:stop", host),
+    onOutput: (handler) => {
+      const listener = (_event, payload) => handler(payload)
+      ipcRenderer.on("ssh:output", listener)
+      return () => ipcRenderer.off("ssh:output", listener)
+    },
+    onStatus: (handler) => {
+      const listener = (_event, payload) => handler(payload)
+      ipcRenderer.on("ssh:status", listener)
+      return () => ipcRenderer.off("ssh:status", listener)
+    },
+  },
   /** A ShortcutId the native menu, the tray or the quick-entry hotkey asked
       the renderer to run. Returns an unsubscribe. */
   onShortcut: (handler) => {
