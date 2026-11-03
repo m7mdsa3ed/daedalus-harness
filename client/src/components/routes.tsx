@@ -74,6 +74,7 @@ const NotificationsInboxPage = lazyPage(
    whole `components/tasks` tree back in the entry chunk. The panel's binding
    is in `workspace/dock-surface.tsx`. */
 const TasksWorkspace = lazyPage(() => import("@/components/tasks"), "TasksWorkspace")
+const ThreadsGraphPage = lazyPage(() => import("@/components/threads-graph/page"), "ThreadsGraphPage")
 
 /* The routes under /settings, read off the one table (`SETTINGS_SECTIONS`).
    Built once at module scope: none of the section pages takes a prop from the
@@ -138,6 +139,7 @@ export function usePageHeading(): (path: string) => PageHeading | null {
       }
     if (first === "board") return { crumb: "Workspace", title: "Tasks" }
     if (first === "notifications") return { crumb: "Workspace", title: "Inbox" }
+    if (first === "graph") return { crumb: "Workspace", title: "Thread graph" }
     if (first === "projects")
       return { crumb: "Projects", title: projects.find((p) => p.id === seg)?.name ?? "Project" }
     if (!first) return { title: "New tab" }
@@ -228,6 +230,8 @@ export function pageRoutes({
           </PageFrame>
         }
       />
+      {/* Every running thread as one graph; it fills the panel like the board. */}
+      <Route path="/graph" element={<ThreadsGraphPage actions={actions} loading={loading} />} />
       {/* A project's own page: the overview, its threads and its numbers.
           Outside /settings on purpose — settings holds the *form*, and a
           workspace with a history is not a settings screen. */}

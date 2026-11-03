@@ -57,6 +57,8 @@ export const boardPath = (boardId?: string, taskId?: string) =>
    whole history, and it is not a settings screen — Settings › Notifications is
    where push is *configured*, which is a different question. */
 export const notificationsPath = () => `/notifications`
+/* Every running thread as one graph — a place to watch, not a setting. */
+export const graphPath = () => `/graph`
 /* Automations are a top-level place, not a settings section — the same call
    `/board` makes. Settings holds things you configure once; an automation has a
    history (its runs), fires on its own, and is opened to be read as much as to

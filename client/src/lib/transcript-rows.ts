@@ -715,6 +715,20 @@ function mergeSubagentBatches(rows: Row[]): Row[] {
   return out
 }
 
+/** What a subagent was sent to do and what kind of worker it is, read off its
+    head whichever way its runtime announced it — the one naming the agents
+    count and the thread graph share, so the two never call a worker apart. */
+export function subagentLabel(head: SubagentGroup["head"]): { task: string; name?: string } {
+  if (head.kind === "subagent") {
+    /* A workflow step is titled by its step and kinded by its workflow; an
+       ask's `task` is the description its caller gave it. */
+    if (head.workflow) return { task: head.workflow.step || head.task || head.name, name: head.workflow.name }
+    return { task: head.task || head.name, name: head.name }
+  }
+  const call = extractSubagent(head)
+  return { task: call?.description ?? call?.prompt?.split("\n")[0] ?? head.title, name: call?.agentType }
+}
+
 /** Every subagent at work, at any depth — a worker's worker is a worker. */
 export function activeSubagents(rows: Row[]): SubagentGroup[] {
   const out: SubagentGroup[] = []

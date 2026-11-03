@@ -7,6 +7,7 @@ import {
   BellIcon,
   BotIcon,
   MessageSquareIcon,
+  NetworkIcon,
   SquareKanbanIcon,
   SquarePenIcon,
   SquareTerminalIcon,
@@ -41,6 +42,7 @@ const PAGE_ICONS: Record<string, LucideIcon> = {
   automations: RepeatIcon,
   notifications: BellIcon,
   agents: BotIcon,
+  graph: NetworkIcon,
 }
 
 function PageIcon({ path, className }: { path: string; className?: string }) {

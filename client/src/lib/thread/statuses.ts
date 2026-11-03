@@ -13,6 +13,7 @@ import * as React from "react"
 import type { SessionMeta } from "@/lib/settings"
 import { useStoreSelect, type ThreadState } from "@/lib/store"
 import { IDLE_PHASE, markFor, type ThreadActivity } from "@/lib/thread/phase"
+import { isActiveState } from "@/lib/thread/thread-graph"
 
 /**
  * What one thread is doing, as far as this device can tell.
@@ -148,5 +149,18 @@ export function useThreadStatuses(): Map<string, ThreadActivity> {
     }
     if (!same) prev.current = next
     return prev.current
+  })
+}
+
+/** How many threads are at work right now (running, waiting on you, or held),
+    asks and workflow steps included: the graph row's count. A number, so the
+    store's `Object.is` stops the render whenever it has not moved. */
+export function useActiveThreadCount(): number {
+  return useStoreSelect((state) => {
+    let n = 0
+    for (const s of state.sessions) {
+      if (!s.draft && !s.deletedAt && isActiveState(agentState(s, state.threads[s.id]))) n++
+    }
+    return n
   })
 }

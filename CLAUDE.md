@@ -1004,12 +1004,16 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   (`git.revertTurn`, `POST …/turn-changes/:turnId/revert`): written out of a scratch index,
   **never the real one**, never another path. It **refuses (409 with the paths) when any of
   them changed since the turn's end tree** unless `force`, and refuses while a turn runs.
-- **The agents dashboard (`/agents`) fetches nothing of its own**: the session list and
-  `agentState` over `threadStatus`. **A list's live state for a thread with no socket is the
-  server's snapshot of its bridge** — `waiting`/`held`/`context` on `GET /api/sessions`,
-  derived in `list()` and never stored — and **the live thread outranks it** wherever a tab
-  holds one. The snapshot moves only when the list is re-read, so the page re-reads it while
-  visible.
+- **The thread graph (`/graph`) fetches nothing of its own**: the session list for threads,
+  asks and harness steps, the held threads' transcript rows for their own subagents and
+  workflows (`threadGraph`, `lib/thread/thread-graph.ts`), and `agentState` over
+  `threadStatus`. **One worker is one node** — a transcript head whose `sessionId` is a listed
+  session is that session, and a harness run is `workflow:<runId>` from either side. **A list's
+  live state for a thread with no socket is the server's snapshot of its bridge** —
+  `waiting`/`held`/`context` on `GET /api/sessions`, derived in `list()` and never stored — and
+  **the live thread outranks it** wherever a tab holds one. The snapshot moves only when the
+  list is re-read, so the page re-reads it every 10s while visible, and holds a connection to
+  at most 12 active top-level threads so their workers load.
 - A project's own page reads its settled half from one `/stats` call, on mount and by Refresh
   and **never on a timer**. **Turns, not events**, are counted; a tile skeletons rather than
   zeroes. **Header carries a "Run" dropdown** for the project's custom helper commands

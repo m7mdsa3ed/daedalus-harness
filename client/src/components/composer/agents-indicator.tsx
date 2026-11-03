@@ -17,8 +17,7 @@ import {
   READING_LIST,
   ReadingPopoverContent,
 } from "@/components/composer/indicator"
-import { extractSubagent } from "@/lib/tools"
-import { activeSubagents, buildRows } from "@/lib/transcript-rows"
+import { activeSubagents, buildRows, subagentLabel } from "@/lib/transcript-rows"
 import { type ThreadState, workLive } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -41,23 +40,11 @@ interface RunningAgent {
  * and a brief.
  */
 export function runningAgents(thread: Pick<ThreadState, "items" | "turnActive">): RunningAgent[] {
-  return activeSubagents(buildRows(thread.items, false, thread.turnActive)).map(({ head }) => {
-    if (head.kind === "subagent") {
-      /* A workflow step is titled by its step and kinded by its workflow; an
-         ask's `task` is the description its caller gave it. */
-      if (head.workflow) {
-        return { id: head.id, task: head.workflow.step || head.task || head.name, name: head.workflow.name, startedAt: head.startedAt }
-      }
-      return { id: head.id, task: head.task || head.name, name: head.name, startedAt: head.startedAt }
-    }
-    const call = extractSubagent(head)
-    return {
-      id: head.id,
-      task: call?.description ?? call?.prompt?.split("\n")[0] ?? head.title,
-      name: call?.agentType,
-      startedAt: head.startedAt,
-    }
-  })
+  return activeSubagents(buildRows(thread.items, false, thread.turnActive)).map(({ head }) => ({
+    id: head.id,
+    ...subagentLabel(head),
+    startedAt: head.startedAt,
+  }))
 }
 
 /** Ticks once a second while `active`, so an elapsed time can be drawn live. */

@@ -15,6 +15,7 @@
    panel, because a phone has no keyboard to press them on. */
 import {
   BellIcon,
+  NetworkIcon,
   RepeatIcon,
   SettingsIcon,
   SquareKanbanIcon,
@@ -27,6 +28,7 @@ import { Shortcut } from "@/components/shortcut"
 import {
   automationsPath,
   boardPath,
+  graphPath,
   notificationsPath,
   projectPath,
   settingsPath,
@@ -37,11 +39,12 @@ import type { Project } from "@/lib/settings"
 /** How many projects the strip names before the rest become one count. */
 const PROJECT_LIMIT = 4
 
-/** The four places a new tab is opened for, in the order the sidebar files
+/** The places a new tab is opened for, in the order the sidebar files
     them. */
 const DESTINATIONS: { id: string; label: string; icon: LucideIcon; path: () => string }[] = [
   { id: "tasks", label: "Tasks", icon: SquareKanbanIcon, path: () => boardPath() },
   { id: "automations", label: "Automations", icon: RepeatIcon, path: () => automationsPath() },
+  { id: "graph", label: "Graph", icon: NetworkIcon, path: () => graphPath() },
   { id: "inbox", label: "Inbox", icon: BellIcon, path: () => notificationsPath() },
   { id: "settings", label: "Settings", icon: SettingsIcon, path: () => settingsRootPath() },
 ]

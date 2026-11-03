@@ -6,7 +6,7 @@
    Deliberately only the rows that start something. Plan usage is not here (nor
    anywhere in the sidebar): it lives on Settings › Usage. */
 import * as React from "react"
-import { MessageSquarePlus, Repeat, SquareKanban } from "lucide-react"
+import { MessageSquarePlus, Network, Repeat, SquareKanban } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import {
   SidebarGroup,
@@ -23,7 +23,8 @@ import { Shortcut } from "@/components/shortcut"
 import { Badge } from "@/components/ui/badge"
 import { useChord } from "@/lib/keybindings"
 import { formatChord, type ShortcutId } from "@/lib/shortcuts"
-import { automationsPath, boardPath } from "@/lib/router"
+import { automationsPath, boardPath, graphPath } from "@/lib/router"
+import { useActiveThreadCount } from "@/lib/thread/statuses"
 import { useLayoutOptions } from "@/lib/layout-options"
 import { useAutomations, useUnreadAutomationRuns } from "@/lib/queries/automations"
 
@@ -61,6 +62,8 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
   const inAutomations = location.pathname.startsWith("/automations")
+  const inGraph = location.pathname.startsWith("/graph")
+  const activeThreads = useActiveThreadCount()
   // The list is loaded at boot (the palette and the page read the same query),
   // so the row can say how much is armed without asking again.
   const automationCount = useAutomations().data?.filter((a) => a.enabled).length ?? 0
@@ -119,6 +122,19 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
       onClick: () => void navigate(automationsPath()),
       menu: openInItems(automationsPath(), { beside: !isMobile }),
       path: automationsPath(),
+    },
+    /* Everything at work at once, as a graph: the count is how many threads
+       are running, waiting on you or held right now. */
+    {
+      key: "graph",
+      icon: <Network />,
+      label: "Thread graph",
+      tooltip: "Thread graph — every running thread and its workers",
+      isActive: inGraph,
+      count: activeThreads,
+      onClick: () => void navigate(graphPath()),
+      menu: openInItems(graphPath(), { beside: !isMobile }),
+      path: graphPath(),
     },
   ]
   /* The three places are the reader's to hide (Settings › Appearance ›

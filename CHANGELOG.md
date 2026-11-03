@@ -13,6 +13,10 @@ line: keep each bullet on a single line.
 
 ## [Unreleased]
 
+### 2026-11-03
+
+- **A new Thread graph page shows every thread at work as one live flowchart.** Open it from the sidebar's Thread graph row (its count is how many threads are running, waiting on you or held) or the New tab page: each project heads its threads, an ask hangs off the thread that asked, a workflow run is a diamond over its steps (the steps not yet started drawn dashed), forks are dashed edges, and the subagents and Claude Code workflows working inside a thread nest under it, a batch of more than six folding into one count. Active shows what is running plus the threads above it, All every thread with a live agent; selecting a node opens its thread. Built client-side from the session list and the transcripts of up to 12 active threads, refreshed every 10s (`/graph`, `lib/thread/thread-graph.ts`); the agents count above the composer now names its workers through the same shared `subagentLabel`.
+
 ### 2026-10-28
 
 - **The mini composer's faces stand down while you write in it.** The project's mark and the agent pair's avatars are readings of a thread already chosen, so the mini line folds them to zero width (with an ease, not a snap, so the words do not jump under the caret) the moment the box takes the caret or holds text, and brings them back to an idle, empty box; the "+" menu stays, because adding to a message is done while writing it. `ComposerEditor` gained `onFocusChange` to say the caret's arrival and departure
