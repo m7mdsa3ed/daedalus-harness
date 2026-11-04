@@ -79,6 +79,18 @@ export async function resolvePersonaSpawn(
   return spawn;
 }
 
+/** A persona change on a started thread, said in the message instead of the
+    system prompt (`Session.systemPersonaId`), so the prefix the provider has
+    cached is still the prefix sent. Appended after what the user typed and
+    folded back out of the bubble by the client (`lib/mentions/context.ts`);
+    the transcript says the change as a config notice. */
+export function personaSwitchBlock(persona: { name: string; prompt: string } | null | undefined): string {
+  const body = persona?.prompt.trim()
+    ? `From this message on, work as the "${persona.name}" persona below. It replaces any persona in your instructions.\n\n${persona.prompt.trim()}`
+    : "From this message on, no persona applies: set aside any persona in your instructions.";
+  return `\n\n<persona>\n${body}\n</persona>`;
+}
+
 /* ── Follow-up suggestions ──
  *
  * A thread-level toggle rather than a persona: "offer me next prompts" is

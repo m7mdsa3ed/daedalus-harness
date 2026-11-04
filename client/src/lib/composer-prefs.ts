@@ -13,9 +13,14 @@ export interface ComposerPrefs {
       an ordinary send while nothing is running. Touch ignores this: Return is
       the only newline key a soft keyboard has, so it is always a newline. */
   enterSends: boolean
+  /** Which of the two voice modes the row's one voice key runs on a plain
+      click — a dictated note, a call, or a screen recording (`composer/voice-button.tsx`). A note by
+      default: it is the one that ends with words in the box, and the one that
+      needs nothing set up. */
+  voiceMode: "note" | "call" | "screen"
 }
 
-export const COMPOSER_DEFAULTS: ComposerPrefs = { enterSends: true }
+export const COMPOSER_DEFAULTS: ComposerPrefs = { enterSends: true, voiceMode: "note" }
 
 const store = createLocalStore<ComposerPrefs>(
   "ui.composerPrefs",
@@ -23,6 +28,7 @@ const store = createLocalStore<ComposerPrefs>(
     const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}
     return {
       enterSends: typeof obj.enterSends === "boolean" ? obj.enterSends : COMPOSER_DEFAULTS.enterSends,
+      voiceMode: obj.voiceMode === "call" || obj.voiceMode === "screen" ? obj.voiceMode : "note",
     }
   },
   COMPOSER_DEFAULTS

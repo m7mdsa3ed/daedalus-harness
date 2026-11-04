@@ -24,6 +24,12 @@ export type RunStatus =
 
 export const isTerminal = (s: RunStatus): boolean => s !== "running" && s !== "paused";
 
+/** Which shape of run a spec makes. A spec that names neither is a workflow,
+    which is every run written before kinds existed — so it lives here, where
+    both the engine and the fold can read it, rather than in the engine. */
+export const runKindOf = (spec: RunSpec | undefined): RunKind =>
+  spec?.ask ? "ask" : spec?.subagent ? "subagent" : "workflow";
+
 /** What started a run. */
 export type Trigger =
   | { kind: "agent" } // run_workflow / run_script from a thread
@@ -54,6 +60,12 @@ export interface FlowControl {
   concurrencyKey?: string;
 }
 
+/** What kind of run this is, which decides the cap it counts against, the words
+    its notification uses and how its child is drawn. Declared here rather than
+    in the engine because the fold reports it on `RunView` (`kind`), and the fold
+    may not import the engine. */
+export type RunKind = "workflow" | "ask" | "subagent";
+
 /** Everything the engine needs to (re)start a run; stored on `workflow_runs`. */
 export interface RunSpec {
   /** The program. A JSON definition is compiled to this by `graph.ts`. */
@@ -65,12 +77,15 @@ export interface RunSpec {
   trigger: Trigger;
   /** How a step in flight at a restart is treated unless it says otherwise. */
   onRestart: OnRestart;
-  /** Run-level wall clock in seconds that FAILS the run (paused time excluded). Absent = engine default. */
+  /** Run-level wall clock in seconds that FAILS the run (paused time excluded). Absent = no
+      wall clock at all; a run bounded by time says `budgets.wallSec` or this. */
   totalTimeoutSec?: number;
   /** Set when the run is an `ask_agent`: the pair it went to. */
   ask?: { agent: string; profile: string; agentId: string; profileId: string; description?: string };
   /** An ask's pass-through agent() options, kept so `continue_agent` repeats them. */
   askOptions?: Record<string, unknown>;
+  /** Set when the run is a one-step run on the thread's OWN pair (a subagent). */
+  subagent?: true;
 }
 
 export type OnRestart = "resume" | "rerun" | "fail";
@@ -80,6 +95,11 @@ export interface ScriptMeta {
   description: string;
   whenToUse?: string;
   phases: { title: string; detail?: string }[];
+  /** The whole outline, known before the run starts: a compiled definition's
+      steps (by name, with titles) per phase. Absent for a hand-written script,
+      whose steps are only known as it calls them. What lets a card draw every
+      step — and every phase — from the first spawn, not just the ones started. */
+  plan?: { name: string | null; steps: { name: string; title: string }[] }[];
   /** JSON Schema for `args`; drives the Run form and validates a start. */
   inputs?: Record<string, unknown>;
 }
@@ -270,6 +290,10 @@ export interface RunView {
   logs: string[];
   usage: { tokens: number; costUsd: number; agents: number };
   budgets: Budgets;
+  /** What shape of run this is, read off its spec. A one-step run is answered as
+      the answer itself, and only an ask or a subagent is one step — a workflow
+      that happens to have a single step keeps its whole view. */
+  kind: RunKind;
   /** The script's own return value (or a compiled definition's step outputs). */
   result?: unknown;
 }
@@ -329,8 +353,12 @@ export const ENGINE_LIMITS = {
       a model fanning out eight of them must not take every workflow slot, and
       a model consulting two agents must not run out of subagents. */
   subagentsPerParent: 8,
-  stepTimeoutSec: { default: 15 * 60, max: 6 * 60 * 60 },
-  totalTimeoutSec: { default: 2 * 60 * 60, max: 24 * 60 * 60 },
+  /* No clock is armed unless the run or the step asks for one (`null` default): a
+     workflow over a real repo routinely runs for hours, and killing it at a
+     number nobody chose is the harness inventing a deadline. `max` is only the
+     ceiling on a value the author did name. */
+  stepTimeoutSec: { default: null, max: 6 * 60 * 60 },
+  totalTimeoutSec: { default: null, max: 24 * 60 * 60 },
   outputBytes: 256 * 1024,
 } as const;
 

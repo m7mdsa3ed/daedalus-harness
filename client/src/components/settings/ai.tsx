@@ -35,12 +35,18 @@ import { DataTable, TitleCell } from "@/components/ui/data-table"
 import { useTableFilter } from "@/lib/use-table-filter"
 import { Empty } from "@/components/empty"
 import { aiCapable, enhancePick, formBuilderPick, gitPick, modelPickLabel, type AiPick } from "@/lib/ai-picks"
-import { useSetSideModel, useSideModel, type SideLane } from "@/lib/queries/side-models"
+import { useFeature } from "@/lib/queries/surfaces"
+import { usePersonaDecision, usePersonaPrompt, useSetPersonaDecision, useSetSideModel, useSideModel, type SideLane } from "@/lib/queries/side-models"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
+import { ErrorNote } from "@/components/error-note"
+import { inlineFromQuery } from "@/lib/errors"
+import { toast } from "@/lib/toast"
 import { useProfiles } from "@/lib/queries/catalog"
 import type { ColumnDef } from "@/lib/table"
 import { cn } from "@/lib/utils"
 import { settingsFormPath, settingsPath } from "@/lib/router"
-import { Field, FormActions, FormPageHeader, FormSection, PageForm, PageHeader, Section, StatusBadge } from "./primitives"
+import { Field, FormActions, FormPageHeader, FormSection, INSET, PageForm, PageHeader, Row, Section, StatusBadge } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /** One helper: where it shows up, what it does, and the pick that decides what
@@ -94,12 +100,12 @@ const HELPERS: Helper[] = [
   },
   {
     id: "decision",
-    label: "Decisions",
+    label: "New threads",
     icon: Scale,
     lane: "decision",
-    name: "Answer typed questions",
+    name: "Pick a persona from the first message",
     subtitle:
-      "The System One model a decision runs on: a state and a map of noul, choice and score questions, answered with probabilities instead of text. Nothing asks one yet — this names the model that will.",
+      "The install's decision model (System One): it reads a new thread's first message and scores each persona, answering with probabilities instead of text. Global, never a thread's helper model. With none chosen nothing is classified, and a chat model is never used instead.",
     modelTitle: "Decision model",
   },
   {
@@ -348,6 +354,96 @@ const COLUMNS: ColumnDef<Helper, unknown>[] = [
   },
 ]
 
+/* ── Persona classification: the decision lane's first consumer ──
+   The model is the lane's pair above — global, one for the install. These two
+   numbers are the persona question's reading of its answer: a distribution is
+   not a decision until it clears a floor and leads the runner-up. Written when
+   the field is left, not per keystroke, and a value outside 0..1 is refused
+   here rather than stored and silently ignored. */
+function ThresholdField({
+  label,
+  hint,
+  value,
+  onCommit,
+}: {
+  label: string
+  hint: string
+  value: number
+  onCommit: (next: number) => void
+}) {
+  const [draft, setDraft] = React.useState(String(value))
+  React.useEffect(() => setDraft(String(value)), [value])
+  const parsed = Number(draft)
+  const invalid = draft.trim() === "" || !Number.isFinite(parsed) || parsed < 0 || parsed > 1
+  return (
+    <Field label={label} hint={invalid ? "A number from 0 to 1." : hint}>
+      <Input
+        type="number"
+        inputMode="decimal"
+        min={0}
+        max={1}
+        step={0.05}
+        value={draft}
+        aria-invalid={invalid}
+        aria-label={label}
+        className="pointer-coarse:h-11"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (!invalid && parsed !== value) onCommit(parsed)
+          else if (invalid) setDraft(String(value))
+        }}
+      />
+    </Field>
+  )
+}
+
+function PersonaDecisionSettings() {
+  const lane = useSideModel("decision")
+  const thresholds = usePersonaDecision()
+  const set = useSetPersonaDecision()
+  const canShowPrompt = useFeature("personaPrompt")
+  const [showPrompt, setShowPrompt] = React.useState(false)
+  const prompt = usePersonaPrompt(canShowPrompt && showPrompt)
+  const save = (patch: { minProbability?: number; margin?: number }) =>
+    set.mutate(patch, { onError: (err) => toast.error(err.message) })
+  return (
+    <Section
+      label="Persona classification"
+      hint={
+        lane.default
+          ? `A new thread's first message is read by ${lane.default.label} on ${lane.default.profileName}. It only moves a persona nobody picked, and a project can turn it off in Settings › Projects.`
+          : "No decision model is available, so nothing is classified. Add a model of kind decision to a profile and pick it in the row above."
+      }
+    >
+      <ThresholdField
+        label="Minimum confidence"
+        hint="The persona it picks must score at least this. Higher means it moves a persona less often."
+        value={thresholds.minProbability}
+        onCommit={(minProbability) => save({ minProbability })}
+      />
+      <ThresholdField
+        label="Lead over the runner-up"
+        hint="And beat the next label by at least this much. A near tie is the pick that costs most to get wrong."
+        value={thresholds.margin}
+        onCommit={(margin) => save({ margin })}
+      />
+      {canShowPrompt && (
+        <Row title="Show the prompt" subtitle="What the decision model is sent, built from your personas.">
+          <Switch checked={showPrompt} onCheckedChange={setShowPrompt} aria-label="Show the prompt" />
+        </Row>
+      )}
+      {showPrompt && prompt.error && (
+        <ErrorNote error={inlineFromQuery(prompt.error, "Couldn't read the prompt")} onRetry={prompt.refetch} />
+      )}
+      {showPrompt && prompt.data !== undefined && (
+        <pre className={cn(INSET, "max-h-96 overflow-auto p-3 font-mono text-xs whitespace-pre-wrap")}>
+          {JSON.stringify(prompt.data, null, 2)}
+        </pre>
+      )}
+    </Section>
+  )
+}
+
 const mark = (helper: Helper) => <helper.icon />
 
 export function AiPage() {
@@ -355,6 +451,7 @@ export function AiPage() {
   const profiles = useProfiles()
   const capable = aiCapable(profiles)
   const navigate = useNavigate()
+  const canClassify = useFeature("personaClassify")
 
   const mobile = React.useMemo(
     () => ({
@@ -412,6 +509,7 @@ export function AiPage() {
           />
         </Section>
       )}
+      {capable.length > 0 && canClassify && <PersonaDecisionSettings />}
     </>
   )
 }
@@ -421,6 +519,7 @@ export function AiHelperPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
   const helper = HELPERS.find((h) => h.id === entryId)
+  const canClassify = useFeature("personaClassify")
   if (!helper) return <Navigate to={settingsPath("ai")} replace />
   const back = () => void navigate(settingsPath("ai"))
   /* The picks are written as they are chosen (device-local stores), so there is
@@ -452,6 +551,7 @@ export function AiHelperPage() {
             <ModelSelect helper={helper} />
           </Field>
         </FormSection>
+        {helper.id === "decision" && canClassify && <PersonaDecisionSettings />}
         <FormActions busy={false} done={back} />
       </PageForm>
     </>

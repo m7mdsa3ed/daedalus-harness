@@ -213,12 +213,14 @@ export type ShortcutId =
   | "reopenPanel"
   | "terminal"
   | "changeModel"
+  | "cycleSetup"
   | "changeProject"
   | "chooseMcp"
   | "threadSearch"
   | "sendReview"
   | "viewOptions"
   | "voiceCall"
+  | "voiceNote"
   | "voiceMute"
   | "sidebarFilter"
   | "send"
@@ -327,13 +329,22 @@ export const KEYS = {
       mnemonic worth having is either Chromium's (⌘M, ⌘P, ⌘L) or already
       spoken for here, and ⌥M/⌥P/⌥V are claimed by no browser and no OS. */
   changeModel: "alt+m",
+  /** ⌥M's menu, without the menu: the next of its Recent rows. */
+  cycleSetup: "alt+shift+m",
   changeProject: "alt+p",
   /** S for servers — the menu is "MCP servers"; ⌥T is the sidebar filter's. */
   chooseMcp: "alt+s",
   threadSearch: "mod+f",
   viewOptions: "alt+v",
-  /** Start or end a voice call on the thread in front of you: C for call. */
+  /**
+   * Start or end a voice call on the thread in front of you: C for call. The
+   * row has one voice key, so this *picks* the call before it runs it — a chord
+   * that did nothing until you had found the fold would be the key not
+   * answering for the mode it names.
+   */
   voiceCall: "alt+c",
+  /** Start or stop a dictated note: D for dictation. */
+  voiceNote: "alt+d",
   /** Mute and unmute the mic during a call: U for the unmute you reach for. */
   voiceMute: "alt+u",
   /** Filter the sidebar's loaded threads. Alt+T for Threads: ⌘F is the transcript's find, and ⌘⇧F the file search. */
@@ -496,7 +507,15 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Start or end a voice call",
     chords: [KEYS.voiceCall],
     rebindable: true,
-    note: "On the thread in front of you, once a voice backend is set up in Settings › Voice.",
+    note: "On the thread in front of you, once a voice backend is set up in Settings › Voice. Picks the call as what the composer's voice key runs, then starts it.",
+  },
+  {
+    id: "voiceNote",
+    scope: "Thread",
+    label: "Start or stop a voice note",
+    chords: [KEYS.voiceNote],
+    rebindable: true,
+    note: "Dictates into the composer with the browser's own speech recognition, and picks the note as what the composer's voice key runs.",
   },
   {
     id: "voiceMute",
@@ -515,6 +534,14 @@ export const SHORTCUTS: ShortcutDef[] = [
     note: "Opens the composer's config menu — agent, profile, model, effort, mode and the agent's own options — on the thread in front of you.",
   },
   {
+    id: "cycleSetup",
+    scope: "Thread",
+    label: "Cycle recent setups",
+    chords: [KEYS.cycleSetup],
+    rebindable: true,
+    note: "Moves the thread in front of you to the next of the config menu's Recent setups (profile, model and effort), wrapping round. Each press goes one further.",
+  },
+  {
     id: "changeProject",
     scope: "Thread",
     label: "Change project",
@@ -528,7 +555,7 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Pick MCP servers",
     chords: [KEYS.chooseMcp],
     rebindable: true,
-    note: "Opens the composer's MCP checklist. Space toggles a server; on a started thread the pick applies on the next send.",
+    note: "Opens the session settings menu on its MCP servers row. Space toggles a server; on a started thread the pick applies on the next send.",
   },
   {
     id: "threadSearch",

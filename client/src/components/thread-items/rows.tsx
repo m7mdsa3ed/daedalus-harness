@@ -27,7 +27,7 @@ import {
   SquareIcon,
   WrenchIcon,
 } from "lucide-react"
-import { ChevronRightIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon, Layers as LayersIcon } from "lucide-react"
+import { ChevronRightIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon, Layers as LayersIcon, SlidersHorizontal as SlidersIcon } from "lucide-react"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu } from "@/components/item-context-menu"
@@ -1115,7 +1115,8 @@ function SubagentTranscript({
      fold it explains, so "the last row" alone left its run folding shut every
      time the child started thinking. */
   const liveRows = React.useMemo(
-    () => (active ? streamingRowIds(rows, rowTailId(rows[rows.length - 1])) : EMPTY_ROWS),
+    // A running child with no steps yet mounts with no rows (the working line's slot).
+    () => (active && rows.length ? streamingRowIds(rows, rowTailId(rows[rows.length - 1])) : EMPTY_ROWS),
     [rows, active]
   )
   const railSlot = useRailSlots([...rows.map((row) => row.id), ...(active ? ["working"] : [])], true, hidden > 0)
@@ -1325,10 +1326,40 @@ export const ThreadItemView = React.memo(function ThreadItemView({
       // column with the reason inline. An interrupt you can still resume gets
       // the resume button right there in the rule — picking the turn back up
       // is the only thing anyone wants after stopping it.
+      /* A setting change is a line about the thread, not a break in it: its words
+         can be long (`Persona: kept — …`), so they wrap in the column instead of
+         holding their width and pushing the rule and the time out of the panel.
+         An interrupt stays one short line that does not give. */
+      const wraps = item.kind === "notice" && item.config === true
+      if (wraps) {
+        // "Persona: kept - reason" -> setting name, then the detail.
+        const m = /^([^:]{1,40}):\s+([\s\S]+)$/.exec(item.text)
+        return (
+          <div className="flex justify-center py-2">
+            <div className="flex min-w-0 max-w-full items-start gap-2.5 rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-xs shadow-sm">
+              <SlidersIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+              <p className="min-w-0 wrap-anywhere text-muted-foreground">
+                {m ? (
+                  <>
+                    <span className="font-medium text-foreground">{m[1]}</span>
+                    <span className="mx-1.5 text-border">/</span>
+                    {m[2]}
+                  </>
+                ) : (
+                  item.text
+                )}
+              </p>
+              {showTimestamps && <Timestamp at={item.at} />}
+            </div>
+          </div>
+        )
+      }
       return (
         <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-          <span aria-hidden className="h-px flex-1 bg-border" />
-          <span className="shrink-0">{item.text}</span>
+          <span aria-hidden className={cn("h-px bg-border", wraps ? "min-w-3 flex-1 @panel-sm:min-w-6" : "flex-1")} />
+          <span className={cn(wraps ? "min-w-0 max-w-[85%] text-center text-balance wrap-anywhere" : "shrink-0")}>
+            {item.text}
+          </span>
           {showTimestamps && <Timestamp at={item.at} />}
           {onContinue && (
             <Button
@@ -1342,7 +1373,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
               Continue
             </Button>
           )}
-          <span aria-hidden className="h-px flex-1 bg-border" />
+          <span aria-hidden className={cn("h-px bg-border", wraps ? "min-w-3 flex-1 @panel-sm:min-w-6" : "flex-1")} />
         </div>
       )
     }
@@ -1535,13 +1566,14 @@ function ThoughtReading({
   proseRef?: React.RefObject<HTMLDivElement | null>
 }) {
   const follow = useFollowStream(streaming)
+  const full = useLayoutOptionsContext().thoughtFullHeight
   return (
     <div
       ref={(el) => {
         if (scrollerRef) scrollerRef.current = el
         follow.viewportRef(el)
       }}
-      className={cn(THOUGHT_MAX_H, open && "overflow-y-auto overscroll-contain pr-1")}
+      className={cn(!full && THOUGHT_MAX_H, open && !full && "overflow-y-auto overscroll-contain pr-1")}
     >
       <div ref={follow.contentRef}>
         <div

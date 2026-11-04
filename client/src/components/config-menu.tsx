@@ -6,9 +6,10 @@
    select, and that is the caller's business, not the row's. */
 import type * as acp from "@daedalus/acp"
 import * as React from "react"
-import { CheckIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react"
+import { CheckIcon, PlusIcon, RefreshCwIcon, SearchIcon, Trash2Icon } from "lucide-react"
 import {
   DropdownMenuCheckboxItem,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuPortal,
@@ -22,10 +23,13 @@ import {
 import { flattenSelectOptions, recommendedValue } from "@/lib/session-options"
 import { normalizeSuggestKinds, SUGGEST_KINDS } from "@/lib/suggestions"
 import { DEFAULT_UI_GROUPS, normalizeUiGroups, UI_GROUPS } from "@/lib/openui/groups"
-import type { ModelOption, ModelRole } from "@/lib/settings"
+import { chatModels, profileSupports, type ModelOption, type ModelRole } from "@/lib/settings"
 import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
-import { usePersonas } from "@/lib/queries/catalog"
+import { isCostly, type ConfigCost } from "@/lib/config-cost"
+import { useAgents, usePersonas, useProfiles } from "@/lib/queries/catalog"
+import { AgentIcon, ModelIcon, ProfileIcon } from "@/components/entity-icon"
+import { RECENT_SHOWN, recordConfig, sameConfig, useConfigRecents, type RecentConfig } from "@/lib/config-recents"
 import { EffortMeter, ModeIcon } from "@/components/composer/option-icons"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -185,6 +189,27 @@ export interface ChoicePick {
   onSelect: (value: string) => void
   /** When the catalog this row draws can be added to from here. */
   add?: MenuAdd
+  /** What a pick costs a started thread; absent on a draft, which has nothing to lose. */
+  cost?: ConfigCost
+}
+
+/* What picking in a submenu costs a started thread (`lib/config-cost.ts`): a
+   glyph on the row when it restarts the agent or starts the prompt cache over,
+   and the sentence at the head of the submenu, so it is read before the pick. */
+export function CostMark({ cost }: { cost?: ConfigCost }) {
+  if (!cost || !isCostly(cost)) return null
+  return <RefreshCwIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+}
+
+export function CostNote({ cost }: { cost?: ConfigCost }) {
+  if (!cost) return null
+  const Icon = isCostly(cost) ? RefreshCwIcon : CheckIcon
+  return (
+    <div className="flex items-start gap-1.5 px-2 pb-1 pt-1.5 text-xs text-muted-foreground">
+      <Icon className="mt-0.5 size-3 shrink-0" aria-hidden />
+      <span>{cost.text}</span>
+    </div>
+  )
 }
 
 export function MenuRow({
@@ -193,6 +218,7 @@ export function MenuRow({
   choices,
   onSelect,
   add,
+  cost,
 }: ChoicePick) {
   const current = choices.find((choice) => choice.value === value)
   const [submenuOpen, setSubmenuOpen] = React.useState(false)
@@ -232,8 +258,9 @@ export function MenuRow({
 
   return (
     <DropdownMenuSub open={submenuOpen} onOpenChange={setSubmenuOpen}>
-      <DropdownMenuSubTrigger>
+      <DropdownMenuSubTrigger title={cost?.text}>
         <span className="flex-1">{label}</span>
+        <CostMark cost={cost} />
         {current?.icon}
         <span className="max-w-24 truncate text-xs text-muted-foreground">
           {current?.name ?? value}
@@ -241,6 +268,7 @@ export function MenuRow({
       </DropdownMenuSubTrigger>
       <DropdownMenuPortal>
         <DropdownMenuSubContent className="max-w-80 no-scrollbar">
+          <CostNote cost={cost} />
           {searchable && <MenuSearchInput label={label} value={query} onChange={setQuery} />}
           <DropdownMenuRadioGroup
             value={value}
@@ -286,6 +314,85 @@ export function MenuRow({
 }
 
 /**
+ * The recents that still resolve, newest first: the profile exists, is shown,
+ * serves the agent, and still lists the model (and the effort, if one was set).
+ * `agentId` narrows them to one runtime — a started thread cannot change agent;
+ * a draft passes none and may jump between agents. One reading for the menu's
+ * rows and the `cycleSetup` chord, so the key never lands on a row the menu hides.
+ */
+export function useRecentSetups(agentId?: string) {
+  const recents = useConfigRecents()
+  const profiles = useProfiles()
+  return recents.flatMap((config) => {
+    if (agentId !== undefined && config.agentId !== agentId) return []
+    const profile = profiles.find((p) => p.id === config.profileId)
+    if (!profile || profile.hidden || profile.disabled || !profileSupports(profile, config.agentId)) return []
+    const models = chatModels(profile.models)
+    const model = models.find((m) => m.id === (config.model || profile.defaultModel))
+    if (models.length === 0 || (config.model && !model)) return []
+    if (config.effort && !model?.reasoningEfforts.includes(config.effort)) return []
+    return [{ config, profile, model }]
+  })
+}
+
+/**
+ * The setups this device last switched between, as one-click rows at the head
+ * of the config menu. Picking one records both ends, so the setup being left
+ * is the next row.
+ */
+export function RecentConfigsGroup({
+  current,
+  agentId,
+  onPick,
+}: {
+  current: RecentConfig
+  agentId?: string
+  onPick: (config: RecentConfig) => void
+}) {
+  const agents = useAgents()
+  const rows = useRecentSetups(agentId)
+    .filter(({ config }) => !sameConfig(config, current))
+    .slice(0, RECENT_SHOWN)
+    .map((row) => ({
+      ...row,
+      agent: row.config.agentId !== current.agentId ? agents.find((a) => a.id === row.config.agentId) : undefined,
+    }))
+  if (rows.length === 0) return null
+  return (
+    <>
+      <DropdownMenuGroup>
+        <DropdownMenuLabel>Recent</DropdownMenuLabel>
+        {rows.map(({ config, profile, model, agent }) => (
+          <DropdownMenuItem
+            key={[config.agentId, config.profileId, config.model, config.effort].join("\u0000")}
+            onClick={() => {
+              recordConfig(current)
+              recordConfig(config)
+              onPick(config)
+            }}
+          >
+            {agent ? (
+              <AgentIcon agentId={agent.id} className="size-4" />
+            ) : model?.iconUrl ? (
+              <ModelIcon iconUrl={model.iconUrl} className="size-4" />
+            ) : (
+              <ProfileIcon profile={profile} agentId={config.agentId} className="size-4" />
+            )}
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate">{config.model ? (model?.label ?? config.model) : "Profile default"}</span>
+              <span className="truncate text-xs text-muted-foreground">
+                {[agent?.name, profile.name, config.effort].filter(Boolean).join(" · ")}
+              </span>
+            </span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator />
+    </>
+  )
+}
+
+/**
  * The session's answer settings as one submenu — the same shape as every other
  * row, with how many are on beside the label.
  *
@@ -300,19 +407,23 @@ export function MenuRow({
 export function SessionSettingsSub({
   suggestions,
   ui,
+  cost,
 }: {
   suggestions: { kinds: readonly string[]; onChange: (kinds: string[]) => void }
   ui: { groups: readonly string[]; onChange: (groups: string[]) => void }
+  cost?: ConfigCost
 }) {
   const on = (suggestions.kinds.length > 0 ? 1 : 0) + (ui.groups.length > 0 ? 1 : 0)
   return (
     <DropdownMenuSub>
-      <DropdownMenuSubTrigger>
+      <DropdownMenuSubTrigger title={cost?.text}>
         <span className="flex-1">Session settings</span>
+        <CostMark cost={cost} />
         <span className="text-xs tabular-nums text-muted-foreground">{on} of 2</span>
       </DropdownMenuSubTrigger>
       <DropdownMenuPortal>
         <DropdownMenuSubContent className="max-w-80">
+          <CostNote cost={cost} />
           <SuggestionKindsSub {...suggestions} />
           <UiGroupsSub {...ui} />
         </DropdownMenuSubContent>
@@ -442,9 +553,11 @@ const NO_PERSONA = "__none__"
 export function PersonaRow({
   value,
   onSelect,
+  cost,
 }: {
   value: string | null | undefined
   onSelect: (personaId: string | null) => void
+  cost?: ConfigCost
 }) {
   const personas = usePersonas()
   if (personas.length === 0 && !value) return null
@@ -457,6 +570,7 @@ export function PersonaRow({
         ...personas.map((p) => ({ value: p.id, name: p.name, ...(p.description ? { details: [p.description] } : {}) })),
       ]}
       onSelect={(picked) => onSelect(picked === NO_PERSONA ? null : picked)}
+      cost={cost}
     />
   )
 }
@@ -496,6 +610,7 @@ export function HelperModelsSub({
   roles,
   models,
   onChange,
+  cost,
 }: {
   rows: HelperModelRow[]
   /** The whole `model_roles` vocabulary, in its own order. */
@@ -503,6 +618,7 @@ export function HelperModelsSub({
   /** The Model row's choices, minus its own "default" row. */
   models: Choice[]
   onChange: (next: HelperModelRow[]) => void
+  cost?: ConfigCost
 }) {
   if (roles.length === 0 || models.length === 0) return null
   const modelChoices: Choice[] = [{ value: SESSION_MODEL_CHOICE, name: "Session model" }, ...models]
@@ -514,14 +630,16 @@ export function HelperModelsSub({
 
   return (
     <DropdownMenuSub>
-      <DropdownMenuSubTrigger>
+      <DropdownMenuSubTrigger title={cost?.text}>
         <span className="flex-1">Helper models</span>
+        <CostMark cost={cost} />
         {rows.length > 0 && (
           <span className="text-xs tabular-nums text-muted-foreground">{rows.length}</span>
         )}
       </DropdownMenuSubTrigger>
       <DropdownMenuPortal>
         <DropdownMenuSubContent className="w-72 no-scrollbar">
+          <CostNote cost={cost} />
           {rows.map((row, index) => {
             const role = roles.find((r) => r.id === row.role)
             const model = models.find((m) => m.value === row.model)

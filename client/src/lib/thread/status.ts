@@ -50,6 +50,9 @@ export interface ThreadStatus {
   actions?: { label: string; busyLabel?: string; kind: StatusActionKind }[]
   /** When the state began, where state already holds it (`parked`). */
   since?: number
+  /** An open turn's clock: when it began, and the wall time of the thread's
+      settled turns before it, so the line can tick this turn and the total. */
+  ran?: { since: number; before: number }
 }
 
 /**
@@ -109,10 +112,12 @@ export function statusFor(thread: ThreadState, waitShown = true): ThreadStatus |
      work the agent launched that outlived the turn. That is neither an ending
      nor a wait: it is the thread still going with no turn open. */
   if (!thread.turnActive) return failureStatus(thread) ?? backgroundStatus(thread)
+  const ran = runtimeOf(thread)
   const retry = shownRetry(thread)
   if (retry) {
     const { attempt, of, delayMs, error } = retry
     return {
+      ran,
       kind: "retrying",
       tone: "warn",
       headline: "Request failed, trying again",
@@ -121,18 +126,33 @@ export function statusFor(thread: ThreadState, waitShown = true): ThreadStatus |
       more: error ? [describeError(error).title, describeError(error).detail].filter(Boolean).join("\n\n") : undefined,
     }
   }
-  if (hold.paused) return { kind: "held", tone: "info", headline: hold.message }
+  if (hold.paused) return { ran, kind: "held", tone: "info", headline: hold.message }
   const waiting = thread.permissions.length > 0 || thread.elicitations.length > 0
   const sending = thread.items.some((item) => item.kind === "user" && item.local && item.sending)
   if (sending) {
     return {
+      ran,
       kind: "sending",
       tone: "progress",
       headline: "Sending your message…",
       detail: "Waiting for the server to accept this message.",
     }
   }
-  return { kind: waiting ? "waiting" : "working", tone: "progress", headline: workingMessage(thread) }
+  return { ran, kind: waiting ? "waiting" : "working", tone: "progress", headline: workingMessage(thread) }
+}
+
+/** The open turn began at its message: the newest of the thread's own bubbles.
+    `turnDuration` holds only settled turns (`turn_ended`), and only the ones
+    this window replayed, so the total is what this device has read. */
+function runtimeOf(thread: ThreadState): ThreadStatus["ran"] {
+  for (let i = thread.items.length - 1; i >= 0; i--) {
+    const item = thread.items[i]
+    if (item.kind !== "user" || item.parentId) continue
+    if (item.at === undefined) return undefined
+    const before = Object.values(thread.turnDuration).reduce((sum, ms) => sum + ms, 0)
+    return { since: item.at, before }
+  }
+  return undefined
 }
 
 /** The newest failure, while it is the last thing that happened: the turn is

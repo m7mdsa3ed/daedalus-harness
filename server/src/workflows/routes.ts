@@ -112,7 +112,7 @@ export function workflowRoutes(app: Hono, deps: { engine: WorkflowEngine; sessio
     if (!parent) return c.json({ error: "not found" }, 404);
     const body = await parse(c, RunBody);
     if (!body.ok) return body.res;
-    const { definition, inputs, budgets, priority, concurrencyKey, onRestart } = body.data;
+    const { definition, inputs, budgets, priority, concurrencyKey, onRestart, maxParallel, totalTimeoutSec } = body.data;
     return guarded(c, async () =>
       started(
         c,
@@ -120,8 +120,9 @@ export function workflowRoutes(app: Hono, deps: { engine: WorkflowEngine; sessio
           definition,
           args: inputs,
           ...(budgets ? { budgets: budgets as Budgets } : {}),
-          flow: defined({ priority, concurrencyKey }),
+          flow: defined({ priority, concurrencyKey, concurrency: maxParallel }),
           ...(onRestart ? { onRestart } : {}),
+          ...(totalTimeoutSec ? { totalTimeoutSec } : {}),
           notify: true,
         }),
       ),
@@ -136,7 +137,8 @@ export function workflowRoutes(app: Hono, deps: { engine: WorkflowEngine; sessio
     if (!parent) return c.json({ error: "not found" }, 404);
     const body = await parse(c, ScriptBody);
     if (!body.ok) return body.res;
-    const { script, name, resumeFromRunId, args, tokenBudget, budgets, priority, concurrencyKey, onRestart } = body.data;
+    const { script, name, resumeFromRunId, args, tokenBudget, budgets, priority, concurrencyKey, onRestart, maxParallel, totalTimeoutSec } =
+      body.data;
     // `tokenBudget` is the v1 spelling of budgets.tokens; the explicit field wins.
     const merged: Budgets = { ...(tokenBudget !== undefined ? { tokens: tokenBudget } : {}), ...budgets };
     return guarded(c, async () =>
@@ -148,8 +150,9 @@ export function workflowRoutes(app: Hono, deps: { engine: WorkflowEngine; sessio
           ...(resumeFromRunId !== undefined ? { resumeFromRunId } : {}),
           ...(args !== undefined ? { args } : {}),
           budgets: merged,
-          flow: defined({ priority, concurrencyKey }),
+          flow: defined({ priority, concurrencyKey, concurrency: maxParallel }),
           ...(onRestart ? { onRestart } : {}),
+          ...(totalTimeoutSec ? { totalTimeoutSec } : {}),
           notify: true,
         }),
       ),
@@ -318,6 +321,7 @@ export function workflowRoutes(app: Hono, deps: { engine: WorkflowEngine; sessio
               ...(body.data.role ? { role: body.data.role } : {}),
               ...(body.data.effort ? { effort: body.data.effort } : {}),
               ...(body.data.timeoutSec ? { timeoutSec: body.data.timeoutSec } : {}),
+              ...(body.data.projectId ? { projectId: body.data.projectId } : {}),
             }),
       ),
     );

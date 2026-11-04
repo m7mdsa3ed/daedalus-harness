@@ -7,6 +7,7 @@ import { CSS } from "@dnd-kit/utilities"
 import {
   CornerDownRightIcon,
   GripVerticalIcon,
+  ImageIcon,
   PaperclipIcon,
   PencilIcon,
   SendHorizontalIcon,
@@ -19,6 +20,7 @@ import { UserMessageText } from "@/components/thread-items/user-message"
 import type { Actions } from "@/lib/actions"
 import type { ThreadState } from "@/lib/store"
 import { formatBytes } from "@/lib/attachments"
+import { useAttachmentUrl } from "@/components/composer-attachments"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/busy-button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -330,7 +332,10 @@ function QueuedMessageRow({
   )
 }
 
-/** Attachments stay inline with their pending prompt and can be removed independently. */
+/** Attachments stay inline with their pending prompt and can be removed independently.
+    A picture is drawn as a thumbnail, the way the composer's chip and the sent
+    bubble draw it — a queued screenshot named only "shot.png" is not what the
+    reader is checking. Everything else stays a named badge. */
 function QueuedAttachments({
   attachments,
   removable,
@@ -340,25 +345,76 @@ function QueuedAttachments({
   removable: boolean
   onRemove: (id: string) => void
 }) {
+  const images = attachments.filter((ref) => ref.mimeType.startsWith("image/"))
+  const files = attachments.filter((ref) => !ref.mimeType.startsWith("image/"))
   return (
-    <ul className="mb-2 flex flex-wrap gap-1">
-      {attachments.map((ref) => (
-        <Badge key={ref.id} variant="secondary" render={<li />}>
-          <PaperclipIcon />
-          <span className="max-w-32 truncate">{ref.name}</span>
-          <span className="shrink-0 text-muted-foreground">{formatBytes(ref.size)}</span>
-          {removable && (
-            <button
-              type="button"
-              aria-label={`Remove ${ref.name}`}
-              className="-me-0.5 rounded-full p-0.5 hover:text-foreground"
-              onClick={() => onRemove(ref.id)}
-            >
-              <XIcon />
-            </button>
-          )}
-        </Badge>
-      ))}
-    </ul>
+    <div className="mb-2 flex flex-col gap-1">
+      {images.length > 0 && (
+        <ul className="flex flex-wrap gap-1">
+          {images.map((ref) => (
+            <QueuedImage key={ref.id} image={ref} removable={removable} onRemove={onRemove} />
+          ))}
+        </ul>
+      )}
+      {files.length > 0 && (
+        <ul className="flex flex-wrap gap-1">
+          {files.map((ref) => (
+            <Badge key={ref.id} variant="secondary" render={<li />}>
+              <PaperclipIcon />
+              <span className="max-w-32 truncate">{ref.name}</span>
+              <span className="shrink-0 text-muted-foreground">{formatBytes(ref.size)}</span>
+              {removable && (
+                <button
+                  type="button"
+                  aria-label={`Remove ${ref.name}`}
+                  className="-me-0.5 rounded-full p-0.5 hover:text-foreground"
+                  onClick={() => onRemove(ref.id)}
+                >
+                  <XIcon />
+                </button>
+              )}
+            </Badge>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** One queued picture: its own bytes, fetched by id like the sent bubble's tile
+    (`useAttachmentUrl`), because the queue row carries references and no bytes. */
+function QueuedImage({
+  image,
+  removable,
+  onRemove,
+}: {
+  image: NonNullable<QueuedMessage["attachments"]>[number]
+  removable: boolean
+  onRemove: (id: string) => void
+}) {
+  const src = useAttachmentUrl(image.id)
+  return (
+    <li
+      title={`${image.name} · ${formatBytes(image.size)}`}
+      className="group/queued-image relative size-14 shrink-0 overflow-hidden rounded-xl border bg-muted"
+    >
+      {src ? (
+        <img src={src} alt={image.name} className="size-full object-cover" />
+      ) : (
+        <div className="flex size-full items-center justify-center text-muted-foreground">
+          <ImageIcon className="size-4" />
+        </div>
+      )}
+      {removable && (
+        <button
+          type="button"
+          aria-label={`Remove ${image.name}`}
+          className="absolute top-1 right-1 flex size-5 items-center justify-center rounded-full bg-background/90 text-foreground opacity-0 transition-opacity group-hover/queued-image:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+          onClick={() => onRemove(image.id)}
+        >
+          <XIcon className="size-3" />
+        </button>
+      )}
+    </li>
   )
 }

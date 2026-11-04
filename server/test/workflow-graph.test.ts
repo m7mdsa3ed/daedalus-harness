@@ -378,7 +378,11 @@ const idx = (f: Fake, e: string) => {
 test("compiled source is self-contained and begins with a literal meta", () => {
   const { source, meta } = compileDefinition(parse({ ...good, description: "d", inputs: { type: "object" } }));
   assert.ok(source.startsWith("export const meta = "));
-  assert.deepEqual(meta, { name: "review", description: "d", phases: [], inputs: { type: "object" } });
+  const { plan, ...rest } = meta;
+  assert.deepEqual(rest, { name: "review", description: "d", phases: [], inputs: { type: "object" } });
+  // The whole outline rides the meta, so a card can draw every step from the first spawn.
+  assert.equal(plan?.length, 1);
+  assert.equal(plan?.[0]?.name, null);
   assert.doesNotMatch(source, /\b(require|import\s*\(|Date\.|Math\.random|__render\(\s*\)|process\.)/);
 });
 test("meta carries the phases", () => {

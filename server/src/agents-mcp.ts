@@ -31,6 +31,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { BudgetsSchema, LIMITS } from "./workflows/graph.js";
 import { SCRIPT_RULES, STEP_RULES, WHICH_SHAPE } from "./workflows/manual.js";
 import { AGENTS_SERVER_NAME } from "./workflows/types.js";
 
@@ -133,17 +134,22 @@ interface RunView {
   result?: unknown;
 }
 
-/** A run as the caller sees it: a one-step run answers with its step's answer,
-    a workflow with its steps and its result. */
+const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
+
+/** A run as the caller sees it. Only an ASK or a SUBAGENT is "the answer is the
+    one step" — a workflow keeps its whole view even when it happens to have a
+    single step, because its `result`, gates, usage, artifacts and budgets are
+    what the caller asked for. The shape is read off `kind`, which the fold sets
+    from the run's own spec, so the tool cannot guess it from the step count. */
 const answer = (raw: unknown) => {
-  const run = raw as RunView;
+  const run = raw as RunView & { kind?: string };
+  const one = run.kind === "ask" || run.kind === "subagent";
   const shaped =
-    run.steps?.length === 1
+    one && run.steps?.length === 1
       ? { id: run.id, status: run.status, threadId: run.steps[0]?.sessionId ?? null, error: run.error ?? run.steps[0]?.error ?? null, output: run.steps[0]?.output ?? null }
       : run;
-  return { content: [{ type: "text" as const, text: JSON.stringify(shaped, null, 2) }] };
+  return json(shaped);
 };
-const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
 const failed = (error: unknown) => ({
   content: [{ type: "text" as const, text: `agents error: ${error instanceof Error ? error.message : String(error)}` }],
   isError: true,
@@ -177,7 +183,10 @@ async function pickPair(body: { profile?: string; agent?: string }): Promise<{ p
   if (!server.server.getClientCapabilities()?.elicitation?.form) {
     throw new Error("no profile chosen for this thread and this runtime cannot show a picker — ask the user which profile and agent to use, then pass them");
   }
-  const usable = pairs.filter((p) => p.installed && (!named || p.agentId === named.agentId));
+  const namedProfile = body.profile;
+  const usable = pairs.filter(
+    (p) => p.installed && (!named || p.agentId === named.agentId) && (!namedProfile || is(p.profileId, p.profile, namedProfile)),
+  );
   if (usable.length === 0) throw new Error("no installed agent to ask");
   const key = (p: Pair) => JSON.stringify([p.profileId, p.agentId]);
   const result = await server.server.elicitInput(
@@ -224,16 +233,30 @@ function resolveRole(role: string | undefined, model: string | undefined): { mod
   return { model: found.model || undefined };
 }
 
-const waitSecField = z.number().int().min(1).max(MAX_WAIT_SEC).optional().describe(`Block up to this many seconds (1-${MAX_WAIT_SEC}, default ${DEFAULT_WAIT_SEC}) for the run to end. Past it, the answer arrives as a <task-notification>.`);
+/** The wait is the only waiting model, and its default is not one number: a
+    one-step errand answers soonest, so it waits by default, while a workflow is a
+    long job that starts in the background — the manual's BACKGROUND paragraph is
+    true exactly there. The description says which, because a model that assumed
+    one default for both would either sit on a long run or end a turn expecting
+    an answer that is already in its hand. */
+const waitSecField = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_WAIT_SEC)
+  .optional()
+  .describe(
+    `Block up to this many seconds (1-${MAX_WAIT_SEC}) for the run to end. Past it, the answer arrives as a <task-notification>. Default ${DEFAULT_WAIT_SEC} for a one-step run (prompt), and 0 — start in the background — for a workflow (steps/phases/script/name).`,
+  );
 const runId = z.string().min(1).describe("The run's id (the task-id of its <task-notification>).");
 
 /* ── agent ──────────────────────────────────────────────────────────────────
  *
  * Flat, and every shape field optional: some OpenAI-compatible providers reject
  * union schemas, and a model fills a flat object more reliably than it picks a
- * branch. Exactly one of `prompt`, `steps`, `script`, `name` is the contract,
- * and the handler says which it got in a sentence the model can act on rather
- * than throwing. */
+ * branch. Exactly one of `prompt`, `steps`/`phases`, `script`, `name` is the
+ * contract, and the handler says which it got in a sentence the model can act on
+ * rather than throwing. */
 /** What the handler receives. Declared rather than inferred from the shape,
     because the shape is CONDITIONS-built (the workflow fields are only there
     where the runtime has no engine of its own) and `z.ZodRawShape` erases the
@@ -250,10 +273,31 @@ interface AgentInput {
   timeoutSec?: number;
   waitSec?: number;
   steps?: Record<string, unknown>[];
+  phases?: Record<string, unknown>[];
   script?: string;
   name?: string;
   args?: unknown;
+  budgets?: { tokens?: number; costUsd?: number; agents?: number; wallSec?: number };
+  maxParallel?: number;
+  priority?: number;
+  concurrencyKey?: string;
+  onRestart?: "resume" | "rerun" | "fail";
+  totalTimeoutSec?: number;
 }
+
+/** The flow and budget fields a run can be started with, at the top level of every
+    shape. `graph.ts` accepts them on a definition and `routes.ts` on the body, and
+    the manual promises the model all of them — so they are passed rather than
+    described. Only what was given travels: the engine spreads these over a
+    definition's own, and an `undefined` would erase one. */
+const flowOf = (input: AgentInput) => ({
+  ...(input.budgets ? { budgets: input.budgets } : {}),
+  ...(input.priority !== undefined ? { priority: input.priority } : {}),
+  ...(input.concurrencyKey ? { concurrencyKey: input.concurrencyKey } : {}),
+  ...(input.onRestart ? { onRestart: input.onRestart } : {}),
+  ...(input.maxParallel !== undefined ? { maxParallel: input.maxParallel } : {}),
+  ...(input.totalTimeoutSec !== undefined ? { totalTimeoutSec: input.totalTimeoutSec } : {}),
+});
 
 const agentFields: z.ZodRawShape = {
   prompt: z
@@ -294,8 +338,21 @@ const agentFields: z.ZodRawShape = {
           .describe(
             "A JavaScript orchestration script, when the shape is only known as it runs: `export const meta = {name, description, phases}` then a body that awaits agent(prompt, opts), parallel, pipeline, map, vote, refine, route, race, approve, sleep, waitFor, sh, artifact, state. Globals are documented by the server; an unknown option name throws with the valid ones.",
           ),
-        name: z.string().min(1).optional().describe("Run a saved workflow by its meta.name (agent_list shows the library with `runs`)."),
-        args: z.unknown().optional().describe("The script's or saved workflow's input, as real JSON. Give it with `script` or `name`."),
+        name: z.string().min(1).optional().describe("Run a saved workflow by its meta.name (list_workflows shows the library)."),
+        args: z.unknown().optional().describe("The caller's input as real JSON: a `script`'s or saved workflow's `args`, or a `steps` graph's `inputs` (what its {{inputs.KEY}} templates read)."),
+        phases: z
+          .array(z.record(z.string(), z.unknown()))
+          .min(1)
+          .optional()
+          .describe(
+            "The same plan grouped into named stages that run one after another ({name, steps}): a phase starts only when the phase before it has finished, and its own steps run side by side. Give this OR `steps`, not both.",
+          ),
+        budgets: BudgetsSchema.optional().describe("Run limits; hitting one stops new agents and ends the run with its partial result. Set them for open-ended fan-out."),
+        maxParallel: z.number().int().min(1).max(LIMITS.maxParallel).optional().describe(`Steps of this run at once (default ${LIMITS.defaultParallel}, max ${LIMITS.maxParallel}).`),
+        priority: z.number().int().min(-100).max(100).optional().describe("Higher runs first when the shared agent pool is contended."),
+        concurrencyKey: z.string().min(1).max(80).optional().describe("Runs sharing a key share one concurrency pool — e.g. one writer per repo."),
+        onRestart: z.enum(["resume", "rerun", "fail"]).optional().describe("What a step in flight at a server restart does; the default for every step that names none."),
+        totalTimeoutSec: z.number().int().positive().optional().describe("The run's own wall clock, paused time excluded; past it the run fails."),
       }
     : {}),
 };
@@ -307,10 +364,14 @@ server.registerTool(
     description: `Give work to another worker and get its answer — ONE tool for every shape, because the run underneath is the same.
 
 WHAT IT MAKES: \`prompt\` alone = one step on your own pair (a subagent, same model and rules as this thread)${
-      WORKFLOWS ? ", \`steps\`/\`script\` = a multi-step workflow where every step is a real thread" : ""
-    }, and \`agent\`/\`profile\` = that one step on another pair (an ask). Give exactly one of ${["prompt", WORKFLOWS ? "steps" : "", WORKFLOWS ? "script" : "", WORKFLOWS ? "name" : ""].filter(Boolean).map((f) => `\`${f}\``).join(", ")}.
+      WORKFLOWS ? ", \`steps\`/\`phases\`/\`script\` = a multi-step workflow where every step is a real thread" : ""
+    }, and \`agent\`/\`profile\` = that one step on another pair (an ask). Give exactly one of ${["prompt", WORKFLOWS ? "steps" : "", WORKFLOWS ? "phases" : "", WORKFLOWS ? "script" : "", WORKFLOWS ? "name" : ""].filter(Boolean).map((f) => `\`${f}\``).join(", ")}.
 
-WHAT IT COSTS: the call returns when the run ends OR when \`waitSec\` expires, whichever comes first. A run still going then arrives in this thread as a <task-notification> carrying its id and result — do NOT poll for it; do other work, or end your turn if there is none.
+WHAT IT COSTS: the call returns when the run ends OR when \`waitSec\` expires, whichever comes first. A run still going then arrives in this thread as a <task-notification> carrying its id and result — do NOT poll for it; do other work, or end your turn if there is none. A one-step run waits ${DEFAULT_WAIT_SEC}s by default because it usually answers by then; a workflow starts in the background unless you ask for a wait, because a long job is not an errand.${
+      WORKFLOWS
+        ? " A workflow's whole view — every step, gates, usage, artifacts, budgets and `result` — comes back even when it has a single step, so read `result` rather than one step's prose."
+        : ""
+    }
 
 WHO: pass \`agent\` and \`profile\` ONLY if the user named them. Left out, the pair the user set for that agent on this thread is used, and if none is set they are shown a picker — some profiles have broken or missing credentials and only they know which. Never pick one yourself, and never fall back to a different pair after a failure. A worker sees ONLY the brief you give it.
 
@@ -323,31 +384,60 @@ AFTERWARDS: \`agent_message\` picks a stopped, failed or finished run back up on
   async (raw) => {
     let input = raw as AgentInput;
     try {
+      /* `steps` and `phases` are two ways of writing the same plan, so they are
+         one shape between them — `graph.ts` refuses a definition carrying both. */
+      const graph = Boolean(input.steps || input.phases);
       const shapes = [
         input.prompt ? "prompt" : "",
-        WORKFLOWS && input.steps ? "steps" : "",
+        WORKFLOWS && graph ? (input.phases ? "phases" : "steps") : "",
         WORKFLOWS && input.script ? "script" : "",
         WORKFLOWS && input.name ? "name" : "",
       ].filter(Boolean);
       if (shapes.length !== 1) {
-        const usable = ["prompt", ...(WORKFLOWS ? ["steps", "script", "name"] : [])].map((f) => `\`${f}\``).join(", ");
+        const usable = ["prompt", ...(WORKFLOWS ? ["steps", "phases", "script", "name"] : [])].map((f) => `\`${f}\``).join(", ");
         return failed(`give exactly one of ${usable} — you gave ${shapes.length ? shapes.map((f) => `\`${f}\``).join(" and ") : "none"}`);
       }
-      if (WORKFLOWS && input.args !== undefined && !input.script && !input.name) {
-        return failed("`args` goes with `script` or `name`; a one-step run's words are its `prompt`");
+      if (WORKFLOWS && input.steps && input.phases) {
+        return failed("give `steps` OR `phases`, not both — they are two ways of writing the same plan");
       }
       if (input.projectId && shapes[0] !== "prompt") {
         return failed("`projectId` is for a one-step run; a workflow's steps each carry their own, or inherit the thread's project");
       }
+      /* A one-step run has no graph to limit or order, so these are refused rather
+         than accepted and quietly dropped — the run would look constrained and not be. */
+      if (shapes[0] === "prompt") {
+        const flow = ["budgets", "maxParallel", "priority", "concurrencyKey", "onRestart", "totalTimeoutSec"].filter(
+          (f) => (input as Record<string, unknown>)[f] !== undefined,
+        );
+        if (flow.length) {
+          return failed(
+            `${flow.map((f) => `\`${f}\``).join(", ")} ${flow.length === 1 ? "belongs" : "belong"} to a workflow (steps/phases/script/name) — a one-step run has no graph to order and no budget of its own; give \`timeoutSec\` to cap it`,
+          );
+        }
+      }
+
+      /* A script or a saved workflow decides each agent() call's pair, model and
+         clock itself, so the one-step fields have nowhere to go — refused, like
+         the flow fields on a prompt, rather than accepted and dropped. */
+      if (shapes[0] === "script" || shapes[0] === "name") {
+        const stray = ["agent", "profile", "model", "role", "effort", "timeoutSec", "description"].filter(
+          (f) => (input as Record<string, unknown>)[f] !== undefined,
+        );
+        if (stray.length) {
+          return failed(
+            `${stray.map((f) => `\`${f}\``).join(", ")} ${stray.length === 1 ? "does" : "do"} not apply to a \`${shapes[0]}\` run — its agent() calls name their own pair, model and timeout (and a script's meta names it)`,
+          );
+        }
+      }
 
       /* The workflow shapes: the definition object is assembled from the flat
          fields, so the tool stays loadable on a provider that dislikes unions. */
-      if (shapes[0] === "steps" || shapes[0] === "script" || shapes[0] === "name") {
+      if (shapes[0] === "steps" || shapes[0] === "phases" || shapes[0] === "script" || shapes[0] === "name") {
         if (shapes[0] === "name") {
           return json(
             await call(`/scripts?wait=${startWait(input.waitSec)}`, {
               method: "POST",
-              body: JSON.stringify({ name: input.name, args: input.args }),
+              body: JSON.stringify({ name: input.name, args: input.args, ...flowOf(input) }),
             }),
           );
         }
@@ -355,29 +445,42 @@ AFTERWARDS: \`agent_message\` picks a stopped, failed or finished run back up on
           return json(
             await call(`/scripts?wait=${startWait(input.waitSec)}`, {
               method: "POST",
-              body: JSON.stringify({ script: input.script, args: input.args }),
+              body: JSON.stringify({ script: input.script, args: input.args, ...flowOf(input) }),
             }),
           );
         }
         /* A graph: the top-level pair and model are the DEFAULT for every step
            that names none, so a one-step call is not a special case — it is a
            workflow whose only step inherits everything. */
+        /* Every field a definition takes is reachable: the whole plan (`steps` or
+           `phases`), its inputs, and the limits/flow the manual promises. What is
+           not given is left absent rather than passed as `undefined`, because the
+           engine spreads these over a definition's own and an undefined erases one. */
+        if (input.role && (input.agent || input.profile)) {
+          return failed(`a role cannot cross to another pair — "${input.role}" names a model in this thread's own catalog. Name the \`model\` that profile serves instead.`);
+        }
+        if (input.role) {
+          const resolved = resolveRole(input.role, input.model);
+          if ("error" in resolved) return failed(resolved.error);
+          input = { ...input, model: resolved.model };
+        }
         const definition = {
-          name: input.description ?? stepsName(input.description, input.prompt),
+          name: input.description ?? stepsName(input.steps ?? (input.phases?.[0]?.steps as Record<string, unknown>[] | undefined)),
           ...(input.description ? { description: input.description } : {}),
-          steps: (input.steps as Record<string, unknown>[]).map((step) => ({
-            ...step,
-            ...(input.agent && step.agent === undefined ? { agent: input.agent } : {}),
-            ...(input.profile && step.profile === undefined ? { profile: input.profile } : {}),
-            ...(input.model && step.model === undefined ? { model: input.model } : {}),
-            ...(input.effort && step.effort === undefined ? { effort: input.effort } : {}),
-            ...(input.timeoutSec && step.timeoutSec === undefined ? { timeoutSec: input.timeoutSec } : {}),
-          })),
+          ...(input.phases
+            ? { phases: (input.phases as Record<string, unknown>[]).map((phase) => ({ ...phase, steps: inherit(phase.steps, input) })) }
+            : { steps: inherit(input.steps, input) }),
+          ...(input.budgets ? { budgets: input.budgets } : {}),
+          ...(input.maxParallel !== undefined ? { maxParallel: input.maxParallel } : {}),
+          ...(input.priority !== undefined ? { priority: input.priority } : {}),
+          ...(input.concurrencyKey ? { concurrencyKey: input.concurrencyKey } : {}),
+          ...(input.onRestart ? { onRestart: input.onRestart } : {}),
+          ...(input.totalTimeoutSec !== undefined ? { totalTimeoutSec: input.totalTimeoutSec } : {}),
         };
         return json(
           await call(`/runs?wait=${startWait(input.waitSec)}`, {
             method: "POST",
-            body: JSON.stringify({ definition, inputs: input.args }),
+            body: JSON.stringify({ definition, ...(input.args !== undefined ? { inputs: input.args } : {}) }),
           }),
         );
       }
@@ -421,11 +524,30 @@ AFTERWARDS: \`agent_message\` picks a stopped, failed or finished run back up on
   },
 );
 
-/** A workflow needs a name and a one-step call may not have given a
-    description: the first few words of the first step's prompt, else "Workflow". */
-function stepsName(description: string | undefined, prompt: string | undefined): string {
-  const words = (prompt ?? "").trim().split(/\s+/).slice(0, 8).join(" ");
-  return description || words || "Workflow";
+/** The top-level pair and model are the DEFAULT for every step that names none,
+    so a one-step graph is not a special case — it is a workflow whose only step
+    inherits everything. A step's own value always wins. */
+function inherit(steps: unknown, input: AgentInput): Record<string, unknown>[] {
+  return (Array.isArray(steps) ? (steps as Record<string, unknown>[]) : []).map((step) => ({
+    ...step,
+    /* The pair is one unit: a step that names either half keeps its own, or a
+       step naming another agent would be handed a profile meant for this one. */
+    ...(step.agent === undefined && step.profile === undefined
+      ? { ...(input.agent ? { agent: input.agent } : {}), ...(input.profile ? { profile: input.profile } : {}) }
+      : {}),
+    ...(input.model && step.model === undefined ? { model: input.model } : {}),
+    ...(input.effort && step.effort === undefined ? { effort: input.effort } : {}),
+    ...(input.timeoutSec && step.timeoutSec === undefined ? { timeoutSec: input.timeoutSec } : {}),
+  }));
+}
+
+/** A workflow needs a name and the call may not have given a description: the
+    first step's title, else the first few words of its prompt, else "Workflow". */
+function stepsName(steps: Record<string, unknown>[] | undefined): string {
+  const first = Array.isArray(steps) ? steps[0] : undefined;
+  if (typeof first?.title === "string" && first.title.trim()) return first.title.trim();
+  const prompt = typeof first?.prompt === "string" ? first.prompt : "";
+  return prompt.trim().split(/\s+/).slice(0, 8).join(" ") || "Workflow";
 }
 
 server.registerTool(
@@ -513,7 +635,7 @@ server.registerTool(
     description:
       "The (profile, agent) pairs this thread can hand work to — each profile is a provider and each agent a coding runtime; `current` marks your own pair, `installed: false` cannot be asked — and, with `runs`, this thread's recent runs (id, name, status, times) newest first. Read the pairs before naming an agent, and the runs to find an id you lost or to see what is still going.",
     inputSchema: {
-      ...(WORKFLOWS ? { runs: z.boolean().optional().describe("Also list this thread's recent runs.") } : {}),
+      runs: z.boolean().optional().describe("Also list this thread's recent runs (subagents, asks and workflows)."),
     },
     annotations: READ,
   },
@@ -521,7 +643,7 @@ server.registerTool(
     try {
       const [pairs, runsList] = await Promise.all([
         call("/agents"),
-        RUNS ? call("/runs?limit=20") : Promise.resolve(null),
+        runs ? call("/runs?limit=20") : Promise.resolve(null),
       ]);
       return json({ ...(pairs as object), ...(runsList ? { runs: (runsList as { runs: unknown[] }).runs } : {}) });
     } catch (error) {
@@ -529,10 +651,6 @@ server.registerTool(
     }
   },
 );
-
-/** `runs` is a workflow-shaped question ("what is still going"), so it is only
-    read where the thread has runs at all. */
-const RUNS = WORKFLOWS;
 
 /* ── the library ────────────────────────────────────────────────────────────
  *

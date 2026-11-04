@@ -63,3 +63,46 @@ export function useSetSideModel(lane: SideLane) {
         : api<Omit<SideModel, "candidates">>(s, PATH[lane], { method: "PUT", body: JSON.stringify(input) }),
   )
 }
+
+/* The persona question's thresholds (`GET/PUT /api/decision/persona`): how sure,
+   and how far ahead of the runner-up, the decision model must be before a new
+   thread's first message moves its persona. They belong to the install like the
+   lane's pair, so they are server state, not a device pick. */
+export interface PersonaDecision {
+  minProbability: number
+  margin: number
+}
+
+const PERSONA_PATH = "/api/decision/persona"
+const PERSONA_DEFAULTS: PersonaDecision = { minProbability: 0.5, margin: 0.15 }
+
+export function usePersonaDecision(): PersonaDecision {
+  const settings = useServer()
+  const { data } = useApiQuery<PersonaDecision>(sideModelKey(settings, "persona-decision"), PERSONA_PATH, {
+    staleTime: 30_000,
+  })
+  const ok = (n: unknown, fallback: number) => (typeof n === "number" && Number.isFinite(n) ? n : fallback)
+  return {
+    minProbability: ok(data?.minProbability, PERSONA_DEFAULTS.minProbability),
+    margin: ok(data?.margin, PERSONA_DEFAULTS.margin),
+  }
+}
+
+export function useSetPersonaDecision() {
+  const settings = useServer()
+  return useApiMutation<Partial<PersonaDecision>, PersonaDecision>(
+    [sideModelKey(settings, "persona-decision")],
+    (s: ServerSettings, input) => api<PersonaDecision>(s, PERSONA_PATH, { method: "PUT", body: JSON.stringify(input) }),
+  )
+}
+
+/* What the persona classifier sends its decision model
+   (`GET /api/decision/persona/prompt`), read only while someone is looking:
+   it is built from the persona library, so it is always re-read when shown. */
+export function usePersonaPrompt(enabled: boolean) {
+  const settings = useServer()
+  return useApiQuery<unknown>(sideModelKey(settings, "persona-prompt"), `${PERSONA_PATH}/prompt`, {
+    enabled,
+    staleTime: 0,
+  })
+}

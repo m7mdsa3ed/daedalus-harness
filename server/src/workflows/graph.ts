@@ -751,6 +751,10 @@ export function compileDefinition(def: WorkflowDefinition): { source: string; me
     name: def.name,
     description: def.description ?? def.name,
     phases: def.phases.map((p) => (p.description ? { title: p.name, detail: p.description } : { title: p.name })),
+    plan: outlineOf(def).map((phase) => ({
+      name: phase.name,
+      steps: phase.steps.map((name) => ({ name, title: def.steps.find((s) => s.name === name)?.title ?? name })),
+    })),
     ...(def.inputs ? { inputs: def.inputs } : {}),
   };
   const ordered = topoOrder(def.steps);

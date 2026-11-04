@@ -37,7 +37,7 @@ export const Bars = defineComponent({
       <Box>
         {props.title && <BoxHeader title={props.title} />}
         {items.length > 0 && (
-          <ul className={cn("w-full min-w-0 list-none space-y-3", PAD)}>
+          <ul className={cn("w-full min-w-0 list-none space-y-2", PAD)}>
             {items.map((item, index) => {
               // A value above zero never draws as nothing: a sliver still says "some".
               const width = max > 0 && item.value > 0 ? Math.max(2, (item.value / max) * 100) : 0
@@ -47,7 +47,7 @@ export const Bars = defineComponent({
                     <span className={cn(BODY, "min-w-0")}>
                       <RichText text={item.label} />
                     </span>
-                    <span className="shrink-0 text-sm font-medium tabular-nums text-foreground">
+                    <span className="shrink-0 text-[length:calc(var(--text-sm,0.875rem)-0.0625rem)] font-medium tabular-nums text-foreground">
                       {number.format(item.value)}
                       {unit}
                     </span>
@@ -55,9 +55,9 @@ export const Bars = defineComponent({
                   <div
                     role="img"
                     aria-label={`${item.label}: ${number.format(item.value)}${unit}`}
-                    className="h-1.5 w-full min-w-0 overflow-hidden rounded-full bg-muted"
+                    className="h-1 w-full min-w-0 overflow-hidden rounded-full bg-muted"
                   >
-                    <span className={cn("block h-full rounded-full", TONE_BAR[item.tone ?? "info"])} style={{ width: `${width}%` }} />
+                    <span className={cn("block h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none", TONE_BAR[item.tone ?? "info"])} style={{ width: `${width}%` }} />
                   </div>
                   {item.hint && (
                     <p className={cn(META, "text-pretty")}>

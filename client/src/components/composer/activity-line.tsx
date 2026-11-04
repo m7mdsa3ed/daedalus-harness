@@ -156,6 +156,7 @@ export function PhaseLine({
   tone = "normal",
   label,
   mark,
+  trail,
 }: {
   text: string
   /** Nothing is moving — a held turn or a stopped connection. */
@@ -170,6 +171,9 @@ export function PhaseLine({
       sentence is read. Absent keeps the Daedalus mark, which is the honest
       answer for "the harness itself is doing this". */
   mark?: ReactNode
+  /** Quiet text after the sentence, outside its swap (a clock that ticks
+      must not re-key the sentence and replay its fade every second). */
+  trail?: ReactNode
 }) {
   return (
     <div
@@ -207,6 +211,7 @@ export function PhaseLine({
       >
         {text}
       </span>
+      {trail && <span className="shrink-0 text-xs leading-6 text-muted-foreground tabular-nums">{trail}</span>}
     </div>
   )
 }

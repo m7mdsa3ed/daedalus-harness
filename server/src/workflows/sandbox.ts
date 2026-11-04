@@ -95,13 +95,34 @@ export function extractMeta(source: string): ScriptMeta {
     // Back into the host realm, so it stores, hashes and compares like any other JSON.
     inputs = cloneJson(meta.inputs, "meta.inputs") as Record<string, unknown>;
   }
+  const plan = planOf((meta as { plan?: unknown }).plan);
   return {
     name: name.slice(0, 80),
     description: description.slice(0, 500),
     ...(whenToUse ? { whenToUse } : {}),
     phases,
+    ...(plan ? { plan } : {}),
     ...(inputs ? { inputs } : {}),
   };
+}
+
+/** A `meta.plan` as the compiler writes it, or nothing: a malformed one is
+    dropped rather than refused, because it only decides what a card draws. */
+function planOf(raw: unknown): ScriptMeta["plan"] {
+  if (!Array.isArray(raw)) return undefined;
+  const out: NonNullable<ScriptMeta["plan"]> = [];
+  for (const phase of raw.slice(0, SCRIPT_LIMITS.maxPhases)) {
+    const p = phase as { name?: unknown; steps?: unknown };
+    if (!Array.isArray(p?.steps)) return undefined;
+    const steps: { name: string; title: string }[] = [];
+    for (const step of p.steps) {
+      const s = step as { name?: unknown; title?: unknown };
+      if (typeof s?.name !== "string" || !s.name) return undefined;
+      steps.push({ name: s.name, title: typeof s.title === "string" && s.title ? s.title.slice(0, SCRIPT_LIMITS.maxLabel) : s.name });
+    }
+    out.push({ name: typeof p.name === "string" && p.name ? p.name.slice(0, SCRIPT_LIMITS.maxLabel) : null, steps });
+  }
+  return out.length ? out : undefined;
 }
 
 /** The end of the object literal that starts at `from`, by brace depth, with

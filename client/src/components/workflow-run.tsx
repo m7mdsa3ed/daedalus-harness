@@ -57,7 +57,7 @@ import type { Row, SubagentBatch, SubagentGroup, WorkflowGroup } from "@/lib/tra
 import { formatTokens, sumUsage } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 import { useLayoutOptionsContext } from "@/lib/layout-options"
-import { useStoreSelect, type ToolItem } from "@/lib/store"
+import { useStoreSelect, type SubagentItem, type ToolItem } from "@/lib/store"
 import { reportError } from "@/lib/errors"
 import { useServer } from "@/lib/server-context"
 import { api } from "@/lib/settings"
@@ -839,7 +839,7 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
                     >
                       {running
                         ? [stepNameOf(running), currentActivity(running)].filter(Boolean).join(" — ")
-                        : `${own.length} ${own.length === 1 ? "step" : "steps"}${own.length > 1 ? " in parallel" : ""}`}
+                        : `${own.length} ${own.length === 1 ? "step" : "steps"}${own.filter((st) => st === "running").length > 1 ? " in parallel" : ""}`}
                     </span>
                   </span>
                   {/* The phase's own strip — a segment per step. */}
@@ -1172,7 +1172,7 @@ export function agentOutline(rows: Row[]): PhaseView[] {
     signal) gains `extra`. A settled run has none: whatever it was parked on is
     over. */
 function withExtras(phases: PhaseView[], run: WorkflowRunView | undefined): PhaseView[] {
-  if (!run || isTerminalRun(run.status) || !run.steps.some((step) => isExtraState(step.status))) return phases
+  if (!run) return phases
   return phases.map((phase) => ({
     ...phase,
     steps: phase.steps.map((step) => {
@@ -1180,9 +1180,33 @@ function withExtras(phases: PhaseView[], run: WorkflowRunView | undefined): Phas
       const info = head?.kind === "subagent" ? head.workflow : undefined
       const sessionId = head?.kind === "subagent" ? head.sessionId : null
       const rest = restStepFor(run, sessionId, info?.step ?? step.slug ?? step.name)
-      return rest && isExtraState(rest.status) ? { ...step, extra: rest.status } : step
+      if (!rest) return step
+      if (!isTerminalRun(run.status) && isExtraState(rest.status)) return { ...step, extra: rest.status }
+      return { ...step, group: settledBy(step.group, rest.status, run.status) }
     }),
   }))
+}
+
+/** The journal's word on a step, over the transcript's. The transcript reads a
+    step off its subagent row, and that row can be wrong in both directions: a
+    `running` row whose end was said while this device was away, or a
+    `disconnected` one an old client settled when the launching turn ended. The
+    run's view is folded from the journal, so where it has said a step ended (or
+    is still running), that is what the step is. */
+function settledBy(
+  group: SubagentGroup | null,
+  status: WorkflowRunView["steps"][number]["status"],
+  runStatus: WorkflowRunView["status"]
+): SubagentGroup | null {
+  if (!group || group.head.kind !== "subagent") return group
+  const state: SubagentItem["state"] | null =
+    status === "completed" || status === "failed" || status === "cancelled"
+      ? status
+      : status === "running" && !isTerminalRun(runStatus)
+        ? "running"
+        : null
+  if (state === null || group.head.state === state) return group
+  return { ...group, head: { ...group.head, state }, active: state === "running" }
 }
 
 /** How often a card re-reads its run: briskly while open, lazily while folded
@@ -1269,23 +1293,20 @@ function RunRow({
   }, [view.showToolDetails])
 
   /* The run's own view: what the transcript cannot carry — gates, state,
-     artifacts, logs, budgets, and the steps' journal-only states. Read when
-     the card is open, or when the transcript cannot rule out that the run is
-     still going (a step running, held, or the outline not finished: a run
-     sleeping between steps looks finished from its rows alone). It *adds to*
-     the transcript's step list and never replaces it. */
-  const maybeLive = transcriptActive || transcriptPaused || runSteps.length < declaredTotal
-  /* A run the view once called live stays read until it says otherwise: one
-     parked on its last gate has every step it will ever have in the
-     transcript, so the rows alone cannot say it is still going. */
-  const [knownLive, setKnownLive] = React.useState(false)
+     artifacts, logs, budgets, and the steps' journal-only states. It *adds to*
+     the transcript's step list (and corrects a step's state, `withExtras`) and
+     never replaces it. Always read once when there is a run behind the card: the transcript alone
+     cannot say a run is over (a run between steps, or a step whose row was
+     settled by a turn ending, looks finished), and gating the read on the
+     transcript's own guess drew "Done" on a folded card until opening it
+     enabled the read. A settled run is read once and never again
+     (`useWorkflowRun`: terminal is never stale and never polled). */
   const query = useWorkflowRun(runRef?.sessionId, runRef?.runId, {
-    enabled: runRef !== undefined && (open || maybeLive || knownLive),
+    enabled: runRef !== undefined,
     poll: open ? POLL_OPEN_MS : POLL_FOLDED_MS,
   })
   const rest = query.data
   const restLive = rest !== undefined && !isTerminalRun(rest.status)
-  React.useEffect(() => setKnownLive(restLive), [restLive])
   /* The transcript flipping (a step settling, the hold toggling) is news the
      poll would only hear up to a period later. */
   const { refetch } = query
@@ -1301,7 +1322,9 @@ function RunRow({
   const staged = phases.length > 1
   const all = phases.flatMap((p) => p.steps)
   const stateOf = stateOfStep
-  const active = transcriptActive || restLive
+  /* A settled run's view is the last word: a transcript row still reading
+     running after the run ended is a missed end, not a live step. */
+  const active = rest ? restLive : transcriptActive
   const paused = transcriptPaused || rest?.status === "paused"
   const states = all.map(stateOf)
   const done = states.filter((s) => s === "completed").length
@@ -1322,7 +1345,7 @@ function RunRow({
   const ms = active ? liveMs : settledEnd > startedAt ? settledEnd - startedAt : null
   /* The run's cost is its steps' — a workflow spends nothing of its own. */
   const tokens = view.showTokens ? sumUsage(runSteps.map(stepUsage)) : null
-  const runningStep = all.find((step) => step.group?.active && !step.extra)?.group ?? null
+  const runningStep = all.find((step) => !step.extra && step.group && stateOf(step) === "running")?.group ?? null
   const runningPhase = runningStep
     ? (phases.find((phase) => phase.steps.some((s) => s.group === runningStep))?.name ?? null)
     : null

@@ -77,6 +77,9 @@ export interface ProjectDefaults {
   uiGroups: string[];
   /** The persona a new thread starts under; "" = none. */
   personaId: string;
+  /** Whether a new thread's first message may pick its persona
+      (`persona-classify.ts`); only ever moves a persona nobody picked. */
+  classifyPersona: boolean;
   /** "" = no say: the thread's profile, then the global default, picks. */
   voiceProvider: string;
   /** Profile per agent id a new thread's `ask_agent` starts with. */
@@ -98,6 +101,7 @@ export const emptyDefaults = (): ProjectDefaults => ({
   suggestKinds: [...DEFAULT_SUGGEST_KINDS],
   uiGroups: [...UI_GROUP_IDS],
   personaId: "",
+  classifyPersona: true,
   voiceProvider: "",
   askProfiles: {},
 });
@@ -122,6 +126,7 @@ export const ProjectDefaultsPatchSchema = z.object({
   suggestKinds: z.array(z.string()).optional(),
   uiGroups: z.array(z.string()).optional(),
   personaId: z.string().optional(),
+  classifyPersona: z.boolean().optional(),
   voiceProvider: z.string().optional(),
   askProfiles: z.record(z.string(), z.object({ profileId: z.string(), model: z.string().optional() })).optional(),
 });
@@ -146,6 +151,7 @@ export function projectDefaultsColumns(patch: ProjectDefaultsPatch) {
   if (patch.suggestKinds !== undefined) out.defaultSuggestKinds = normalizeSuggestKinds(patch.suggestKinds);
   if (patch.uiGroups !== undefined) out.defaultUiGroups = normalizeUiGroups(patch.uiGroups);
   if (patch.personaId !== undefined) out.defaultPersonaId = patch.personaId || null;
+  if (patch.classifyPersona !== undefined) out.defaultClassifyPersona = patch.classifyPersona;
   if (patch.voiceProvider !== undefined) out.defaultVoiceProvider = patch.voiceProvider || null;
   if (patch.askProfiles !== undefined) out.defaultAskProfiles = Object.keys(patch.askProfiles).length ? patch.askProfiles : null;
   return out;
@@ -167,6 +173,7 @@ export const projectDefaultsOf = (row: typeof projectsTable.$inferSelect): Proje
   suggestKinds: suggestKindsOf(row.defaultSuggestKinds, row.defaultSuggestFollowups),
   uiGroups: uiGroupsOf(row.defaultUiGroups, row.defaultUiBlocks),
   personaId: row.defaultPersonaId ?? "",
+  classifyPersona: row.defaultClassifyPersona ?? true,
   voiceProvider: row.defaultVoiceProvider ?? "",
   askProfiles: row.defaultAskProfiles ?? {},
 });
@@ -195,6 +202,7 @@ export function withoutDefaults(row: typeof projectsTable.$inferSelect) {
     defaultUiBlocks: _ui,
     defaultUiGroups: _ug,
     defaultPersonaId: _persona,
+    defaultClassifyPersona: _classify,
     defaultVoiceProvider: _vp,
     spaceId: _space,
     ...rest

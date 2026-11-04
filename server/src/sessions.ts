@@ -17,6 +17,7 @@ import {
   DEFAULT_SUGGEST_KINDS,
   normalizeSuggestKinds,
   normalizeUiGroups,
+  personaSwitchBlock,
   resolvePersonaSpawn,
   sameSuggestKinds,
   sameUiGroups,
@@ -230,8 +231,16 @@ export interface Session {
       system-prompt text, so a change costs a respawn. */
   uiGroups: string[];
   /** The persona the thread runs under (`personas`), or null for none. Spawn
-      text above the rules, so a change costs a respawn like `uiGroups`. */
+      text above the rules on a thread's first spawn; once the thread is
+      running, a change rides the next prompt instead (`systemPersonaId`). */
   personaId: string | null;
+  /** What the system prompt carries once the persona has moved on a started
+      thread — "" for none, null while it follows `personaId`. Never moved
+      again, so a respawn sends the prefix the provider has cached. */
+  systemPersonaId: string | null;
+  /** The persona moved and the agent has not been told: `startTurn` appends
+      `personaSwitchBlock` to the next prompt, then clears it. */
+  personaPending: boolean;
   title: string;
   /** The current title came from the first-prompt fallback, so an ACP
       `session_info_update` may replace it with the agent's better title. */
@@ -885,6 +894,8 @@ export class SessionManager {
         // Null on a row from before the set existed: the legacy switch decides.
         uiGroups: uiGroupsOf(row.uiGroups, row.uiBlocks),
         personaId: row.personaId ?? null,
+        systemPersonaId: row.systemPersonaId ?? null,
+        personaPending: row.personaPending ?? false,
         askProfiles: row.askProfiles ?? {},
         titleFromPrompt: null,
         profile: null,
@@ -2025,6 +2036,8 @@ export class SessionManager {
       suggestKinds: opts.suggestKinds ? normalizeSuggestKinds(opts.suggestKinds) : [...DEFAULT_SUGGEST_KINDS],
       uiGroups: opts.uiGroups ? normalizeUiGroups(opts.uiGroups) : [...UI_GROUP_IDS],
       personaId: opts.personaId || null,
+      systemPersonaId: null,
+      personaPending: false,
       title: opts.title ?? "New thread",
       titleFromPrompt: null,
       acpSessionProvisional: false,
@@ -2181,6 +2194,7 @@ export class SessionManager {
     /* Nobody in front of a workflow step or a scheduled run: `autonomy` is null
        exactly for the thread with a human at it (see `Session.autonomy`). */
     const unattended = !!session.parentSessionId || session.autonomy !== null;
+    const placedPersona = systemPersona(session);
     const persona = await resolvePersonaSpawn(
       session.id,
       agent,
@@ -2200,8 +2214,9 @@ export class SessionManager {
       },
       rules,
       /* Read now, like the rules: an edit to the persona reaches the next spawn,
-         and a deleted one reads as none. */
-      session.personaId ? await personaLibrary.get(session.personaId) : null,
+         and a deleted one reads as none. The *system prompt's* persona, which
+         stops following the pick once it moves on a started thread. */
+      placedPersona ? await personaLibrary.get(placedPersona) : null,
     );
     const adoptedBy = this.adopting.get(session.id);
     this.adopting.delete(session.id);
@@ -2549,6 +2564,34 @@ export class SessionManager {
        is trusted to have cleared it, the staged path used to lose the clearing,
        and every later revive re-passes whatever the row ended up holding. */
     next = { ...next, model: modelFor(session, next.profile, next.model) };
+    const bridge = session.bridge;
+    const movesAgent = next.agentId !== session.agentId;
+    /* **A persona change on a started thread is a message, not a spawn.** The
+       persona heads the system prompt, so respawning on a new one sends a new
+       prefix and the whole history misses the provider's cache once. Instead
+       the system prompt stays on the persona it already carries
+       (`systemPersonaId`) and the next prompt says the change. Nothing reaches
+       the agent before that prompt, so it is taken at once rather than staged.
+       An agent move is a different runtime with its own store: there the
+       persona goes back to being spawn text. */
+    if (movesAgent) {
+      session.systemPersonaId = null;
+      session.personaPending = false;
+    } else if (next.personaId !== undefined) {
+      const want = next.personaId || null;
+      next = { ...next, personaId: undefined };
+      if (want !== session.personaId) {
+        const was = await this.configLabels(session);
+        session.systemPersonaId ??= session.personaId ?? "";
+        session.personaId = want;
+        session.personaPending = true;
+        this.dropStagedPersona(session);
+        await this.persist(session);
+        this.emitSpawnConfig(session);
+        this.noteConfig(session, was, await this.configLabels(session));
+      }
+      if (this.changesNothing(session, next)) return { live: true };
+    }
     /* Before anything moves — including `applyConfigLive`'s own writes — so the rows can be the difference
        between two readings rather than a guess from the request. */
     const before = await this.configLabels(session);
@@ -2560,8 +2603,6 @@ export class SessionManager {
        spawn, or the reader's own approval (`approveStaged`). `defer: false` is
        that approval, a **held** turn is waiting for exactly this change, and an
        **agent** change is a different runtime — none of them can wait. */
-    const bridge = session.bridge;
-    const movesAgent = next.agentId !== session.agentId;
     if (opts.defer !== false && !bridge?.paused && !movesAgent) {
       return { live: false, staged: this.stageConfig(session, next) };
     }
@@ -2676,16 +2717,7 @@ export class SessionManager {
        default in here, and the answer rather than the request is what every
        menu should draw. Before `ready`, so a peer has the row before it is
        told to reattach. */
-    this.emit(session, {
-      ev: "spawn_config",
-      profileId: session.profileId,
-      model: session.model,
-      effort: session.effort,
-      suggestKinds: session.suggestKinds,
-      uiGroups: session.uiGroups,
-      personaId: session.personaId,
-      helperModels: session.helperModels,
-    });
+    this.emitSpawnConfig(session);
     /* The load came back without the conversation, so the journal is no longer
        a record of what this process holds — and the peer that has not been
        reattaching has no other way to be told. `attached` carries `historyLost`;
@@ -2768,6 +2800,47 @@ export class SessionManager {
     if (applied.effort !== undefined) delete rest.effort;
     if (Object.keys(rest).length === 0) return this.clearStaged(session);
     this.setStaged(session, rest);
+  }
+
+  /** What the thread is on, absolute, to every peer: a respawn's answer, a
+      live move's, and a persona change's. */
+  private emitSpawnConfig(session: Session): void {
+    this.emit(session, {
+      ev: "spawn_config",
+      profileId: session.profileId,
+      model: session.model,
+      effort: session.effort,
+      suggestKinds: session.suggestKinds,
+      uiGroups: session.uiGroups,
+      personaId: session.personaId,
+      helperModels: session.helperModels,
+    });
+  }
+
+  /** A persona staged before this one landed is overtaken by it. */
+  private dropStagedPersona(session: Session): void {
+    const staged = session.stagedConfig;
+    if (!staged || staged.personaId === undefined) return;
+    const { personaId: _taken, ...rest } = staged;
+    if (Object.keys(rest).length === 0) return this.clearStaged(session);
+    this.setStaged(session, rest);
+  }
+
+  /** Whether a config request names nothing that differs from the row — what
+      is left of a persona pick, since a menu sends profile, model and effort
+      on every call. Staging that would flush into a respawn for nothing. */
+  private changesNothing(
+    session: Session,
+    next: { profile: Profile; model?: string; effort?: string; suggestKinds?: string[]; uiGroups?: string[]; helperModels?: unknown },
+  ): boolean {
+    return (
+      next.profile.id === session.profileId &&
+      (next.model === undefined || next.model === session.model) &&
+      (next.effort === undefined || next.effort === session.effort) &&
+      (next.suggestKinds === undefined || sameSuggestKinds(next.suggestKinds, session.suggestKinds)) &&
+      (next.uiGroups === undefined || sameUiGroups(next.uiGroups, session.uiGroups)) &&
+      next.helperModels === undefined
+    );
   }
 
   /** What a client asks for when it presses "Apply now" on a staged change, and
@@ -3428,16 +3501,7 @@ export class SessionManager {
          `restartWith` sends the same event for the same reason; the two are
          mutually exclusive, since a patch it folded is one that path had
          already dropped. */
-      this.emit(session, {
-        ev: "spawn_config",
-        profileId: session.profileId,
-        model: session.model,
-        effort: session.effort,
-        suggestKinds: session.suggestKinds,
-        uiGroups: session.uiGroups,
-        personaId: session.personaId,
-        helperModels: session.helperModels,
-      });
+      this.emitSpawnConfig(session);
     }
     return session;
   }
@@ -3548,6 +3612,9 @@ export class SessionManager {
         clear: true,
       });
       this.turnChanges.pruneFrom(session.id, turnId);
+      /* The cut may have taken the message that carried a persona change with
+         it: say the current one again. Harmless when it did not. */
+      if (session.systemPersonaId !== null) session.personaPending = true;
     }
 
     return {
@@ -3651,6 +3718,11 @@ export class SessionManager {
        proves the fork loadable at all (see `rewind`). */
     child.acpSessionId = forkId;
     child.acpSessionProvisional = true;
+    /* The branch loads the parent's conversation, so it keeps the parent's
+       system prompt — and is told the persona again, since the fork point may
+       sit before the message that carried it. */
+    child.systemPersonaId = session.systemPersonaId;
+    child.personaPending = session.systemPersonaId !== null;
     /* A branch of a worktree thread is in the same worktree: its conversation
        names that cwd, and so do the files the fork point describes. */
     child.worktree = session.worktree;
@@ -3826,7 +3898,19 @@ export class SessionManager {
     const turnId = bridge.promptActive && bridge.currentTurnId ? bridge.currentTurnId : randomUUID();
     /* `deferred` = the words went out but their bubble is held for the step
        boundary, so the sender must not draw one of its own. */
-    const { deferred } = await bridge.prompt(text, peer, turnId, opts);
+    /* A persona change waiting to be said rides this prompt, whichever door
+       it came through — a send, a drained queue row, a steer. */
+    const suffix = session.personaPending
+      ? personaSwitchBlock(session.personaId ? await personaLibrary.get(session.personaId) : null)
+      : undefined;
+    const { deferred } = await bridge.prompt(text, peer, turnId, { ...opts, suffix });
+    if (suffix) {
+      // ponytail: cleared on send, not on the agent's answer — a prompt the agent rejects outright loses the note.
+      session.personaPending = false;
+      void this.persist(session).catch((error: unknown) =>
+        console.error(`[sessions] could not clear ${session.id.slice(0, 8)}'s persona note`, error),
+      );
+    }
     if (text && session.title === "New thread") {
       session.title = text.slice(0, TITLE_SNIFF_MAX);
       session.titleFromPrompt = session.title;
@@ -4085,7 +4169,7 @@ export class SessionManager {
          Claude Code workflow, which answers its prompt at "launched" and runs
          on. A list with no socket to the thread has nothing else to go on, and
          without it the thread reads done while its workflow works. */
-      backgroundActive: s.bridge?.background ?? false,
+      backgroundActive: (s.bridge?.background ?? false) || (this.workflowRunner?.hasLive?.(s.id) ?? false),
       context: s.context ? { used: s.context.used, size: s.context.size } : null,
       cursor: s.eventCount,
       parentSessionId: s.parentSessionId,
@@ -4326,6 +4410,7 @@ export class SessionManager {
     childPendingEvents: (id) => this.childPendingEvents(id),
     answerChild: (parentId, requestId, response) => this.answerChild(parentId, requestId, response),
     whenAdopted: (id) => this.whenAdopted(id),
+    runsLive: (id) => this.workflowRunner?.hasLive?.(id) ?? false,
     journal: this.log,
     prompt: async (id, text, peer, opts) => await this.prompt(id, text, peer, opts),
     queueAdd: async (id, text, attachmentIds) => await this.queueAdd(id, text, attachmentIds),
@@ -4454,6 +4539,12 @@ export function threadCwd(session: Pick<Session, "worktree">, project: Pick<Proj
   return session.worktree ? join(project.cwd, session.worktree) : project.cwd;
 }
 
+/** The persona the system prompt carries: frozen once it moved on a started
+    thread, else the thread's own pick. */
+function systemPersona(session: Session): string | null {
+  return session.systemPersonaId === null ? session.personaId : session.systemPersonaId || null;
+}
+
 function rowValues(s: Session) {
   return {
     id: s.id,
@@ -4468,6 +4559,8 @@ function rowValues(s: Session) {
     suggestKinds: s.suggestKinds,
     uiGroups: normalizeUiGroups(s.uiGroups),
     personaId: s.personaId,
+    systemPersonaId: s.systemPersonaId,
+    personaPending: s.personaPending,
     title: s.title,
     worktree: s.worktree,
     acpSessionId: s.acpSessionId ?? null,

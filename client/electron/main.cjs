@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Notification, shell, nativeTheme, ipcMain, clipboard, globalShortcut } = require("electron")
+const { app, BrowserWindow, Menu, Notification, shell, nativeTheme, ipcMain, clipboard, globalShortcut, desktopCapturer } = require("electron")
 const path = require("node:path")
 const fs = require("node:fs")
 const http = require("node:http")
@@ -690,8 +690,23 @@ async function createWindow() {
     win = null
   })
 
-  // Mic access for native SpeechRecognition (voice input) + notifications.
-  const ALLOWED = ["media", "audioCapture", "notifications", "speaker-selection"]
+  // Mic access for native SpeechRecognition (voice input), screen recording + notifications.
+  const ALLOWED = ["media", "audioCapture", "display-capture", "notifications", "speaker-selection"]
+  /* The composer's screen recording: Electron has no picker of its own, so
+     getDisplayMedia fails until this answers. macOS 15+ shows the system
+     picker; elsewhere the primary screen is recorded, with system audio where
+     Chromium can loop it back (Windows). */
+  win.webContents.session.setDisplayMediaRequestHandler(
+    (_request, callback) => {
+      desktopCapturer
+        .getSources({ types: ["screen"] })
+        .then((sources) =>
+          callback(sources[0] ? { video: sources[0], ...(process.platform === "win32" && { audio: "loopback" }) } : {})
+        )
+        .catch(() => callback({}))
+    },
+    { useSystemPicker: true }
+  )
   win.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(ALLOWED.includes(permission))
   })

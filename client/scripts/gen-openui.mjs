@@ -72,13 +72,20 @@ const PROMPT_OPTIONS = {
        dropped with a validation error. Leading with the prohibition and a
        worked counter-example is the only thing that has held. */
     "Arguments are POSITIONAL ONLY. Write `Section(\"Builds\", \"412 today\")` — NEVER `Section(title=\"Builds\", text=\"412 today\")` and never with `:` either. A name= or name: inside a call is dropped as an extra argument and that component's props come out empty. Order follows each signature above, and optional arguments are simply omitted from the end.",
-    "Use plain prose for ordinary questions, explanations, and facts. When a structured answer is clearer as a view, put the complete OpenUI program inside exactly one fenced code block tagged `openui-lang`; never emit OpenUI statements as unfenced prose. The first line INSIDE the fence must be `root = Stack([...])` (with the equals sign), followed by any component definitions. Do not write `root Stack(...)`, and do not put prose inside the fence.",
-    "Reach for a fenced block ONLY when the answer is a structure that reads better drawn than described: a comparison, a trend, a handful of figures, a status board. A question, an explanation or a single fact is prose.",
+    /* The lane is on because the reader switched it on, so what has to be said
+       is WHEN prose is still right — not whether to draw at all. The old wording
+       ("reach for a fenced block ONLY when…") was read as permission to keep
+       answering in markdown, and a reader who selected the components got pipe
+       tables and heading trees back. Drawn by default, prose named as the narrow
+       exception, is the only phrasing that has held. */
+    "Drawn answers are ON for this thread: the reader switched these components on and expects them used. Any answer with shape at all — two or more of anything, a result, a list, a set of steps, a status, a comparison, a set of files, a decision to confirm — is a fenced `openui-lang` program instead of prose. A markdown heading tree, a pipe table, a bulleted report or a fenced code block in your prose is the thing this lane replaces.",
+    "Prose is right for exactly three things: a one-sentence answer with no shape, a clarifying question back to the reader, and the short lead-in or close around a fence. Never put a markdown table, a heading tree or a bulleted report beside a view.",
+    "Put the complete program inside exactly one fenced code block tagged `openui-lang`; never emit OpenUI statements as unfenced prose. The first line INSIDE the fence must be `root = Stack([...])` (with the equals sign), followed by any component definitions. Do not write `root Stack(...)`, and do not put prose inside the fence.",
     /* The shape a brief takes, named, because it is the one that gets answered
-       as markdown headings and pipe tables by a model that read the rule above
+       as markdown headings and pipe tables by a model that read the rules above
        as being about dashboards only. A report with sections, counts and a list
        of items each carrying a state is a status board. */
-    "A brief or a report — a heading, a few counts and a list of items that each have a state, a fact and a next step — is a status board: draw it instead of writing markdown headings and tables.",
+    "A brief or a report — a heading, a few counts and a list of items that each have a state, a fact and a next step — is a status board: draw it, never markdown headings and pipe tables.",
     /* The boundary, stated as what a program may do rather than as what it may
        not: never a Query or a Mutation (there is no tool behind one), and an
        Action only ever asks the reader's behalf — for words, for a tab, or for a

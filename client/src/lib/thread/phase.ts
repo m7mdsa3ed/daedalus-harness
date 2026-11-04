@@ -407,7 +407,7 @@ export function composerLock(
       return {
         typable: true,
         submittable: true,
-        note: phase.because === "config" ? "Applying your change…" : "Waking the agent back up…",
+        note: phase.because === "config" ? "Applying your change…" : "Waking the agent…",
       }
     case "loading":
     case "replaying":

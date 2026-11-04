@@ -370,9 +370,30 @@ export async function drive(opts: DriveOptions): Promise<DriveOutcome> {
     return at;
   };
 
+  /* A compiled definition knows its whole outline before anything runs
+     (`meta.plan`), so every spawn states it: a pipeline of nine steps drew as
+     "1/2" with one phase-less column, growing a step at a time, because the
+     outline was only what had been called so far. A script's outline is still
+     what it has called, which is all it can know. */
+  const declared = spec.meta.plan;
   const placementOf = (name: string): Placement => {
     const index = registered.findIndex((s) => s.name === name);
     const mine = registered[index];
+    if (declared) {
+      const all = declared.flatMap((phase) => phase.steps);
+      const at = all.findIndex((s) => s.name === name);
+      const phaseAt = declared.findIndex((phase) => phase.steps.some((s) => s.name === name));
+      const titles: Record<string, string> = Object.fromEntries(all.map((s) => [s.name, s.title]));
+      for (const s of registered) titles[s.name] ??= s.title;
+      return {
+        index: at >= 0 ? at : index,
+        total: Math.max(all.length, registered.length),
+        phase: phaseAt >= 0 && declared[phaseAt]!.name ? { index: phaseAt, name: declared[phaseAt]!.name! } : null,
+        plan: declared.map((phase) => ({ name: phase.name, steps: phase.steps.map((s) => s.name) })),
+        title: titles[name] ?? mine?.title ?? name,
+        titles,
+      };
+    }
     const plan: Placement["plan"] = phaseNames.length
       ? phaseNames.map((title) => ({ name: title, steps: registered.filter((s) => s.phase === title).map((s) => s.name) }))
       : [{ name: null, steps: registered.map((s) => s.name) }];

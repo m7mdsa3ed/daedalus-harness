@@ -10,12 +10,12 @@
 export type UiGroup = { id: string; label: string; caption: string; components: string[] }
 
 export const UI_GROUPS: UiGroup[] = [
-  { id: "layout", label: "Layout", caption: "Containers and structure. Required: turning it off turns drawn answers off.", components: ["Stack", "Card", "Section", "Divider", "Details", "Tabs", "Accordion"] },
+  { id: "layout", label: "Layout", caption: "Containers and structure. Required: turning it off turns drawn answers off.", components: ["Stack", "Card", "Section", "Divider", "Details", "Tabs", "Accordion", "Grid", "Row", "Panel", "Heading", "Text", "Icon", "Spacer"] },
   {
     id: "text",
     label: "Text",
     caption: "Markdown, verdicts, tables, verdict grids, lists, links, triage rows, callouts, comparisons and quotes for prose-shaped answers.",
-    components: ["Markdown", "Verdict", "List", "Table", "Matrix", "Callout", "KeyValue", "Badges", "EmptyState", "Compare", "People", "Quote", "Link", "Links", "Rows"],
+    components: ["Markdown", "Verdict", "List", "Table", "Matrix", "Callout", "KeyValue", "Badges", "EmptyState", "Compare", "People", "Quote", "Link", "Links", "Rows", "FeatureGrid", "Glossary", "PricingTiers", "Testimonial", "Faq", "AvatarGroup"],
   },
   {
     id: "interactive",
@@ -23,19 +23,19 @@ export const UI_GROUPS: UiGroup[] = [
     caption: "Buttons and form fields. A pick fills the reader's composer; nothing runs on its own.",
     components: ["Button", "Form", "FormControl", "Input", "Textarea", "Select", "SelectItem", "Checkbox", "Slider"],
   },
-  { id: "process", label: "Process", caption: "Steps, timelines, plans and check results: things done in order.", components: ["Timeline", "Plan", "Steps", "Checks"] },
+  { id: "process", label: "Process", caption: "Steps, timelines, plans and check results: things done in order.", components: ["Timeline", "Plan", "Steps", "Checks", "Stepper", "Kanban", "Agenda", "Calendar"] },
   {
     id: "dev",
     label: "Developer",
     caption: "Code, diffs, changed files, review findings, shortcuts, file trees and terminal output.",
-    components: ["Code", "Diff", "Keys", "FileTree", "ChangeSet", "Findings", "Terminal"],
+    components: ["Code", "Diff", "Keys", "FileTree", "Findings", "Terminal", "Endpoints"],
   },
   { id: "diagrams", label: "Diagrams", caption: "Flowcharts, sequence diagrams and 2x2 matrices.", components: ["Flowchart", "Sequence", "Quadrant"] },
   {
     id: "numbers",
     label: "Numbers",
     caption: "Metrics, charts, ranked bars, share bars, heatmaps, funnels and meters.",
-    components: ["StatRow", "Stat", "Sparkline", "Chart", "Bars", "Breakdown", "Heatmap", "Funnel", "Waterfall", "Progress"],
+    components: ["StatRow", "Stat", "Sparkline", "Chart", "Bars", "Breakdown", "Heatmap", "Funnel", "Waterfall", "Progress", "Gauge"],
   },
   { id: "media", label: "Media", caption: "Images and galleries. Remote images load only on a click.", components: ["Image", "Gallery"] },
   { id: "places", label: "Places", caption: "Google Maps and place cards. Each map is a billed load.", components: ["Map", "CardGrid"] },

@@ -72,7 +72,7 @@ const VIEW_MARKDOWN: Components = {
   em: ({ children }) => <em>{children}</em>,
   del: ({ children }) => <del className="text-muted-foreground">{children}</del>,
   code: ({ children }) => (
-    <code className="rounded-md bg-muted px-1 py-0.5 font-mono text-[0.9em] text-foreground">{children}</code>
+    <code className="rounded-[0.3rem] border border-border/60 bg-muted/60 px-[0.3em] py-px font-mono text-[0.85em] text-foreground box-decoration-clone">{children}</code>
   ),
   a: ({ href, children }) => {
     const url = linkTarget(href)

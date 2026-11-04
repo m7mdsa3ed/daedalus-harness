@@ -327,6 +327,8 @@ const ProjectDefaultsRow = z.object({
   uiGroups: z.array(str).nullish(),
   /** Absent in a bundle from before personas came back: none. */
   personaId: str.default(""),
+  /** Absent in a bundle from before it: on, the column's own default. */
+  classifyPersona: z.boolean().default(true),
   /** A provider this install lacks is harmless: voiceSetup falls through. */
   voiceProvider: str.default(""),
   /** Absent in a bundle from before it: ask each time, as every thread did. */
@@ -462,6 +464,10 @@ const SessionRow = z.object({
   uiGroups: z.array(str).nullish(),
   /* Absent in a bundle from before personas came back: none. */
   personaId: optStr,
+  /* The system prompt's frozen persona and an unsaid change (`Session.systemPersonaId`).
+     Absent in an older bundle: the system prompt follows `personaId`. */
+  systemPersonaId: optStr,
+  personaPending: z.boolean().default(false),
   /* The thread's role → model assignment (`docs/model-roles.md`). Absent in a
      bundle written before the column existed, which reads as no helpers. */
   helperModels: z.array(z.object({ role: str, model: str })).default([]),
@@ -1424,6 +1430,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
           modeId: columns.modeId ?? null,
           uiGroups: columns.uiGroups ?? (columns.uiBlocks === false ? [] : null),
           personaId: columns.personaId ?? null,
+          systemPersonaId: columns.systemPersonaId ?? null,
           acpSessionId: columns.acpSessionId ?? null,
           deletedAt: columns.deletedAt ?? null,
           pinnedAt: columns.pinnedAt ?? null,

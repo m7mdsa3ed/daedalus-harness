@@ -145,7 +145,29 @@ test("one `agent` server carries every way of handing work on", async () => {
     const { tools } = await client.listTools();
     const by = new Map(tools.map((t) => [t.name, t]));
     const expected: Record<string, string[]> = {
-      agent: ["prompt", "description", "agent", "profile", "model", "effort", "projectId", "timeoutSec", "waitSec", "role", "steps", "script", "name", "args"],
+      agent: [
+        "prompt",
+        "description",
+        "agent",
+        "profile",
+        "model",
+        "effort",
+        "projectId",
+        "timeoutSec",
+        "waitSec",
+        "role",
+        "steps",
+        "phases",
+        "script",
+        "name",
+        "args",
+        "budgets",
+        "maxParallel",
+        "priority",
+        "concurrencyKey",
+        "onRestart",
+        "totalTimeoutSec",
+      ],
       agent_status: ["id", "waitSec"],
       agent_message: ["id", "prompt", "waitSec"],
       agent_control: ["id", "action", "name", "value"],
@@ -178,10 +200,13 @@ test("the workflow shapes are not advertised where the runtime has its own engin
   const { tools } = await stdioTools({ AGENTS_WORKFLOWS: "" });
   const agent = tools.find((t) => t.name === "agent")!;
   const props = Object.keys((agent.inputSchema as { properties?: object }).properties ?? {});
-  for (const field of ["steps", "script", "name", "args"]) assert.ok(!props.includes(field), `${field} is not offered`);
+  for (const field of ["steps", "phases", "script", "name", "args", "budgets", "maxParallel", "priority", "concurrencyKey", "onRestart", "totalTimeoutSec"]) {
+    assert.ok(!props.includes(field), `${field} is not offered`);
+  }
   assert.deepEqual(tools.map((t) => t.name).filter((n) => n.endsWith("_workflow")), []);
   const list = tools.find((t) => t.name === "agent_list")!;
-  assert.deepEqual(Object.keys((list.inputSchema as { properties?: object }).properties ?? {}), []);
+  /* `runs` stays: subagents and asks are runs on every runtime, and their ids are what it finds. */
+  assert.deepEqual(Object.keys((list.inputSchema as { properties?: object }).properties ?? {}), ["runs"]);
   const control = tools.find((t) => t.name === "agent_control")!;
   const controlProps = Object.keys((control.inputSchema as { properties?: object }).properties ?? {});
   assert.ok(!controlProps.includes("name") && !controlProps.includes("value"));
@@ -314,6 +339,121 @@ test("exactly one shape is enforced in words the model can act on", async () => 
       assert.match(text(r), /give exactly one of|goes with/);
     }
     assert.equal(hits.length, before, "a bad shape never starts anything");
+  });
+});
+
+test("a one-step workflow keeps its whole view; only an ask or a subagent is answered as its step", async () => {
+  /* The loopback is faked per call, so the run's `kind` is what we hand back. */
+  const shaped = (kind: string) => ({
+    id: "r",
+    status: "completed",
+    steps: [{ sessionId: "child", output: "the answer", error: null, status: "completed" }],
+    result: { summary: "whole" },
+    gates: [],
+    usage: { tokens: 10, costUsd: 0, agents: 1 },
+    budgets: { tokens: 100 },
+    artifacts: [{ name: "out", relPath: "out.txt", bytes: 3 }],
+    kind,
+  });
+  for (const [kind, whole] of [["workflow", true], ["ask", false], ["subagent", false]] as const) {
+    const { content } = await answerOf(shaped(kind));
+    const got = JSON.parse(content) as Record<string, unknown>;
+    assert.equal("threadId" in got, !whole, `${kind}: flattened=${!whole}`);
+    if (whole) {
+      assert.deepEqual(got.result, { summary: "whole" }, `${kind}: the result survives`);
+      assert.deepEqual(got.budgets, { tokens: 100 });
+      assert.equal((got.artifacts as unknown[]).length, 1);
+      assert.deepEqual(got.usage, { tokens: 10, costUsd: 0, agents: 1 });
+    } else {
+      assert.equal(got.output, "the answer");
+      assert.equal(got.threadId, "child");
+    }
+  }
+});
+
+/** Call the server's `agent_status` against a loopback answering a fixed run, and
+    hand back the text the model would read. */
+async function answerOf(run: unknown): Promise<{ content: string }> {
+  const http = createServer((req: IncomingMessage, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(run));
+    });
+  });
+  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+  const port = (http.address() as AddressInfo).port;
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["--import", "tsx", fileURLToPath(new URL("../src/agents-mcp.ts", import.meta.url))],
+    env: { ...(process.env as Record<string, string>), AGENTS_URL: `http://127.0.0.1:${port}/wf/k/s`, AGENTS_WORKFLOWS: "1" },
+    stderr: "ignore",
+  });
+  const client = new Client({ name: "test", version: "1" });
+  await client.connect(transport);
+  try {
+    return { content: text(await client.callTool({ name: "agent_status", arguments: { id: "r" } })) };
+  } finally {
+    await client.close().catch(() => {});
+    http.close();
+  }
+}
+
+test("a graph can say everything a definition can: the plan, its inputs, and the limits", async () => {
+  await withServer(async (client, hits) => {
+    await client.callTool({
+      name: "agent",
+      arguments: {
+        phases: [{ name: "read", steps: [{ name: "a", prompt: "p" }] }],
+        args: { topic: "x" },
+        budgets: { tokens: 5000, wallSec: 600 },
+        maxParallel: 2,
+        priority: 3,
+        concurrencyKey: "repo",
+        onRestart: "rerun",
+        totalTimeoutSec: 1800,
+        model: "m",
+      },
+    });
+    const body = hits.at(-1)!.body as { definition: Record<string, unknown>; inputs?: unknown };
+    assert.equal(hits.at(-1)!.url, "/wf/k/s/runs?wait=0");
+    /* `args` is a graph's `inputs` — a parameterised plan used to be refused outright. */
+    assert.deepEqual(body.inputs, { topic: "x" });
+    assert.deepEqual(body.definition.phases, [{ name: "read", steps: [{ name: "a", prompt: "p", model: "m" }] }]);
+    assert.deepEqual(body.definition.budgets, { tokens: 5000, wallSec: 600 });
+    assert.equal(body.definition.maxParallel, 2);
+    assert.equal(body.definition.priority, 3);
+    assert.equal(body.definition.concurrencyKey, "repo");
+    assert.equal(body.definition.onRestart, "rerun");
+    assert.equal(body.definition.totalTimeoutSec, 1800);
+    /* A script and a saved workflow take the same flow fields. */
+    await client.callTool({ name: "agent", arguments: { script: "s", budgets: { agents: 4 }, priority: -1 } });
+    assert.deepEqual((hits.at(-1)!.body as Record<string, unknown>).budgets, { agents: 4 });
+    assert.equal((hits.at(-1)!.body as Record<string, unknown>).priority, -1);
+    /* Nothing given means nothing sent — an `undefined` would erase a definition's own. */
+    await client.callTool({ name: "agent", arguments: { steps: [{ name: "a", prompt: "p" }] } });
+    const bare = (hits.at(-1)!.body as { definition: Record<string, unknown> }).definition;
+    for (const key of ["budgets", "priority", "concurrencyKey", "onRestart", "maxParallel", "totalTimeoutSec"]) {
+      assert.equal(key in bare, false, `${key} is absent when it was not given`);
+    }
+  });
+});
+
+test("steps and phases are one shape, and a one-step run refuses a workflow's limits", async () => {
+  await withServer(async (client, hits) => {
+    const before = hits.length;
+    const both = await client.callTool({
+      name: "agent",
+      arguments: { steps: [{ name: "a", prompt: "p" }], phases: [{ name: "x", steps: [{ name: "b", prompt: "q" }] }] },
+    });
+    assert.equal(both.isError, true);
+    assert.match(text(both), /OR `phases`, not both/);
+    /* A budget on an errand is refused by name rather than silently dropped. */
+    const flow = await client.callTool({ name: "agent", arguments: { prompt: "p", budgets: { tokens: 10 } } });
+    assert.equal(flow.isError, true);
+    assert.match(text(flow), /budgets.*belong.*workflow/);
+    assert.match(text(flow), /timeoutSec/);
+    assert.equal(hits.length, before, "a refused shape starts nothing");
   });
 });
 

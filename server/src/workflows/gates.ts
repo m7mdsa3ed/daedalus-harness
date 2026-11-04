@@ -44,6 +44,16 @@
  *     event, applied to the cache in order and not appended again. Seeding the cache with the
  *     FINAL journaled state would let a replaying script read the future (`n = get("n")+1`
  *     would diverge), so only state_set events no gate wrote (key not `state:<n>`) are seeded.
+ *   - A CONTINUED run (`resumeFromRunId`) is a new run with an empty journal, so the rule above
+ *     alone would ask every approval again, sleep every timer again and run every `sh` again —
+ *     a `sh("git push")` twice. The prior run's journal is the second source: a call it
+ *     RESOLVED answers from it, exactly as an agent step does in `drive`, and its events are
+ *     copied into this run's journal so a later restart needs nothing but its own. Gate keys are
+ *     ordinals, not hashes of the call, so a prior answer is served only when the call is the
+ *     same one (command and cwd, question and options, timer reason); an edited script that
+ *     moved them gets fresh calls. Unresolved prior calls are not carried (a continue is the
+ *     person picking the run back up), nor are artifacts (the file belongs in this run's
+ *     directory) or state (replayed agent answers rebuild it).
  */
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -110,6 +120,8 @@ interface Buffered {
   key: string;
   value: unknown;
 }
+
+const sameList = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((item, i) => item === b[i]);
 
 const clone = <T>(value: T): T => (value === undefined ? value : (JSON.parse(JSON.stringify(value)) as T));
 
@@ -194,8 +206,12 @@ export class Gates implements GatesApi {
   private readonly state: Record<string, unknown> = {};
   private readonly stateReplay = new Map<number, P<"state_set">>();
 
-  constructor(host: GateHost) {
+  /** The journal of the run this one continues (`resumeFromRunId`); empty otherwise. */
+  private readonly prior: readonly JournalEvent[];
+
+  constructor(host: GateHost, prior: readonly JournalEvent[] = []) {
     this.host = host;
+    this.prior = prior;
     const seeded = [...host.events()].sort((a, b) => a.seq - b.seq);
     // Signals: which buffered arrivals were never taken (one event under the key = unread).
     const arrivals = new Map<string, { name: string; value: unknown; count: number; k: number }>();
@@ -276,6 +292,18 @@ export class Gates implements GatesApi {
     return out.sort((a, b) => a.seq - b.seq);
   }
 
+  /**
+   * The prior run's events under `key` when it resolved that call (`resolved` is among them)
+   * and `same` says it was this call, copied into this run's journal in their order; null
+   * otherwise. Called only once this run's own journal has nothing under `key`.
+   */
+  private async fromPrior(key: string, resolved: JournalPayload["kind"], same: (events: JournalEvent[]) => boolean): Promise<JournalEvent[] | null> {
+    const events = this.prior.filter((event) => event.key === key).sort((a, b) => a.seq - b.seq);
+    if (!events.some((event) => event.payload.kind === resolved) || !same(events)) return null;
+    await Promise.all(events.map((event) => this.enqueue(key, event.payload)));
+    return events;
+  }
+
   /** Reject with "the run was cancelled" if the run is aborted before `p` settles. */
   private cancellable<T>(p: Promise<T>): Promise<T> {
     const signal = this.host.signal;
@@ -306,6 +334,14 @@ export class Gates implements GatesApi {
     const prior = this.eventsFor(key);
     const answered = prior.find((event) => event.payload.kind === "approval_answered")?.payload as P<"approval_answered"> | undefined;
     if (answered) return answered.choice;
+    if (prior.length === 0) {
+      const options = opts.options.length > 0 ? opts.options : ["approve", "reject"];
+      const carried = await this.fromPrior(key, "approval_answered", (events) =>
+        events.some((event) => event.payload.kind === "approval_asked" && event.payload.text === text && sameList(event.payload.options, options)),
+      );
+      const choice = carried?.find((event) => event.payload.kind === "approval_answered")?.payload as P<"approval_answered"> | undefined;
+      if (choice) return choice.choice;
+    }
     const asked = prior.find((event) => event.payload.kind === "approval_asked")?.payload as P<"approval_asked"> | undefined;
 
     const question = asked ?? {
@@ -441,6 +477,12 @@ export class Gates implements GatesApi {
   private async runTimer(key: string, fireAtNow: () => number, reason: string): Promise<void> {
     const prior = this.eventsFor(key);
     if (prior.some((event) => event.payload.kind === "timer_fired")) return;
+    if (prior.length === 0) {
+      const carried = await this.fromPrior(key, "timer_fired", (events) =>
+        events.some((event) => event.payload.kind === "timer_set" && event.payload.reason === reason),
+      );
+      if (carried) return;
+    }
     const set = prior.find((event) => event.payload.kind === "timer_set")?.payload as P<"timer_set"> | undefined;
     let fireAt: number;
     if (set) {
@@ -484,6 +526,12 @@ export class Gates implements GatesApi {
     const prior = this.eventsFor(key);
     const received = prior.find((event) => event.payload.kind === "signal_received")?.payload as P<"signal_received"> | undefined;
     if (received) return handOut(received.value);
+    if (prior.length === 0) {
+      // The name is in the key, so the key alone says it is the same wait.
+      const carried = await this.fromPrior(key, "signal_received", () => true);
+      const value = carried?.find((event) => event.payload.kind === "signal_received")?.payload as P<"signal_received"> | undefined;
+      if (value) return handOut(value.value);
+    }
     const waiting = prior.find((event) => event.payload.kind === "signal_waiting")?.payload as P<"signal_waiting"> | undefined;
 
     const timeoutSec = waiting ? waiting.timeoutSec : opts.timeoutSec;
@@ -596,6 +644,14 @@ export class Gates implements GatesApi {
     const events = this.eventsFor(key);
     const prior = events.find((event) => event.payload.kind === "shell")?.payload as P<"shell"> | undefined;
     if (prior) return handOut({ exitCode: prior.exitCode, stdout: prior.stdout, stderr: prior.stderr });
+    if (events.length === 0) {
+      const cwdKey = opts.cwd ?? null;
+      const carried = await this.fromPrior(key, "shell", (list) =>
+        list.some((event) => event.payload.kind === "shell" && event.payload.cmd === cmd && event.payload.cwd === cwdKey),
+      );
+      const done = carried?.find((event) => event.payload.kind === "shell")?.payload as P<"shell"> | undefined;
+      if (done) return handOut({ exitCode: done.exitCode, stdout: done.stdout, stderr: done.stderr });
+    }
     const started = events.some((event) => event.payload.kind === "shell_started");
     if (started && opts.idempotent !== true) {
       throw new Error(

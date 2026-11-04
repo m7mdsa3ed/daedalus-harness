@@ -419,7 +419,7 @@ export async function handlePrompt(
            reasons they have always been — a run must not fail on them. */
         const finishFailure =
           outcome.error === undefined && session.holdOnError
-            ? failedFinish(outcome.finishReason)
+            ? failedFinish(outcome.finishReason, stepsTaken >= MAX_STEPS)
             : undefined;
         if (outcome.error !== undefined || finishFailure) {
           failure = outcome.error ?? finishFailure;
@@ -457,7 +457,9 @@ export async function handlePrompt(
 
           const stopReason: acp.StopReason = outcome.aborted
             ? "cancelled"
-            : mapFinishReason(outcome.finishReason);
+            : outcome.finishReason === "tool-calls" && stepsTaken >= MAX_STEPS
+              ? "max_turn_requests"
+              : mapFinishReason(outcome.finishReason);
 
           /* A steer can land after `prepareStep` has run for the last time —
              the model had already streamed its answer, so no step boundary is
@@ -1688,8 +1690,12 @@ function firstLine(text: string): string | null {
  * they are ACP stop reasons, and honest ones — but they are both "this model
  * would not finish this", which is a thing a reader can fix by moving off it.
  */
-function failedFinish(reason: string): Error | undefined {
+function failedFinish(reason: string, stepCapped = false): Error | undefined {
   switch (reason) {
+    case "tool-calls":
+      /* The loop was cut by the step cap while the model still wanted tools:
+         unfinished work, which used to end as a clean `end_turn`. */
+      return stepCapped ? new Error(`the turn hit the ${MAX_STEPS}-step limit before the work was done`) : undefined;
     case "error":
       return new Error("the model provider ended the step with an error");
     case "content-filter":

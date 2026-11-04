@@ -2,21 +2,24 @@
    A directory tree from flat paths. The schema takes `path` strings and the
    nesting happens here: a model that has to emit a recursive `children` shape
    gets the depth wrong far more often than it gets a path wrong, and a streaming
-   half-written list still draws as a half-written tree. Inert — a row is text. */
+   half-written list still draws as a half-written tree. Inert — a row is text.
+
+   The indent is a multiple of the row's own leading rather than a pixel step,
+   so a tree at 12px and the same tree at 14px are the same shape. */
 import { z } from "zod/v4"
 import { File, Folder } from "lucide-react"
 import { defineComponent } from "@openuidev/react-lang"
 import { cn } from "@/lib/utils"
-import { BODY, Box, BoxHeader, META, TONE_DOT } from "@/lib/openui/kit"
+import { Box, BoxHeader, META, StateLine } from "@/lib/openui/kit"
 
 type Change = "added" | "modified" | "deleted"
 type Node = { name: string; children: Map<string, Node>; file: boolean; note?: string; change?: Change }
 
 /* The word beside the dot, so a change is never told by colour alone. */
 const CHANGE = {
-  added: { word: "added", dot: TONE_DOT.success },
-  modified: { word: "modified", dot: TONE_DOT.warn },
-  deleted: { word: "deleted", dot: TONE_DOT.error },
+  added: { word: "added", tone: "success" },
+  modified: { word: "modified", tone: "warn" },
+  deleted: { word: "deleted", tone: "error" },
 } as const
 
 function build(files: { path?: string; note?: string; change?: Change }[]) {
@@ -50,26 +53,27 @@ function Branch({ node, depth }: { node: Node; depth: number }) {
   return (
     <li className="min-w-0">
       <div
-        className="flex min-w-0 flex-wrap items-baseline gap-x-2 py-0.5 pe-3 @panel-sm:pe-4"
-        style={{ paddingInlineStart: `calc(var(--spacing) * 3 + ${depth * 14}px)` }}
+        className="flex min-w-0 flex-wrap items-baseline gap-x-2 py-px pe-2.5 @panel-sm:pe-3"
+        style={{ paddingInlineStart: `calc(var(--spacing) * 2.5 + ${depth * 13}px)` }}
       >
-        <span className="inline-flex min-w-0 items-center gap-1.5">
+        <span className="inline-flex min-w-0 items-center gap-1">
           {isDir ? (
-            <Folder aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+            <Folder aria-hidden className="size-3 shrink-0 text-muted-foreground" />
           ) : (
-            <File aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+            <File aria-hidden className="size-3 shrink-0 text-muted-foreground" />
           )}
-          <span className={cn(BODY, "font-mono", isDir && "font-medium", node.change === "deleted" && "text-muted-foreground line-through")}>
+          <span
+            className={cn(
+              "font-mono text-[0.75rem] leading-[1.6] break-words",
+              isDir ? "font-medium text-foreground" : "text-foreground",
+              node.change === "deleted" && "text-muted-foreground line-through"
+            )}
+          >
             {node.name}
             {isDir && "/"}
           </span>
         </span>
-        {change && (
-          <span className={cn(META, "inline-flex items-center gap-1")}>
-            <span aria-hidden className={cn("size-1.5 rounded-full", change.dot)} />
-            {change.word}
-          </span>
-        )}
+        {change && <StateLine tone={change.tone}>{change.word}</StateLine>}
         {node.note && <span className={cn(META, "min-w-0 basis-full @panel-sm:basis-auto")}>{node.note}</span>}
       </div>
       {isDir && (

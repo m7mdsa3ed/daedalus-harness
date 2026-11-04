@@ -1710,7 +1710,9 @@ export class AcpBridge implements ConnectionRoute {
     text: string,
     origin: Peer | undefined,
     turnId: string,
-    opts: { attachments?: AttachmentRef[]; forceLink?: boolean } = {},
+    /** `suffix` reaches the agent and nothing else: never the journal, the
+        bubble or the mention links (a persona change, `personaSwitchBlock`). */
+    opts: { attachments?: AttachmentRef[]; forceLink?: boolean; suffix?: string } = {},
   ): Promise<{ deferred: boolean }> {
     const sessionId = this.requireSession();
     const attachments = opts.attachments ?? [];
@@ -1796,7 +1798,7 @@ export class AcpBridge implements ConnectionRoute {
       // makes the degrade below it legible when it appears.
       console.log(`[attachments] ${note.name}: ${note.delivery} — ${note.reason}`);
     }
-    const outgoing = text + attach.textSuffix;
+    const outgoing = text + attach.textSuffix + (opts.suffix ?? "");
     const blocks = attach.blocks;
 
     const sent = { text, done: false };
@@ -2635,9 +2637,18 @@ export class AcpBridge implements ConnectionRoute {
    * held for one it will never reach is a change that looks like it did
    * nothing.
    */
-  noteConfigChange(label: ConfigNoticeLabel, from: string | undefined, to: string): void {
+  noteConfigChange(
+    label: ConfigNoticeLabel,
+    from: string | undefined,
+    to: string,
+    /** `now`: say it where the journal is, not at the next step boundary. For a
+        notice about the turn that has *just* been opened — its message is
+        already drawn and the agent has said nothing yet, so there is no step to
+        wait for, and holding it would put it after the agent's first words. */
+    opts: { now?: boolean } = {},
+  ): void {
     const text = configNoticeText(label, from, to);
-    if (this.promptActive) this.holdConfigNotice(text);
+    if (this.promptActive && !opts.now) this.holdConfigNotice(text);
     else this.host.emit({ ev: "config_notice", seq: 0, text });
   }
 

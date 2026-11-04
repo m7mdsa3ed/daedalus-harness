@@ -1714,56 +1714,63 @@ html[data-window-controls-overlay="true"] {
    Two hues (a warm one for literals, a cool one for structure) plus weight and
    opacity — enough separation to read by, quiet enough that a diff or a log
    does not turn into a fruit salad. Chroma is dialled back in light mode,
-   where saturated text on white is the thing that reads as noise. */
-.prose :where(.hljs-comment, .hljs-quote) {
+   where saturated text on white is the thing that reads as noise.
+
+   Two containers read this palette and neither owns it: `.prose` (a fenced
+   block in an answer) and `.openui-code` (a generated view's `Code`, `Terminal`
+   or `Steps` well, `lib/openui/kit.tsx`). A snippet drawn in an answer and the
+   same snippet in a tool call are one language, so the tokens are named once
+   here rather than per surface — and `--code-*` below is the same hues again for
+   Monaco, which cannot read a CSS class. */
+:is(.prose, .openui-code) :where(.hljs-comment, .hljs-quote) {
   color: color-mix(in oklch, var(--muted-foreground) 85%, transparent);
   font-style: italic;
 }
-.prose :where(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-name) {
+:is(.prose, .openui-code) :where(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-name) {
   color: oklch(0.55 0.15 285);
   font-weight: 500;
 }
-.prose :where(.hljs-string, .hljs-regexp, .hljs-addition, .hljs-meta-string) {
+:is(.prose, .openui-code) :where(.hljs-string, .hljs-regexp, .hljs-addition, .hljs-meta-string) {
   color: oklch(0.5 0.13 150);
 }
-.prose :where(.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link) {
+:is(.prose, .openui-code) :where(.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link) {
   color: oklch(0.55 0.13 40);
 }
-.prose :where(.hljs-title, .hljs-section, .hljs-title.function_) {
+:is(.prose, .openui-code) :where(.hljs-title, .hljs-section, .hljs-title.function_) {
   color: oklch(0.52 0.13 250);
   font-weight: 500;
 }
-.prose :where(.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-property) {
+:is(.prose, .openui-code) :where(.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-property) {
   color: oklch(0.52 0.1 210);
 }
-.prose :where(.hljs-type, .hljs-built_in, .hljs-class .hljs-title) {
+:is(.prose, .openui-code) :where(.hljs-type, .hljs-built_in, .hljs-class .hljs-title) {
   color: oklch(0.55 0.11 320);
 }
-.prose :where(.hljs-deletion) {
+:is(.prose, .openui-code) :where(.hljs-deletion) {
   color: var(--destructive);
 }
-.prose :where(.hljs-meta, .hljs-punctuation, .hljs-operator) {
+:is(.prose, .openui-code) :where(.hljs-meta, .hljs-punctuation, .hljs-operator) {
   color: color-mix(in oklch, var(--foreground) 60%, transparent);
 }
-.prose :where(.hljs-emphasis) { font-style: italic; }
-.prose :where(.hljs-strong) { font-weight: 600; }
+:is(.prose, .openui-code) :where(.hljs-emphasis) { font-style: italic; }
+:is(.prose, .openui-code) :where(.hljs-strong) { font-weight: 600; }
 
-.dark .prose :where(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-name) {
+.dark :is(.prose, .openui-code) :where(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-name) {
   color: oklch(0.78 0.13 290);
 }
-.dark .prose :where(.hljs-string, .hljs-regexp, .hljs-addition, .hljs-meta-string) {
+.dark :is(.prose, .openui-code) :where(.hljs-string, .hljs-regexp, .hljs-addition, .hljs-meta-string) {
   color: oklch(0.8 0.13 150);
 }
-.dark .prose :where(.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link) {
+.dark :is(.prose, .openui-code) :where(.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link) {
   color: oklch(0.8 0.12 55);
 }
-.dark .prose :where(.hljs-title, .hljs-section, .hljs-title.function_) {
+.dark :is(.prose, .openui-code) :where(.hljs-title, .hljs-section, .hljs-title.function_) {
   color: oklch(0.78 0.12 245);
 }
-.dark .prose :where(.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-property) {
+.dark :is(.prose, .openui-code) :where(.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-property) {
   color: oklch(0.82 0.09 205);
 }
-.dark .prose :where(.hljs-type, .hljs-built_in, .hljs-class .hljs-title) {
+.dark :is(.prose, .openui-code) :where(.hljs-type, .hljs-built_in, .hljs-class .hljs-title) {
   color: oklch(0.8 0.1 325);
 }
 
@@ -3440,9 +3447,14 @@ html .dock-tab [data-tab-action="pin"] {
   html .dock-nested .dv-tab.dv-inactive-tab {
     display: flex;
   }
+  /* All of the outer phone rule undone, the floor included: with `min-width: 0`
+     left on, the tab in front was the only one allowed to shrink, so a strip of
+     four took the whole overflow out of it and it collapsed to its ✕. */
   html .dock-nested .dv-tab.dv-active-tab {
     width: 18rem;
     max-width: 18rem;
+    min-width: 9rem;
+    flex-grow: 0;
   }
   html .dock-nested .dv-tabs-and-actions-container {
     touch-action: pan-x;

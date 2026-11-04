@@ -147,11 +147,21 @@ export const foldCaughtUp: Fold<"onCaughtUp"> = (
   const { send, flush } = sink
   host.state.cursor = cursor
   host.state.seamless = false
-  if (host.isCurrent(ctx.owner())) host.state.promptActiveAtLoad = promptActive
+  if (host.isCurrent(ctx.owner())) {
+    host.state.promptActiveAtLoad = promptActive
+    host.state.backgroundAtLoad = !!background
+  }
   /* The document (or the socket) reached the end of what it had. An
      archived thread stops here for good — there is no socket coming — and
      everything else is now waiting on one. */
-  host.apply({ type: "caught-up", archived: ctx.attachedArchived })
+  /* "Archived" is the server's word for "no agent process", and a thread whose
+     workflow (or ask, or subagent) is still running has no process and news
+     coming all the same: the steps are their own threads and report onto this
+     one over the socket that just caught up. Taken as archived, the phase
+     stopped there — the card froze at the moment the thread was opened, its
+     steps landing in the store unseen until a reload. Background work makes it
+     live, exactly as the socket already is. */
+  host.apply({ type: "caught-up", archived: ctx.attachedArchived && !background })
   /* Inside the same fold as the transcript they belong to, so they are
      committed with it rather than appearing a frame later on top of a
      thread that had briefly lost them. */

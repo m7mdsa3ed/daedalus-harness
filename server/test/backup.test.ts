@@ -340,9 +340,16 @@ await test("a project's start defaults survive export and import", async () => {
     suggestKinds: [],
     uiGroups: ["layout", "numbers"],
     personaId: "persona1",
+    classifyPersona: true,
     voiceProvider: "",
     askProfiles: { fake: { profileId: "p1", model: "m1" } },
   });
+  // The persona classifier's switch travels too, off as well as on.
+  const noClassify = JSON.parse(JSON.stringify(bundle)) as typeof bundle;
+  noClassify.projects.find((p) => p.id === "w1")!.defaults.classifyPersona = false;
+  await importBundle(BundleSchema.parse(noClassify), "replace");
+  const switched = (await db.select().from(projectsTable).where(eq(projectsTable.id, "w1")))[0]!;
+  assert.equal(switched.defaultClassifyPersona, false);
   /* A bundle from before the columns: the key is absent and every field of
      the defaults is missing too, which is the shape `prefault` exists for. */
   const legacy = JSON.parse(JSON.stringify(bundle)) as { projects: Record<string, unknown>[] };

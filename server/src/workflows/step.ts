@@ -617,11 +617,15 @@ function announce(ctx: StepContext, child: Session, spec: AgentSpec, name: strin
   /* What kind of worker this row is: a run's step, another pair's ask, or — on
      the parent's own pair — a plain subagent, which is the one shape that needs
      no `_meta` at all. */
+  /* `runId` is on every one of them: it is what tells the client this child is
+     the engine's — it outlives the turn that launched it, and the engine, not
+     the turn ending, says when it is over. Nothing draws from it. */
   const meta = ctx.subagent
-    ? null
+    ? { daedalus: { runId: ctx.runId } }
     : ctx.ask
       ? {
           daedalus: {
+            runId: ctx.runId,
             ask: {
               agent: ctx.ask.agent,
               profile: ctx.ask.profile,
@@ -632,6 +636,7 @@ function announce(ctx: StepContext, child: Session, spec: AgentSpec, name: strin
         }
       : {
           daedalus: {
+            runId: ctx.runId,
             workflow: {
               runId: ctx.runId,
               sessionId: ctx.parent.id,
@@ -663,9 +668,9 @@ function announce(ctx: StepContext, child: Session, spec: AgentSpec, name: strin
          instead (`ask`, never `workflow`): it is no run, so it draws as a plain
          subagent — one that has to say it is a *different* agent. A one-step
          run on the parent's OWN pair carries neither: it is a plain subagent
-         of this thread's own agent, which is exactly what the absence says. A
+         of this thread's own agent, and only `runId` says the engine owns it. A
          resumed child is spawned again: a settled child spawned again is a wake. */
-      ...(meta ? { _meta: meta } : {}),
+      _meta: meta,
     },
   });
 }

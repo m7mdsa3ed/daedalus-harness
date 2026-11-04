@@ -200,7 +200,11 @@ export const PANE_MAX_H = "max-h-[min(calc(var(--panel-h,100svh)*0.6),28rem)]"
    This is the OPEN ceiling only — and since a scroller's height is
    min(content, max-height), it is also the height `ThoughtBlock` measures for
    its open clip. The folded shape is the same box cut to three line boxes and
-   faded by `.thought-fold`. */
+   faded by `.thought-fold`.
+
+   It is a default, not a rule: `thoughtFullHeight` (Appearance › Transcript ›
+   Thinking) withdraws it, and the reading then runs as tall as it is with the
+   transcript doing the scrolling. */
 export const THOUGHT_MAX_H =
   "max-h-[calc(var(--panel-h,100svh)*0.3)] @panel-sm:max-h-[min(calc(var(--panel-h,100svh)*0.42),20rem)]"
 

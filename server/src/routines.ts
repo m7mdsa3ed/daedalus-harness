@@ -79,6 +79,7 @@ import { getProject } from "./projects.js";
 import { getAgent } from "./registry.js";
 import { getQuota } from "./quota.js";
 import { LIMITS, OutputError, extractJsonOutput, validateOutput } from "./workflows/graph.js";
+import { MAX_TIMEOUT_MS } from "./workflows/limits.js";
 import type { RunView as WorkflowRunView } from "./workflows/types.js";
 import type { StartInput as WorkflowStartInput } from "./workflows/engine.js";
 import type { Session, SessionManager } from "./sessions.js";
@@ -135,11 +136,13 @@ const OUTPUT_BYTES = LIMITS.outputBytes;
     because this is the one string an unauthenticated door writes into a prompt. */
 const PAYLOAD_MAX = 32 * 1024;
 
-/** Ceiling on how long the engine will wait for a workflow-bodied run, when the
-    routine's policy sets no wall-clock of its own. A workflow has its own
-    `totalTimeoutSec` (an hour by default, three at most); this is the outer
-    bound so a wait can never outlive the thing it is waiting for. */
-const WORKFLOW_WAIT_CAP_MS = 3 * 60 * 60_000;
+/** How long the engine waits on a workflow-bodied run when the routine's policy
+    names no wall clock of its own — `maxRunSeconds: 0` reads as "no time limit"
+    in the UI, so it must not put one here either. A workflow is bounded by its own
+    `totalTimeoutSec` / `budgets.wallSec` when it names one; with neither, nothing
+    is bounding it and this only has to be long enough not to invent a deadline
+    (Node's own `setTimeout` ceiling, so the wait cannot overflow). */
+const WORKFLOW_WAIT_CAP_MS = MAX_TIMEOUT_MS;
 
 /** Consecutive failed runs after which a routine switches itself off. */
 export const AUTO_DISABLE_AFTER = 5;

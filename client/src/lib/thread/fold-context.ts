@@ -42,10 +42,13 @@ export interface FoldState {
    * by `start` immediately after it, which is the whole of its life.
    */
   promptActiveAtLoad: boolean
+  /** The document said the thread still has background work (an engine run, or the
+      agent's own task): there is news coming even with no turn open. */
+  backgroundAtLoad: boolean
 }
 
 export function newFoldState(): FoldState {
-  return { cursor: 0, restarting: false, seamless: false, promptActiveAtLoad: false }
+  return { cursor: 0, restarting: false, seamless: false, promptActiveAtLoad: false, backgroundAtLoad: false }
 }
 
 /**

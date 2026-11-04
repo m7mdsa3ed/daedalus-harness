@@ -340,11 +340,22 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A persona is how a whole thread is worked on; a command is what one message asks.**
   Personas are library rows (`personas`, Settings › Personas, `/api/personas`), one per thread
   (`sessions.persona_id`, project default `projects.default_persona_id`), picked in the config
-  menu like the model and riding the same staged-config / respawn door as `uiGroups` — it is
-  spawn text, so a change costs a respawn. The text heads the spawn instructions, **above the
-  rules** (`resolvePersonaSpawn`), read at spawn so an edit or a delete (= none) lands on the
-  next one. Model and effort stay the profile's: the rows' legacy `thinking`/`effort` columns
+  menu like the model. The text heads the spawn instructions, **above the rules**
+  (`resolvePersonaSpawn`), read at spawn so an edit or a delete (= none) lands on the next one.
+  **A change on a started thread is a message, never a respawn**: the system prompt stays on the
+  persona it carries (`sessions.system_persona_id`, frozen at the first change) so the provider's
+  prompt cache still hits, and the next prompt carries a `<persona>` block (`personaSwitchBlock`,
+  `persona_pending`) that the journal never holds and the bubble folds out. A rewind or fork
+  says it again; an agent move unfreezes it. Model and effort stay the profile's: the rows' legacy `thinking`/`effort` columns
   are declared and never read. A workflow step inherits its parent's persona; an ask does not.
+  **A new thread's first message may pick it** (`persona-classify.ts`, in `POST /api/sessions`
+  before `create`, so it is a spawn input and never a respawn): only a persona nobody picked
+  (the draft still holds the project default), only on the install's **decision model**
+  (`side-models.ts` lane, `decide.ts`: one call, a probability per persona) — never a chat
+  model, and with none chosen there is no call and no fallback — and anything but a
+  catalogue id is no pick. Said as an ordinary
+  `Persona` config notice, undone by an ordinary pick; `projects.default_classify_persona`
+  and `config.classifyPersona: false` turn it off.
   **Saved prompts are gone** — they became `commands` rows (`legacy-prompts.ts`, once at boot,
   marker `savedPromptsToCommands`); `saved_prompts` stays declared until that has run
   everywhere. Personas are no longer copied into commands.
@@ -630,9 +641,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   **the two faces stand down while the reader is writing** (`marksDown` — the box has the caret
   or holds words), folded to zero width with an ease rather than unmounted so the words do not
   jump under the caret, because a reading of a thread already chosen is not what a line being
-  typed into is for; the "+" stays, since adding to a message is done while writing it. The
-  scope row, the chip's words, the MCP picker and the readings come back with the toggle
-  (remembered per thread for the life of the page, `ADVANCED_THREADS`). A draft and the landing
+  typed into is for; the "+" stays, since adding to a message is done while writing it. **Words
+  that wrap stack the line** (`stacked`, the editor's `onWrapChange`): the editor takes a full row
+  over the same controls, latched until the box empties, up to the card's `max-h-40`. The
+  scope row, the chip's words and the readings come back with the toggle
+  (remembered per thread for the life of the page, `ADVANCED_THREADS`). The MCP servers are
+  a row of the chip's menu, so they come back with it. A draft and the landing
   console are the full box — the first message is written in it. `ThreadView` also hands it the
   scroller's own pin (`useFollowStream.pinned`) as `collapsed`: leaving the tail folds an advanced
   box back to mini, and **a fill re-opens it** (`revealed`), because a suggested follow-up, a
@@ -649,6 +663,17 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   Derived, never picked, so every generated palette gets it for nothing. **Neither the composer
   nor the shelf draws a hairline ring** — the two grounds meeting is the seam, and the
   composer's only ring is the destructive one while voice is listening.
+- **The send row has one voice key, and the modes are behind it**
+  (`composer/voice-button.tsx`): a dictated note (`Mic`, the browser's own speech API) and a
+  call (`AudioLines`, a configured backend) are the same gesture at different lengths, and as
+  two buttons **which one existed depended on two unrelated facts** — and a mini line had
+  room for neither. **A click runs the pick and never opens the menu**: the fold beside it
+  (`ChevronDown`, hover-revealed under a mouse and always drawn under a finger) chooses which
+  mode that click runs, persisted in `composer-prefs` so the pick follows the hand. **A live
+  mode outranks the pick** — the same key stops what it started — and a mode this browser or
+  server cannot run stays listed, disabled, saying why. `voiceCall`/`voiceNote` (`⌥C`/`⌥D`)
+  pick their mode *before* running it, or the key would be counting down a call the reader
+  never chose.
 - **The shelf has a floor and a pile, and the floor is what is permanently true.** Project,
   tools and the context ring are `ComposerStrip`'s `footer` (`DraftScopeRow`) — always drawn,
   never a card, on **both** sides of the first message: a started thread's project only stops
@@ -920,10 +945,18 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A chat tab's second row carries the project, the model and the thread's age** (`relativeAge`
   in `lib/settings.ts`, re-rendered by the minute); the title mask fades both rows under the
   hover controls. "Duplicate tab" is the menu's way to a second outlet on the same place.
-- **The composer's MCP picker is a popover of switches, not a menu** (`composer/mcp-picker.tsx`):
-  header with "N of M" and the staged note, a filter past five servers, Library and Built-in
-  groups of rows (mark, name, a status dot — connected / needs authorization / error / not checked, from the stored catalog and never a fresh connect — transport or the failure, tool count, switch), and
-  Clear / Manage in the footer. Profile-linked rows are locked.
+- **A thread's MCP servers are a row in the settings menu, not a chip of their own**
+  (`thread-tools/mcp-section.tsx`, drawn by both `SessionConfigPopover` and
+  `DraftConfigPopover`): a submenu of switches beside Model and Effort, because a link is a
+  **spawn input** like the pair and a revive reads it — where the permission mode is not, which
+  is why the mode stays under "Agent options" on the live process's own channel. Header with
+  "N of M" and the staged note, a filter past eight servers, Library and Built-in groups of rows
+  (mark, name, a status dot — connected / needs authorization / error / not checked, from the
+  stored catalog and never a fresh connect — transport or the failure, tool count, switch), and
+  Clear / Manage in the submenu. A row the agent requires is on and locked ("required by
+  <agent>"), read off `requiredMcp` rather than a table of runtimes. It is a `ToolRow` and not
+  a `ToolSection` — one status dot and one lock reason the skills list has no use for. Alt+M
+  and Alt+S both open the menu that holds it.
 - **Opening a panel never splits the dock** — every kind arrives the way a new thread does, a
   tab beside what you are looking at, and `OpenPanelOptions.direction` is read as "do not
   replace what is in front of me" and nothing more. It used to split when the window was wide

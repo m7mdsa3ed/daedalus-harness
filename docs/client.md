@@ -606,7 +606,13 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `ThoughtBlock` follows *itself*: the transcript's `useFollowStream` measures the
   content element, and a capped box stops growing when it fills, which would leave the
   newest thinking — the part being written — exactly what falls out of view. Settled it
-  is inert and opens at the top.
+  is inert and opens at the top. **The cap is a view option, not a rule** (`thoughtFullHeight`,
+  Appearance › Transcript › Thinking, off by default): on, `ThoughtReading` draws with no
+  `max-h` and no scroller of its own, so a long reasoning block runs on and the transcript is
+  what scrolls — the reader who wants the whole thought in the flow asks for it, and everyone
+  else keeps the steps after it in reach. `ThoughtBlock`'s open clip already measures
+  `scroller.clientHeight`, which is the content at natural height, so the fold's animation
+  needs no second branch.
   `components/ui/diff-view.tsx` is a dependency-free line LCS.
   Device-local, per-session state lives in its own tiny stores — `lib/drafts.ts`
   (unsent prompts) chief among them, pruned from
@@ -876,15 +882,18 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   skeleton. It costs nothing once the transcript overflows, where the space is zero.
 - **The toolbar is the card's second row**, reading *what goes in → who answers → what
   happens*: a "+" menu (attach, take a photo on touch, mention a file, run a command, run a project command,
-  insert a code block, clear), the model/config cluster, the length reading, then voice, pause, stop and
-  Send. **Send is always drawn** — a muted disabled chip on an empty box, a filled primary disc the moment
+  insert a code block, clear), the model/config cluster, the length reading, then the one voice key,
+  pause, stop and Send. **Send is always drawn** — a muted disabled chip on an empty box, a filled primary disc the moment
   there is something to send — and the whole row, Send and the "+" included, wears one corner: `rounded-pill`,
   the token `--radius-pill` states rather than derives, so a square theme squares them with everything else.
   It used to be five loose buttons on a row that a phone overflowed first; every
   way of *adding to* the message is behind the "+", and every way of *sending* it is behind
   the chevron beside Send (queue or steer while a turn runs, Schedule…, and the Enter
   preference). A long-press on Send (touch) and a right-click (mouse) open that same menu, so
-  the chevron is a hint, not the only door.
+  the chevron is a hint, not the only door. **Voice is one key with a fold, not two buttons**
+  (`composer/voice-button.tsx`): a dictated note and a call are picked behind the fold and a
+  click runs the pick, because as two buttons which of them was drawn at all depended on the
+  browser's speech API and on a backend being configured, and a mini line had room for neither.
 - **The pile is only what is about the message being typed** (`components/composer-strip.tsx`):
   attachments, the history notice, the three completers, the archive notice, and
   the count of subagents out working. It is a "which of these do you want in front" mechanism,
@@ -1134,16 +1143,25 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `library.tsx` builds its `componentGroups` from `groups.ts` (names and membership are one
   place), keeping each group's notes beside the components.
 - **The generated-view library has a component per recurring answer shape, and the prompt says which to
-  reach for** (`Verdict`, `Matrix`, `Checks`, `ChangeSet`, `Findings`, `Bars`, each in
+  reach for** (`Verdict`, `Matrix`, `Checks`, `Findings`, `Bars`, each in
   `lib/openui/components/`). They came from reading what threads actually drew: a table for every shape
   (a column of "Yes", a review as five-column prose, a ranking as a table of counts) and a conclusion
   buried under its evidence. Each takes a **flat** schema with strings the model already has, and each
   tolerates a half-streamed or empty prop. `Matrix` cells are plain strings whose first word is the
-  verdict (`yes`/`no`/`partial`/`n/a`, `readCell`), not a typed cell per column, because pairing a
-  typed cell with its column is what models get wrong; `Findings` sorts worst-first itself so the order
-  the model found them in does not matter; `ChangeSet` draws counts only when it was given them and
-  never zeros. The state chip (`ToneChip`) and the tone list (`TONES`) live in `kit.tsx` so a
-  severity, a status and a badge cannot drift apart. **A group's notes may only name its own
+  verdict (`yes`/`no`/`partial`/`n/a`), not a typed cell per column, because pairing a
+  typed cell with its column is what models get wrong — and both readers are `kit.tsx`'s
+  `readStateCell`, which `Table`'s `tones: true` chips from the same word list, so `yes, per request`
+  cannot mean two things in one answer; `Findings` sorts worst-first itself so the order
+  the model found them in does not matter. The state chip (`ToneChip`), the state said as a dot and a word (`StateLine`) and the
+  tone list (`TONES`) live in `kit.tsx` so a severity, a status and a badge cannot drift apart.
+  The scale was raised once for legibility on a phone (14px body, uppercase `LABEL`, `FIG` up to 36px), and a status chip is a tone-washed pill rather than a dot-only outline.
+  **Every component is one file in `lib/openui/components/`** and `library.tsx` only lists them, so
+  adding one is a new file plus a line and restyling one is never a diff in a two-thousand-line
+  module; they share one short, dense scale (`TITLE`/`BODY`/`META`/`LABEL`/`FIG`) and one three-step
+  inset (`PAD`, `PAD_ROW`, `LIST_ROW`) from `kit.tsx`, and **none of them states a size of its own** —
+  a component that wants a new one is a component that has stopped matching the rest. The page ground
+  is the card's hairline rather than a shadow, because at this density a stack of seven soft-ringed
+  18px cards read as a stack of buttons. **A group's notes may only name its own
   components** (`openui-trailer.test.ts` fails on a bare English word that is another group's
   component name, e.g. "List"), and the three composition rules in `gen-openui.mjs` (lead with the
   conclusion, prefer the most specific component, one view says one thing) name no component for the

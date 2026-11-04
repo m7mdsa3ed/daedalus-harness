@@ -7,7 +7,7 @@
  * and nothing else.
  */
 import { z } from "zod";
-import { BudgetsSchema } from "./graph.js";
+import { BudgetsSchema, LIMITS } from "./graph.js";
 
 /** The name a `waitFor` waits on (sandbox.ts: /^[\w.-]{1,80}$/). */
 export const SIGNAL_NAME_RE = /^[\w.-]{1,80}$/;
@@ -18,6 +18,8 @@ const FlowFields = {
   priority: z.number().int().min(-100).max(100).optional(),
   concurrencyKey: z.string().min(1).max(80).optional(),
   onRestart: z.enum(["resume", "rerun", "fail"]).optional(),
+  maxParallel: z.number().int().min(1).max(LIMITS.maxParallel).optional(),
+  totalTimeoutSec: z.number().int().positive().optional(),
 };
 
 /** `POST …/runs`: a declarative definition (the engine validates it in full). */

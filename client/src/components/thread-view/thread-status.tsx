@@ -22,6 +22,7 @@ import {
 } from "lucide-react"
 import { useNavigate } from "react-router"
 import { PhaseLine } from "@/components/composer-status"
+import { useNow } from "@/components/composer/agents-indicator"
 import { formatElapsed } from "@/components/step-row"
 import { ActionPill } from "@/components/thread-cards"
 import { Disclosure } from "@/components/tool-parts"
@@ -31,6 +32,7 @@ import { Progress } from "@/components/ui/progress"
 import type { Actions } from "@/lib/actions"
 import { useLayoutOptionsContext } from "@/lib/layout-options"
 import type { StatusActionKind, ThreadStatus as Status } from "@/lib/thread/status"
+import { formatDuration } from "@/lib/tokens"
 
 /** A wait this long gets its extra sentence, and one this long gets a clock and a way out. */
 const SLOW_MS = 6_000
@@ -169,6 +171,15 @@ export function ThreadStatus({
     [retry?.attempt, retry?.delayMs] // eslint-disable-line react-hooks/exhaustive-deps
   )
   const retrySeconds = useSecondsUntil(retryAt)
+  // The open turn's clock, and the thread's total with it once there is a past to add.
+  const now = useNow(!!status.ran)
+  const ran = status.ran
+  const turnMs = ran ? Math.max(0, now - ran.since) : 0
+  const runtime = ran
+    ? ran.before > 0
+      ? `${formatDuration(turnMs)} · ${formatDuration(ran.before + turnMs)} total`
+      : formatDuration(turnMs)
+    : undefined
   // A detail folded for one failure must not stay open for the next.
   React.useEffect(() => setOpen(false), [status.kind, status.itemId])
 
@@ -354,6 +365,7 @@ export function ThreadStatus({
           tone={status.tone === "error" ? "error" : status.tone === "warn" ? "warn" : "normal"}
           label={opening ? "Opening this thread" : (LABEL[status.kind] ?? "Agent status")}
           mark={statusMark(status)}
+          trail={runtime}
         />
       </button>
       {showLog && (

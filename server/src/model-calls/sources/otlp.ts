@@ -214,7 +214,11 @@ async function claudeLog(me: Attachment, raw: Json): Promise<void> {
         source: "otlp",
         billed: { totalTokens: input + output + read + write, inputTokens: input, outputTokens: output, cachedReadTokens: read, cachedWriteTokens: write },
         ...(a.cost_usd !== undefined ? { costUsd: num(a.cost_usd) } : {}),
-        ...(a.ttft_ms !== undefined ? { timing: { ttftMs: num(a.ttft_ms) } } : {}),
+        /* `duration_ms` runs to the response's end, so what follows the first
+           token is the decode — the proxy door's split. */
+        ...(a.ttft_ms !== undefined
+          ? { timing: { ttftMs: num(a.ttft_ms), ...(a.duration_ms !== undefined ? { decodeMs: num(a.duration_ms) - num(a.ttft_ms) } : {}) } }
+          : {}),
       },
     });
   } else if (event === "api_request_body") {

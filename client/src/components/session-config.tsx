@@ -16,13 +16,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { levelOf, withEffortIcons, withModeIcons } from "@/components/composer/option-icons"
-import { type ChoicePick, HelperModelsSub, MenuRow, MenuRowSkeleton, modelChoiceDetails, PersonaRow, PILL, PillLabel, SessionSettingsSub, selectChoices } from "@/components/config-menu"
+import { configCost } from "@/lib/config-cost"
+import { type ChoicePick, HelperModelsSub, MenuRow, MenuRowSkeleton, modelChoiceDetails, PersonaRow, PILL, PillLabel, RecentConfigsGroup, SessionSettingsSub, selectChoices, useRecentSetups } from "@/components/config-menu"
+import { nextRecentSetup, recordConfig, sameConfig, type RecentConfig } from "@/lib/config-recents"
 import { DEFAULT_SUGGEST_KINDS } from "@/lib/suggestions"
 import { DEFAULT_UI_GROUPS } from "@/lib/openui/groups"
 import { DraftConfigPopover } from "@/components/draft-config"
 import { ThreadToolsSections } from "@/components/thread-tools/menu"
+import { McpSection } from "@/components/thread-tools/mcp-section"
 import { useIsMobile } from "@/hooks/use-device"
-import { useMenuShortcut } from "@/hooks/use-hotkey"
+import { useMenuShortcut, useShortcut } from "@/hooks/use-hotkey"
 import { useAddModel, useNewProfile } from "@/lib/catalog-add"
 import type { Actions } from "@/lib/actions"
 import { optionKey, shownOptions, useAgentOptions } from "@/lib/agent-options"
@@ -219,8 +222,13 @@ export function SessionConfigPopover({
       .setConfigOption(sessionId, option.id, value)
       .catch((err) => reportError(err, `Couldn't change ${option.name}`))
 
+  /* What each pick costs this started thread (`lib/config-cost.ts`): a
+     harness pick restarts unless the agent row takes it live; the agent's own
+     selector never restarts. */
+  const takesLive = !!agent?.liveConfig
   const profilePick: ChoicePick = {
     label: "Profile",
+    cost: configCost("profile", takesLive),
     value: profile.id,
     choices: agentProfiles.map((p) => ({
       value: p.id,
@@ -237,6 +245,7 @@ export function SessionConfigPopover({
   const effortPick: ChoicePick | null = profileEffort
     ? {
         label: "Effort",
+        cost: configCost("effort", takesLive),
         value: meta.effort || DEFAULT_CHOICE,
         choices: withEffortIcons([
           { value: DEFAULT_CHOICE, name: "Default" },
@@ -248,6 +257,7 @@ export function SessionConfigPopover({
     : liveEffort
       ? {
           label: "Effort",
+          cost: configCost("effort", true),
           value: liveEffort.type === "select" ? liveEffort.currentValue : "",
           choices: withEffortIcons(selectChoices(liveEffort)),
           onSelect: (value) => set(liveEffort, value),
@@ -259,6 +269,7 @@ export function SessionConfigPopover({
   const modelPick: ChoicePick | null = overridden
     ? {
         label: "Model",
+        cost: configCost("model", takesLive),
         value: meta.model || DEFAULT_CHOICE,
         choices: [
           { value: DEFAULT_CHOICE, name: "Profile default" },
@@ -290,6 +301,7 @@ export function SessionConfigPopover({
     : options.model
       ? {
           label: "Model",
+          cost: configCost("model", true),
           value: options.model.type === "select" ? options.model.currentValue : "",
           /* Agent-driven options carry no art — every row gets the neutral
              glyph so the list reads like the catalog one. */
@@ -379,6 +391,13 @@ export function SessionConfigPopover({
         }
       />
       <DropdownMenuContent align="start" className="w-60" finalFocus={shell?.finalFocus}>
+        <RecentConfigsGroup
+          current={recentOf(meta)}
+          agentId={agentId}
+          onPick={({ profileId, model, effort }) =>
+            actions.changeThreadConfig(row, { profileId, model, effort }, "Couldn't switch to that setup")
+          }
+        />
         <DropdownMenuGroup>
           <DropdownMenuLabel>Session</DropdownMenuLabel>
           {/* Drawn on a single profile too — the row is also the door to
@@ -397,7 +416,15 @@ export function SessionConfigPopover({
           ) : (
             unanswered && <MenuRowSkeleton label="Effort" />
           )}
-          <PersonaRow value={meta.personaId} onSelect={(personaId) => actions.changeThreadPersona(row, personaId)} />
+          {/* What it answers with and what it carries are the same kind of
+              decision — spawn inputs, picked in one place — so the servers sit
+              with the pair rather than on a chip of their own beside it. */}
+          <McpSection meta={meta} actions={actions} cost={configCost("mcp", false)} />
+          <PersonaRow
+            value={meta.personaId}
+            onSelect={(personaId) => actions.changeThreadPersona(row, personaId)}
+            cost={configCost("persona", takesLive)}
+          />
           <AskAgentsSub
             value={meta.askProfiles ?? {}}
             onChange={(askProfiles) =>
@@ -412,6 +439,7 @@ export function SessionConfigPopover({
               roles={modelRoles}
               models={modelPick?.choices.filter((c) => c.value !== DEFAULT_CHOICE) ?? []}
               onChange={(helperModels) => actions.changeHelperModels(row, helperModels)}
+              cost={configCost("helpers", false)}
             />
           )}
         </DropdownMenuGroup>
@@ -435,6 +463,7 @@ export function SessionConfigPopover({
             groups: meta.uiGroups ?? DEFAULT_UI_GROUPS,
             onChange: (groups) => actions.changeThreadUiGroups(row, groups),
           }}
+          cost={configCost("ui", false)}
         />
         {(modes || options.rest.length > 0) && (
           <>
@@ -487,6 +516,14 @@ export function SessionConfigPopover({
   )
 }
 
+/** The part of a thread's settings the recents remember. */
+const recentOf = (meta: SessionMeta): RecentConfig => ({
+  agentId: meta.agentId,
+  profileId: meta.profileId,
+  model: meta.model ?? "",
+  effort: meta.effort ?? "",
+})
+
 /** Menu open state lifted out of the two bodies, so a flip between them keeps it. */
 export type PopoverShell = {
   open: boolean
@@ -519,11 +556,50 @@ export function ConfigPopover({
   /** Draw the trigger as the agent's marks only (the mini composer). */
   iconOnly?: boolean
 }) {
-  const [open, setOpen] = React.useState(false)
-  const finalFocus = useMenuShortcut("changeModel", () => setOpen(!open), keys)
+  const [open, setOpenState] = React.useState(false)
   const profiles = useProfiles()
+  /* What the menu opened on and what it closes on: a change between the two is
+     a switch, and both ends go into the recents (`config-recents.ts`). Read
+     through a ref because the close can fire before the pick's render lands.
+     Only a profile that lists its own models is worth remembering — see there. */
+  const view = configView(meta, thread)
+  const overrides = chatModels(profiles.find((p) => p.id === view.profileId)?.models ?? []).length > 0
+  const latest = React.useRef<RecentConfig | null>(null)
+  const openedOn = React.useRef<RecentConfig | null>(null)
+  React.useEffect(() => {
+    latest.current = overrides ? recentOf(view) : null
+  })
+  const setOpen = (next: boolean) => {
+    if (next) openedOn.current = latest.current
+    else if (latest.current && (!openedOn.current || !sameConfig(openedOn.current, latest.current))) {
+      if (openedOn.current) recordConfig(openedOn.current)
+      recordConfig(latest.current)
+    }
+    setOpenState(next)
+  }
+  const finalFocus = useMenuShortcut("changeModel", () => setOpen(!open), keys)
+  /* Alt+S is still the chord for the servers, and the servers are in here now:
+     one menu owns the pair, the mode and the MCP links, so both chords open it
+     rather than one of them going quiet. Alt+S is drawn on its row's note in
+     lib/shortcuts so the help sheet says where it lands. */
+  useShortcut("chooseMcp", () => setOpen(!open), { enabled: keys })
   const shell = { open, setOpen, finalFocus }
   const ready = !meta.draft && profiles.some((p) => p.id === meta.profileId)
+  /* The Recent rows without opening the menu. Same doors as a row's click; a
+     started thread has no menu close to send the buffered pick, so it flushes. */
+  const setups = useRecentSetups(ready ? view.agentId : undefined)
+  useShortcut(
+    "cycleSetup",
+    () => {
+      const next = nextRecentSetup(setups, recentOf(view))
+      if (!next) return false
+      if (ready) {
+        actions.changeThreadConfig(meta, { profileId: next.profileId, model: next.model, effort: next.effort }, "Couldn't switch to that setup")
+        void actions.flushThreadConfig(sessionId)
+      } else actions.configureDraft(meta.id, next, true)
+    },
+    { enabled: keys && !open }
+  )
   return ready ? (
     <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} shell={shell} iconOnly={iconOnly} />
   ) : (

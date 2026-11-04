@@ -262,30 +262,19 @@ as the argument for them; nothing above reaches the wire, so no table exists to 
 Still open, in the order the doc above argues for: the adapters (`decide.ts`, `fim.ts`) with their
 routes, the `decisions` table and editor, the permission gate as the first in-process consumer, the
 builtin `decide` MCP server, and one surface that draws a completion.
-## Built (this slice)
+## Built
 
-- `ModelDef.kind` / `ModelDef.wire`, plus `MODEL_KINDS` / `MODEL_WIRES`, declared in
-  `profiles.ts`'s model Zod so a save keeps them.
-- `decisions` row, `Decision` type, and its place in the backup bundle (export, restore,
-  count) — a definition is not derived state, so a restore that dropped it would be data loss.
-- `server/src/decide.ts`: the System One contract, `decisionUrl`'s versioned-root rule, the
-  normalized `DecisionAnswer`, and `fillMiddle` for the completion kind (no route yet).
-- `server/src/decisions.ts`: CRUD, `problemFor` (why a definition cannot run), and
-  `runDecision`. Changing the questions or the model bumps `version` unless one is named.
-- `server/src/routes/decisions.ts`: `GET/POST /api/decisions`, `GET /api/decisions/models`,
-  `GET/PUT/DELETE /api/decisions/:id`, `POST /api/decisions/:id/run`.
-- `harness-tools.ts`: `decisions_list`, `decisions_models`, `decisions_create`,
-  `decisions_update`, `decisions_delete`, `decisions_run` — the harness MCP can drive the CRUD.
-- Client: Settings › Decisions (list, editor, and the test box), `kind`/`wire` on the profile
-  model editor, and `chatModels()` filtering every thread-facing picker so a decision model is
-  never offered for a turn.
-- `pnpm test:decisions` — a real local HTTP server asserting the path, the bearer, the body,
-  the refusal of a chat model, and the version bump.
-- `pnpm test:fim` — the completion wire: `/v1/completions` under a `/v1` base, `prompt`/`suffix`
-  (and no `suffix` key when there is none), and the three refusals (chat model, no wire, no prompt)
-  that are configuration answers rather than provider failures.
+Corrected: an earlier version of this section claimed `decisions.ts`, `routes/decisions.ts`, the
+`decisions` table and `test:decisions` shipped. They did not, and the "What ships now" section above
+is the truth about them. What exists for the decision lane is:
 
-Still open, in the order the doc above argues for: the permission gate (in-process), the
-builtin `decide` MCP server, and `/api/fim` with one surface that draws it.
+- `server/src/decide.ts` — the System One call (`systemone` at `/v1/systemone`, `systemone-gateway`
+  at `/v1/decisions`, a versioned-root URL rule), both response envelopes, the refusals.
+- `server/src/side-models.ts` — the lane's install-wide (profile, model), and the persona question's
+  thresholds (`personaDecision`).
+- Its first consumer, `server/src/persona-classify.ts` (`docs/plans/persona-decision.md`).
+- `pnpm test:decide` — a real local HTTP server asserting the path, the bearer, the body, both
+  envelopes and the refusals.
 
-
+Still open: the permission gate, the builtin `decide` MCP server, the `decisions` table and editor,
+and `/api/fim` beyond the composer.

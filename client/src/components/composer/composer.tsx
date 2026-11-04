@@ -67,12 +67,10 @@ import * as React from "react"
 import { useLocation, useNavigate } from "react-router"
 import {
   ArrowUp,
-  AudioLines,
   Check,
   ChevronDown,
   ChevronUp,
   Maximize2,
-  Mic,
   Minimize2,
   Pause,
   PhoneOff,
@@ -83,7 +81,6 @@ import {
 
 import { Button } from "@/components/ui/busy-button"
 import { Spinner } from "@/components/ui/spinner"
-import { McpPicker } from "@/components/composer/mcp-picker"
 import { KEY_MARK, READING_MARK } from "@/components/composer/indicator"
 import { ProjectIcon } from "@/components/entity-icon"
 import { optionKey, useAgentCommands } from "@/lib/agent-options"
@@ -101,6 +98,7 @@ import { quoteLines } from "@/components/composer/editor-text"
 import { ComposerStrip } from "@/components/composer-strip"
 import { ComposerAddMenu } from "@/components/composer/add-menu"
 import { EnhanceButton } from "@/components/composer/enhance-button"
+import { VoiceButton } from "@/components/composer/voice-button"
 import { PeakIndicator } from "@/components/composer/peak-indicator"
 import { composerKeyDown } from "@/components/composer/keys"
 import { usePromptHistory } from "@/components/composer/prompt-history"
@@ -120,12 +118,13 @@ import { useFimCompletion } from "@/components/composer/fim-completion"
 import { threadRecap } from "@/lib/thread/recap"
 import { useComposerAttachments } from "@/hooks/use-composer-attachments"
 import { useCoarsePointer, useIsMobile } from "@/hooks/use-device"
+import { useScreenRecord } from "@/hooks/use-screen-record"
 import { useVoice } from "@/hooks/use-voice"
 import { useAgents, useCommands, useProfiles } from "@/lib/queries/catalog"
 import { defaultVoice, useVoiceProviders, voiceFor } from "@/lib/queries/voice"
 import { endVoiceCall, startVoiceCall, useVoiceCallActive } from "@/lib/voice-call"
 import type { Actions } from "@/lib/actions"
-import { useComposerPrefs } from "@/lib/composer-prefs"
+import { setComposerPrefs, useComposerPrefs } from "@/lib/composer-prefs"
 import { useLayoutOptions } from "@/lib/layout-options"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
 import { consumeComposerFocusRequest, useComposerFocusRequest } from "@/lib/composer-focus"
@@ -252,8 +251,9 @@ export const Composer = React.memo(function Composer({
       draws. */
   collapsed?: boolean
   /** The thread has started, so the box may take its mini form — a line, a send
-      and the toggle — with the advanced form (every control, the scope row and
-      its readings) a choice behind the toggle. That form is drawn only while
+      and the toggle, stacking once the words wrap — with the advanced form (every
+      control, the scope row and its readings) a choice behind the toggle. That
+      form is drawn only while
       the reader's own `miniComposer` is on; False for a draft and the landing
       console, which are what the first message is written in and always draw
       the whole box. */
@@ -282,6 +282,16 @@ export const Composer = React.memo(function Composer({
   const [editorOverflows, setEditorOverflows] = React.useState(false)
   const onEditorOverflowChange = React.useCallback((overflowing: boolean) => {
     setEditorOverflows(overflowing)
+  }, [])
+  /* A mini box whose words outgrew one line stacks: the words take a row of
+     their own over the controls, rather than wrapping in the gap between the
+     marks and Send. Latched until the box empties, because stacking widens the
+     line, which can fit the words on one again and un-stack it.
+     ponytail: sticky until cleared; drop the latch if a narrower box ever
+     measures its own width instead. */
+  const [wrapped, setWrapped] = React.useState(false)
+  const onEditorWrapChange = React.useCallback((next: boolean) => {
+    if (next) setWrapped(true)
   }, [])
   /* Mini or advanced, for a started thread that has `miniComposer` on. The
      toggle's pick is remembered per thread for as long as the page lives so a
@@ -318,6 +328,9 @@ export const Composer = React.memo(function Composer({
     requestAnimationFrame(() => composerRef.current?.focus())
   }
   textRef.current = text
+  React.useEffect(() => {
+    if (!text) setWrapped(false)
+  }, [text])
   React.useEffect(() => setText(loadDraft(sessionId)), [sessionId])
   React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
   /* ── Warming the draft's agent behind the keystrokes ──
@@ -369,6 +382,7 @@ export const Composer = React.memo(function Composer({
   // Rebindable in Settings › Keyboard, so it is read rather than named here.
   const steerChords = useChords("steer")
   const voice = useVoice((transcript) => setText((t) => (t ? t + " " : "") + transcript))
+  const screenRecord = useScreenRecord((file) => files.add([file]))
   /* A draft has no connection, so none of the connection states apply to it —
      it is waiting to be typed into, which is the one case where the composer
      must stay live whatever else is true. Everything else comes from the phase:
@@ -381,6 +395,11 @@ export const Composer = React.memo(function Composer({
      start one — the call buffers its lines until the first send makes the row. */
   const voiceBackend = defaultVoice(useVoiceProviders().data)
   const inCall = useVoiceCallActive(sessionId)
+  /* Whether there is anything to offer at all — a browser with no speech API
+     and no configured backend is a row with no voice on it, not a key that does
+     nothing. Which of the two the key runs is the button's own pick
+     (`composer/voice-button.tsx`). */
+  const voiceOffered = voice.supported || screenRecord.supported || Boolean(voiceBackend && voiceCall)
   /* The thread's MCP servers, read by the harness's own client: their prompts
      join the `/` menu and their resources the `@` one, for every runtime. */
   const server = useServer()
@@ -730,13 +749,29 @@ export const Composer = React.memo(function Composer({
   /* Only the composer in front of you answers the call chord, like the
      pickers' keys: a background tab's composer must not start a call. */
   const voiceChord = formatChord(useChords("voiceCall")[0] ?? "")
+  /* Each chord *picks* its mode before it runs it: the row has one voice key
+     that acts on the last pick, so a chord that started a call without saying
+     so would leave the key counting down a call the reader never picked. A
+     chord naming the mode already running stops it, which is the same key in
+     the same place. */
   useShortcut(
     "voiceCall",
     () => {
+      setComposerPrefs({ voiceMode: "call" })
       if (inCall) return endVoiceCall(sessionId)
       startVoiceCall(sessionId)
     },
     { enabled: Boolean(voiceBackend && voiceCall && (routed || autoFocus)) }
+  )
+  useShortcut(
+    "voiceNote",
+    () => {
+      if (!voice.supported) return false
+      setComposerPrefs({ voiceMode: "note" })
+      if (voice.listening) voice.stop()
+      else voice.start()
+    },
+    { enabled: routed || autoFocus }
   )
   const focusRequest = useComposerFocusRequest(sessionId)
   React.useEffect(() => {
@@ -886,8 +921,13 @@ export const Composer = React.memo(function Composer({
   const onPaste = (event: ClipboardEvent): boolean => {
     /* Files BEFORE text: a screenshot on the clipboard usually carries a
        text/plain fallback too, and reading text first would turn every
-       screenshot paste into an empty chip. */
-    const pastedFiles = [...(event.clipboardData?.files ?? [])]
+       screenshot paste into an empty chip. `items` is the fallback: an image
+       copied from a page or some OS clipboards rides there with `files` empty. */
+    const data = event.clipboardData
+    const listed = [...(data?.files ?? [])]
+    const pastedFiles = listed.length > 0
+      ? listed
+      : [...(data?.items ?? [])].flatMap((item) => (item.kind === "file" ? (item.getAsFile() ?? []) : []))
     if (pastedFiles.length > 0) {
       event.preventDefault()
       files.add(pastedFiles)
@@ -932,7 +972,9 @@ export const Composer = React.memo(function Composer({
      reader is looking at the words, and the project and the pair are readings
      of a thread they have already chosen. Back the moment the box is idle and
      empty, which is when they are worth drawing. */
-  const marksDown = mini && (focused || hasContent)
+  const stacked = mini && wrapped
+  /* Stacked, the controls have a row to themselves, so nothing needs to fold. */
+  const marksDown = mini && !stacked && (focused || hasContent)
   const canSend =
     !disabled &&
     !gated &&
@@ -1069,7 +1111,6 @@ export const Composer = React.memo(function Composer({
               meta={meta}
               actions={actions}
               editable={draft}
-              showSelectedMcps={false}
               keys={routed || autoFocus}
               /* The readings, in one cluster at the row's end: how far the
                  checklist has got, how many workers are out, what the last turn
@@ -1171,7 +1212,8 @@ export const Composer = React.memo(function Composer({
           "bg-composer-glass backdrop-blur-[var(--app-blur)] backdrop-saturate-[calc(1.3*var(--app-saturate))]",
           voice.listening && "ring-1 ring-destructive/40",
           /* Mini: the editor, the toggle and Send share one line. */
-          mini && "flex items-end gap-1"
+          mini && "flex items-end gap-1",
+          stacked && "flex-wrap"
         )}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return
@@ -1233,8 +1275,9 @@ export const Composer = React.memo(function Composer({
             settings chip without its words.
 
             The two faces — the project's and the pair's — stand down as soon
-            as the reader is writing (`marksDown`): they are a reading of a
-            thread already chosen, and the line is a line. Folded rather than
+            as the reader is writing on one line (`marksDown`): they are a
+            reading of a thread already chosen, and the line is a line. Folded
+            rather than
             unmounted, so the width goes with an ease instead of snapping the
             words sideways under the caret; the "+" stays, because adding to a
             message is something done while writing it. */}
@@ -1287,6 +1330,7 @@ export const Composer = React.memo(function Composer({
           onAcceptGhost={coarse ? fim.accept : undefined}
           pending={fim.pending}
           onOverflowChange={onEditorOverflowChange}
+          onWrapChange={mini ? onEditorWrapChange : undefined}
           expanded={expanded}
           coarse={coarse}
           onKeyDown={composerKeyDown({
@@ -1323,10 +1367,15 @@ export const Composer = React.memo(function Composer({
                the `--text-sm` bump `.thread-transcript` sets, so typing matches
                what is being answered. */
             mini ? "min-w-0 flex-1 text-sm md:text-sm" : "w-full text-sm md:text-sm",
+            /* Stacked: the words first, a whole row wide, the controls under them. */
+            stacked && "order-first basis-full",
             /* Clear of the enhance button in the corner. */
             !mini && (coarse ? "pr-8" : "pr-6"),
             /* Keep the compact default, with more room available on demand. */
-            expanded ? "max-h-[min(50vh,32rem)]" : mini ? "max-h-24" : "max-h-40",
+            /* One cap for both shapes: the expand button appears past it
+               (`onOverflowChange`), so a lower mini cap left long text
+               scrolling with no way to open it up. */
+            expanded ? "max-h-[min(50vh,32rem)]" : "max-h-40",
             /* The card's roomier line under a thumb. In the capsule it is the
                token's business instead — `--composer-mini-line` is restated
                where the pointer is coarse — so the two never claim the same
@@ -1360,21 +1409,25 @@ export const Composer = React.memo(function Composer({
           className={cn(
             "flex items-center gap-1 pt-1",
             coarse && "pt-2",
-            mini && "shrink-0 self-center pt-0 min-h-(--composer-mini-line)"
+            mini && "shrink-0 self-center pt-0 min-h-(--composer-mini-line)",
+            stacked && "ml-auto"
           )}
         >
           {!mini && (
             <>
           {addMenu}
           <div className="flex min-w-0 flex-1 animate-in items-center gap-1 overflow-x-auto fade-in-0 slide-in-from-bottom-1 duration-300 [scrollbar-width:none] motion-reduce:animate-none [&::-webkit-scrollbar]:hidden">
-            {/* Who answers. */}
-            {/* `keys`: Alt+M / Alt+S open these from anywhere in the thread in
-                front — the menus are already arrow/typeahead/Space driven. */}
+            {/* Who answers, and everything about how — the model, the effort,
+                the permission mode and the MCP servers it carries are one menu
+                on one pill. The servers used to be a chip beside this one; they
+                are spawn inputs like model and effort, so they are a row in it
+                (`McpSection`) rather than a second place to look.
+                `keys`: Alt+M opens it from anywhere in the thread in front, and
+                Alt+S lands on that row — the menu is arrow/typeahead/Space
+                driven once it is open. */}
             {meta && (
               <ConfigPopover meta={meta} sessionId={sessionId} actions={actions} thread={thread} keys={routed || autoFocus} />
             )}
-            {/* The MCPs it will carry, read and picked here beside the model. */}
-            {meta && <McpPicker meta={meta} actions={actions} keys={routed || autoFocus} />}
           </div>
             </>
           )}
@@ -1441,38 +1494,40 @@ export const Composer = React.memo(function Composer({
               {expanded ? <Minimize2 className={KEY_MARK} /> : <Maximize2 className={KEY_MARK} />}
             </Button>
           )}
-          {voice.supported && (voice.listening || (!mini && !hasContent && !gated)) && (
-            <Button
-              variant="ghost"
+          {/* One key for both ways of talking to a thread — a dictated note and
+              a call are the same gesture at different lengths, and as two
+              buttons which of them existed depended on two unrelated facts
+              (the browser's speech API, a configured backend). The fold beside
+              it changes which one a click runs; a live one always wins, so the
+              same key stops what it started.
+
+              The mini line keeps only the live half of it: one line has room
+              for a key that stops something, not for a key that starts one. */}
+          {voiceOffered && (!mini || voice.listening || inCall || screenRecord.recording) && (
+            <VoiceButton
               size={iconSize}
-              className={cn(
-                "text-muted-foreground",
-                // Listening is a live state, so it stays coloured — but as text,
-                // not as a filled chip that reintroduces the chrome.
-                voice.listening && "animate-pulse text-destructive hover:text-destructive"
-              )}
-              onClick={() => (voice.listening ? voice.stop() : voice.start())}
               disabled={disabled}
-              title={voice.listening ? "Stop listening" : "Voice input"}
-              aria-pressed={voice.listening}
-            >
-              <Mic className={KEY_MARK} />
-            </Button>
-          )}
-          {voiceBackend && voiceCall && !mini && (
-            <Button
-              variant="ghost"
-              size={iconSize}
-              className={cn(
-                "text-muted-foreground",
-                inCall && "text-primary hover:text-primary"
-              )}
-              onClick={() => (inCall ? endVoiceCall(sessionId) : startVoiceCall(sessionId))}
-              title={voiceChord ? `${inCall ? "End voice call" : "Voice call"} (${voiceChord})` : inCall ? "End voice call" : "Voice call"}
-              aria-pressed={inCall}
-            >
-              <AudioLines className={KEY_MARK} />
-            </Button>
+              active={voice.listening ? "note" : inCall ? "call" : screenRecord.recording ? "screen" : null}
+              dictation={{
+                supported: voice.supported,
+                reason: "This browser has no speech recognition",
+              }}
+              call={{
+                supported: Boolean(voiceBackend && voiceCall),
+                reason: voiceBackend ? "Not offered on this surface" : "No voice backend — add one in Settings › Voice",
+                shortcut: voiceChord || undefined,
+              }}
+              screen={{
+                supported: screenRecord.supported,
+                reason: "This browser can't record the screen",
+              }}
+              onStart={(mode) =>
+                mode === "note" ? voice.start() : mode === "screen" ? void screenRecord.start() : startVoiceCall(sessionId)
+              }
+              onStop={(mode) =>
+                mode === "note" ? voice.stop() : mode === "screen" ? screenRecord.stop() : endVoiceCall(sessionId)
+              }
+            />
           )}
           {/* Pause is the harness's own agent's, not ACP's: the runtime holds
               at its next step boundary and carries on from there, where Stop

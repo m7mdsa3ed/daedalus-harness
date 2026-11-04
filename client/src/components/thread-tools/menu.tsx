@@ -1,8 +1,10 @@
 /**
  * What a thread carries and what it could: skills and slash commands out of
  * the library, as a group of submenus in the thread's settings dropdown. MCP
- * servers are picked on the composer's own chip (`composer/mcp-picker.tsx`),
- * which reads the same hook. This owns everything that is about *the thread* — which links are
+ * servers read the same hook from their own row beside model and effort
+ * (`thread-tools/mcp-section.tsx`), because they are a spawn input like the
+ * pair — not a skill the workspace is written. This owns everything that is
+ * about *the thread* — which links are
  * its own, what a toggle writes, and whether the runtime will read them at all.
  *
  * **The kinds are submenus, not stacked groups**: a library grows, and one flat

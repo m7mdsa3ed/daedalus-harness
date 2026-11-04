@@ -156,4 +156,39 @@ export function rehypeHighlight() {
   }
 }
 
+/* ── The same grammar, for a component that is not markdown ──
+   A generated view's `Code` and `Terminal` blocks are strings, not a markdown
+   AST, so the rehype plugin above cannot reach them. This walks the tree the
+   grammar already returned into React spans instead — one parse, the same
+   classes, so the palette in `index.css` (`.hljs-*`, the `--code-*` tokens)
+   colours a drawn snippet exactly as it colours a fence in prose.
+
+   `language` absent or unregistered is left alone and drawn as plain text: a
+   guessed grammar paints a shell transcript as Perl, which is worse than no
+   colour — the same reason `detect` is not used above. */
+export type Token = { text: string; className?: string }
+
+export function highlightTokens(code: string, language?: string): Token[] | null {
+  if (!language || !lowlight.registered(language)) return null
+  let result
+  try {
+    result = lowlight.highlight(language, code)
+  } catch {
+    return null
+  }
+  const out: Token[] = []
+  const walk = (nodes: Token[], className?: string) => {
+    for (const node of nodes as { type?: string; value?: string; children?: unknown[]; properties?: Record<string, unknown> }[]) {
+      if (node.value) out.push(className ? { text: String(node.value), className } : { text: String(node.value) })
+      if (Array.isArray(node.children)) {
+        const classes = node.properties?.className
+        const next = Array.isArray(classes) ? classes.filter((c): c is string => typeof c === "string").join(" ") : className
+        walk(node.children as Token[], next || className)
+      }
+    }
+  }
+  walk(result.children as unknown as Token[])
+  return out.length > 0 ? out : null
+}
+
 export default rehypeHighlight

@@ -35,7 +35,8 @@ import { inlineFromQuery } from "@/lib/errors"
 import { ErrorNote } from "@/components/error-note"
 import type { SessionMeta } from "@/lib/settings"
 import type { ThreadItem, ThreadState } from "@/lib/store"
-import { formatDuration, formatTokens } from "@/lib/tokens"
+import { formatDuration, formatTokens, formatTps } from "@/lib/tokens"
+import { stepRate } from "@daedalus/tps"
 import { formatMcpName, mcpServerKey, mcpServerLabel } from "@/lib/tools"
 import {
   DOOR_WORDS,
@@ -705,6 +706,7 @@ function CallsView({ calls, items, turnIndex, loading }: { calls: ThreadCall[]; 
                 first <Ms value={row.original.timing.ttftMs} />
               </span>
             )}
+            <StepRate call={row.original} className="block text-[11px]" />
             <GapNote gap={gaps.get(row.original.callId)} />
           </span>
         ),
@@ -746,6 +748,7 @@ function CallsView({ calls, items, turnIndex, loading }: { calls: ThreadCall[]; 
               <span>
                 {formatTokens(b.output)} out{b.reasoning ? ` +${formatTokens(b.reasoning)}` : ""}
               </span>
+              <StepRate call={call} />
             </p>
           </div>
         )
@@ -784,6 +787,17 @@ function TurnHead({ turn, calls }: { turn: number | undefined; calls: ThreadCall
       </span>
     </div>
   )
+}
+
+/** The step's output speed, after its first chunk; nothing where no decode was timed. */
+function StepRate({ call, className }: { call: ThreadCall; className?: string }) {
+  const rate = stepRate(call)
+  const text = rate === null ? null : formatTps(rate)
+  return text ? (
+    <span className={cn("tabular-nums text-muted-foreground", className)} title="Output tokens per second after the first chunk">
+      {text}
+    </span>
+  ) : null
 }
 
 function Ms({ value }: { value: number | undefined }) {

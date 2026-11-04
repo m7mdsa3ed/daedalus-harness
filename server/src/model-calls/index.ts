@@ -186,6 +186,7 @@ export function fileCall(thread: CallThread, call: ModelCall): Promise<void> {
       outputToolCalls: call.output?.toolCalls ?? null,
       toolUse: call.toolUse ?? null,
       called: call.called ?? null,
+      timing: call.timing ?? null,
       profileId: thread.profileId,
       projectId: thread.projectId,
       ...names,
@@ -238,6 +239,7 @@ function callOf(row: Row): ModelCall & { turnId: string | null } {
       : {}),
     ...(row.toolUse ? { toolUse: row.toolUse } : {}),
     ...(row.called ? { called: row.called } : {}),
+    ...(row.timing ? { timing: row.timing } : {}),
   };
 }
 

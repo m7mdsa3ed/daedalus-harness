@@ -96,6 +96,10 @@ export interface ServerConfig {
    * optional cloud map style. Unset keys mean the map says how to configure it.
    */
   geo?: { googleMapsKey?: string; googleServerKey?: string; googleMapId?: string };
+  /** `false` turns first-message persona classification off on every project
+      (`persona-classify.ts`); unset is on, and each project can still turn it
+      off for itself (`projects.default_classify_persona`). */
+  classifyPersona?: boolean;
   fcm?: FcmConfig;
   webSearch?: WebSearchConfig;
 }
@@ -168,6 +172,7 @@ export function loadConfig(): ServerConfig {
     ...(existing.mcpOauthRedirectBase ? { mcpOauthRedirectBase: existing.mcpOauthRedirectBase } : {}),
     ...(existing.mcpRegistryUrl ? { mcpRegistryUrl: existing.mcpRegistryUrl } : {}),
     ...(existing.geo ? { geo: existing.geo as ServerConfig["geo"] } : {}),
+    ...(existing.classifyPersona === false ? { classifyPersona: false } : {}),
     ...(existing.fcm ? { fcm: existing.fcm as FcmConfig } : {}),
     ...(existing.webSearch ? { webSearch: existing.webSearch as WebSearchConfig } : {}),
   };

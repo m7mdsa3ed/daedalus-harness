@@ -29,6 +29,7 @@ import {
   type StepRunner,
 } from "../src/workflows/drive.js";
 import { foldRun } from "../src/workflows/fold.js";
+import { WorkflowDefinitionSchema, compileDefinition } from "../src/workflows/graph.js";
 import {
   ENGINE_LIMITS,
   callHash,
@@ -334,6 +335,78 @@ await test("parallel(): concurrent hooks keep call order for keys; results in in
   const out = await h.run();
   assert.deepEqual(out.result, ["out:a", "out:a", "out:b"]);
   assert.deepEqual(h.calls.map((c) => c.key.split("#")[1]), ["0", "1", "0"]);
+});
+
+await test("parallel(): the branches overlap in time, not one after another", async () => {
+  const h = await harness({
+    spec: specOf("return await parallel([() => agent('a', {label: 'a'}), () => agent('b', {label: 'b'}), () => agent('c', {label: 'c'})]);"),
+    delayMs: 40,
+  });
+  const t0 = Date.now();
+  await h.run();
+  assert.equal(h.maxLive.n, 3, `three branches must be live at once, saw ${h.maxLive.n}`);
+  assert.ok(Date.now() - t0 < 110, `three 40ms steps took ${Date.now() - t0}ms — serial`);
+});
+
+await test("a compiled graph runs independent steps side by side and waits on dependsOn", async () => {
+  const def = WorkflowDefinitionSchema.parse({
+    name: "fan",
+    steps: [
+      { name: "a", prompt: "a" },
+      { name: "b", prompt: "b" },
+      { name: "c", prompt: "c" },
+      { name: "join", prompt: "join {{steps.a.output}}", dependsOn: ["a", "b", "c"] },
+    ],
+  });
+  const { source, meta } = compileDefinition(def);
+  const h = await harness({ spec: { ...specOf(""), source, meta, flow: { concurrency: def.maxParallel } }, delayMs: 30 });
+  await h.run();
+  assert.equal(h.maxLive.n, 3, `a, b and c must run at once, saw ${h.maxLive.n}`);
+  assert.equal(h.started.at(-1), "join");
+});
+
+await test("phases: a phase's steps run side by side, the next phase after", async () => {
+  const def = WorkflowDefinitionSchema.parse({
+    name: "phased",
+    phases: [
+      { name: "one", steps: [{ name: "x", prompt: "x" }, { name: "y", prompt: "y" }] },
+      { name: "two", steps: [{ name: "z", prompt: "z" }] },
+    ],
+  });
+  const { source, meta } = compileDefinition(def);
+  const h = await harness({ spec: { ...specOf(""), source, meta, flow: { concurrency: def.maxParallel } }, delayMs: 30 });
+  await h.run();
+  assert.equal(h.maxLive.n, 2);
+  assert.equal(h.started.at(-1), "z");
+});
+
+await test("a compiled pipeline states its whole outline from the first spawn", async () => {
+  const def = WorkflowDefinitionSchema.parse({
+    name: "pipe",
+    phases: [
+      { name: "build", steps: [{ name: "one", title: "1. One", prompt: "one" }] },
+      { name: "check", steps: [{ name: "two", prompt: "two" }, { name: "three", prompt: "three" }] },
+    ],
+  });
+  const { source, meta } = compileDefinition(def);
+  const seen: { name: string; plan: unknown; total: number; phase: unknown; title: string }[] = [];
+  const h = await harness({ spec: { ...specOf(""), source, meta, flow: { concurrency: def.maxParallel } } });
+  await h.run({
+    runStep: async (call) => {
+      const p = call.placement;
+      seen.push({ name: call.name, plan: p.plan, total: p.total, phase: p.phase, title: p.title });
+      await call.append({ kind: "step_started", name: call.name, phase: call.spec.phase, sessionId: `c-${call.name}`, attempt: 1, startedAt: 1 });
+      await call.append({ kind: "step_completed", name: call.name, output: "ok", sessionId: `c-${call.name}`, tokens: 0, toolUses: 0 });
+      return { output: "ok", sessionId: `c-${call.name}`, tokens: 0, toolUses: 0 };
+    },
+  });
+  const first = seen[0]!;
+  assert.equal(first.name, "one");
+  assert.equal(first.total, 3, "the first spawn already counts every step");
+  assert.deepEqual(first.plan, [{ name: "build", steps: ["one"] }, { name: "check", steps: ["two", "three"] }]);
+  assert.deepEqual(first.phase, { index: 0, name: "build" });
+  assert.equal(first.title, "1. One");
+  assert.deepEqual(seen.find((s) => s.name === "three")!.phase, { index: 1, name: "check" });
 });
 
 await test("map(): bounded by the script's concurrency AND the run's flow width", async () => {
@@ -919,6 +992,29 @@ await test("R11/R12 shutdown closes the door; a launch that dies after createRun
   }
 });
 
+await test("a shutdown journals nothing: the unwinding script's 'failed' and 'skipped' lines never reach the next boot", async () => {
+  const r = rig({ stepMode: "pending" });
+  const { source, meta } = compileDefinition(
+    WorkflowDefinitionSchema.parse({
+      name: "pipe",
+      steps: [
+        { name: "a", prompt: "a" },
+        { name: "b", prompt: "b", dependsOn: ["a"] },
+        { name: "c", prompt: "c", dependsOn: ["b"] },
+      ],
+    }),
+  );
+  const view = await r.engine.start(r.parent as never, { script: source });
+  assert.ok(meta.plan, "the compiled meta carries the outline");
+  await until(() => r.stepCalls.length === 1, "step a to start");
+  const before = r.store.journals.get(view.id)!.length;
+  r.engine.shutdown();
+  await tick(30);
+  const after = r.store.journals.get(view.id)!.slice(before);
+  assert.deepEqual(after.map((e) => e.payload.kind), [], "a detached run writes nothing");
+  assert.equal(r.store.headers.get(view.id)!.status, "running", "the row stays running for the next boot");
+});
+
 await test("B9 a wait() during finalize waits for the end and is told, so the notification is NOT sent as well", async () => {
   const r = rig();
   r.store.statusDelay = { completed: 80 };
@@ -983,7 +1079,8 @@ await test("B8/B2/B5 recovery: a journal that already finished only fixes the ro
   r.store.running = [r.store.headers.get("A")!, r.store.headers.get("B")!];
   await r.engine.recoverAtBoot({ resume: false });
   assert.deepEqual(r.store.statuses, [{ id: "A", status: "completed" }]);
-  assert.equal(r.notes.length, 0, "no second notification for A");
+  // The crash fell before `finalize` told the parent, so boot tells it — exactly once.
+  assert.equal(r.notes.length, 1, "A's parent is told the run ended");
   assert.ok(!privately(r.engine).runs.has("A"));
   const before = r.runsActive.length;
   // B is registered but not driven yet; the recovery marker is already in its journal.

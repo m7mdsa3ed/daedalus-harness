@@ -696,7 +696,11 @@ export interface ModelCall {
   billed: acp.Usage;
   /** Only when the runtime says it (Claude Code's `cost_usd`). */
   costUsd?: number;
-  timing?: { ttftMs?: number; decodeMs?: number };
+  /** `decodeMs` is first output to last; `decodeTokens` the output written in
+      it, when that is not the billed count (reasoning billed but never
+      streamed was written before the first chunk). The step's speed is the
+      one over the other (`stepRate`, tps.ts). */
+  timing?: { ttftMs?: number; decodeMs?: number; decodeTokens?: number };
   prompt?: PromptParts;
   /** "the system prompt", "tool schemas" — the door's own words. */
   missing?: string[];

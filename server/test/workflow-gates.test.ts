@@ -773,5 +773,42 @@ await test("R10: a timer set before a restart fires on wall clock — the downti
   assert.equal(f.events.at(-1)!.payload.kind, "timer_fired");
 });
 
+// ---- a continued run (resumeFromRunId) ----
+await test("continue: resolved prior gates answer from the old journal, are copied, and cause no side effect", async () => {
+  const old = fake();
+  old.execResult = { exitCode: 0, stdout: "pushed", stderr: "" };
+  const og = new Gates(old.host).hooks();
+  await og.sh("git push", {});
+  const asking = og.approve("ship it?", { options: ["yes", "no"] });
+  await settle();
+  old.asks[0]!.answer("yes");
+  await asking;
+  const sleeping = og.sleep(60);
+  await settle();
+  old.timers[0]!.fire(true);
+  await sleeping;
+
+  const f = fake();
+  const g = new Gates(f.host, old.events).hooks();
+  assert.deepEqual(await g.sh("git push", {}), { exitCode: 0, stdout: "pushed", stderr: "" });
+  assert.equal(await g.approve("ship it?", { options: ["yes", "no"] }), "yes");
+  await g.sleep(60);
+  assert.equal(f.execs.length + f.asks.length + f.timers.length, 0, "nothing ran, asked or armed");
+  assert.deepEqual(kinds(f), kinds(old), "the new journal stands alone");
+});
+
+await test("continue: a call that changed, or that the prior run never resolved, runs fresh", async () => {
+  const old = fake([
+    { key: "sh:0", payload: { kind: "shell_started", cmd: "make", cwd: null } },
+    { key: "sh:0", payload: { kind: "shell", cmd: "make", cwd: null, exitCode: 0, stdout: "", stderr: "" } },
+    { key: "sh:1", payload: { kind: "shell_started", cmd: "deploy", cwd: null } },
+  ]);
+  const f = fake();
+  const g = new Gates(f.host, old.events).hooks();
+  await g.sh("make test", {}); // sh:0, but a different command
+  await g.sh("deploy", {}); // sh:1, started and never resolved before
+  assert.deepEqual(f.execs.map((e) => e.cmd), ["make test", "deploy"]);
+});
+
 console.log(`\n${passed} passed${failures.length ? `, ${failures.length} failed: ${failures.join(", ")}` : ""}`);
 process.exit(failures.length ? 1 : 0);

@@ -25,6 +25,7 @@ import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { PathInput } from "@/components/ui/suggesting-input"
 import { api, type HelperCommand, type Project, type ServerSettings } from "@/lib/settings"
@@ -41,6 +42,7 @@ import {
 } from "@/lib/queries/catalog"
 import {
   useAddKnowledge,
+  useFeature,
   useDeleteHelper,
   useDeleteKnowledge,
   useProjectKnowledge,
@@ -59,6 +61,7 @@ import {
   PageForm,
   Picker,
   PageHeader,
+  Row,
   Section,
   StatStrip,
 } from "./primitives"
@@ -318,7 +321,9 @@ export function ProjectForm({
     description: project?.description ?? "",
     logoUrl: project?.logoUrl ?? "",
     voiceProvider: project?.defaults?.voiceProvider ?? "",
+    classifyPersona: project?.defaults?.classifyPersona ?? true,
   }))
+  const canClassify = useFeature("personaClassify")
   const qc = useQueryClient()
   const [busy, setBusy] = React.useState(false)
   const [saveError, setSaveError] = React.useState<InlineError | null>(null)
@@ -431,6 +436,23 @@ export function ProjectForm({
                 saveProjectDefaults(settings, qc, project.id, { voiceProvider })
               }}
             />
+          </div>
+        )}
+        {project && canClassify && (
+          <div className="@panel-sm:col-span-2">
+            <Row
+              title="Pick a persona from the first message"
+              subtitle="A new thread's first message chooses the persona that answers it, on the thread's Small helper model. Threads without one, or with a persona picked by hand, are left alone."
+            >
+              <Switch
+                checked={form.classifyPersona}
+                onCheckedChange={(classifyPersona) => {
+                  set({ classifyPersona })
+                  saveProjectDefaults(settings, qc, project.id, { classifyPersona })
+                }}
+                aria-label="Pick a persona from the first message"
+              />
+            </Row>
           </div>
         )}
     </div>

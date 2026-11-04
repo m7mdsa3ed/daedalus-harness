@@ -9,6 +9,7 @@
  */
 import {
   canon,
+  runKindOf,
   type GateView,
   type JournalEvent,
   type RunSpec,
@@ -275,6 +276,7 @@ export function foldRun(header: RunHeaderInput, events: JournalEvent[]): RunView
     logs,
     usage: { tokens, costUsd, agents: started.size },
     budgets: header.spec?.budgets ?? {},
+    kind: runKindOf(header.spec),
   };
   if (finished) view.result = canon(finished.result);
   return view;

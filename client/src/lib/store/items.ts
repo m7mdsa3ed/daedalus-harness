@@ -158,6 +158,11 @@ export interface SubagentItem {
       otherwise, drawn with the pair named on it: its child is the one worker in
       a transcript that is not the thread's own agent. */
   ask?: AskInfo
+  /** The harness run this child is a step of (`_meta.daedalus.runId`, on every
+      spawn the workflow engine makes — a step, an ask, an own-pair subagent).
+      Such a child outlives the turn that launched it and its end is the
+      engine's to say, so a turn ending never settles it (`settleTools`). */
+  runId?: string
   /** What this child's turns cost, accumulated — one `_daedalus/subagent_usage`
       per settled turn, so a step that took a repair turn adds up. Absent for a
       child whose runtime never reported any: an agent that does not meter is

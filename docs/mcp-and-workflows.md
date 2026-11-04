@@ -202,6 +202,15 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
 - **Flow control and budgets** (`limits.ts`): one `FlowScheduler` (global cap, per-run width, per-key
   pools, priority without head-of-line blocking) and a `BudgetTracker` (tokens, cost, agents, wall
   time minus paused time). A budget ends the run `budget_exceeded` with the partial result.
+- **Neither a run nor a step has a clock unless it names one.** `ENGINE_LIMITS.totalTimeoutSec.default`
+  and `stepTimeoutSec.default` are `null`: an absent `totalTimeoutSec` arms no wall clock, and a step
+  with no `timeoutSec` waits on its turn however long it takes. They used to default to two hours and
+  fifteen minutes, which failed long workflows (`timed out after 7200s`) for a deadline nobody chose —
+  the numbers a runtime invents are a bug, not a safety net. What bounds a run is what its author said:
+  `totalTimeoutSec`, `budgets.wallSec` (a distinct clock, still armed only when set), a routine's
+  `maxRunSeconds`, or an explicit cancel. `max` remains the ceiling on a value that *was* named. A
+  routine whose policy names no wall clock (`maxRunSeconds: 0`, drawn as "no time limit") waits up to
+  `MAX_TIMEOUT_MS` for its workflow rather than inventing a three-hour one.
 - **Entry points.** The saved library is `wf_saved` mirrored to `.claude/workflows/` (`saved.ts`);
   routines may carry `{kind:"workflow", ref:{name}, args}`; the project page lists saved workflows with
   a Run form generated from `meta.inputs`. A run still needs a parent thread (`engine.start(parent, …)`);
@@ -579,11 +588,29 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
   saved scripts and hand work to nobody.
 - **The schema is flat and validation is not a mode.** There is no `oneOf` (some
   OpenAI-compatible providers reject union schemas) and no `mode` enum: every shape field is
-  optional, exactly one of `prompt`/`steps`/`script`/`name` is required, and the handler
-  answers a sentence naming what it got. The top-level pair and model are the **default for
-  every step**, so a one-step call is not a special case — it is a workflow whose only step
-  inherits everything. `model` beats `role`, and `role` beats the pair's default.
-- **The schema is generated per thread.** `steps`/`script`/`name`/`args` appear only where
+  optional, exactly one of `prompt`/`steps` (`phases`)/`script`/`name` is required, and the
+  handler answers a sentence naming what it got. The top-level pair and model are the
+  **default for every step**, so a one-step call is not a special case — it is a workflow
+  whose only step inherits everything. `model` beats `role`, and `role` beats the pair's
+  default.
+- **Everything a definition takes, the tool lets a graph say.** `phases`, `args` (a graph's
+  `inputs` — a parameterised plan used to be refused outright), `budgets`, `maxParallel`,
+  `priority`, `concurrencyKey`, `onRestart` and `totalTimeoutSec`, passed through and left
+  absent when not given, because the engine spreads them over a definition's own and an
+  `undefined` erases one. A one-step run refuses the graph fields **by name** instead of
+  dropping them: an errand has no graph to order and no budget, so a call that names one and
+  looks constrained is worse than one that is told to use `timeoutSec`.
+- **A run's shape is read off the run, never off how many steps it has** (`RunView.kind`,
+  `runKindOf` in `workflows/types.ts`, set by the fold from the spec). Only an **ask** and a
+  **subagent** are answered as the one step's output; a workflow that happens to have a
+  single step keeps its whole view — `result`, gates, usage, artifacts and budgets — on the
+  start and on every later `agent_status`, which used to lose them to the same flatten.
+- **`waitSec` has two defaults and says so.** A one-step errand blocks 45s by default because
+  it usually answers by then; a workflow starts in the background (`wait=0`) unless asked,
+  because a long job is not an errand. The manual's BACKGROUND paragraph is true exactly
+  there, and the field description names both so a model cannot assume one for the other.
+- **The schema is generated per thread.** `steps`/`phases`/`script`/`name`/`args` and the
+  flow fields appear only where
   `AgentDef.workflowsVia !== "native"` (Claude Code keeps its own `Workflow`), read off the
   row and never off the id; `role` appears only when the profile's vocabulary is non-empty,
   and the pair list in the description comes from `WorkflowEngine.pairs`. A capability that
@@ -627,6 +654,10 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
   `continue_agent` did. A **workflow run** is relaunched from its journal
   (`resumeFromRunId`): completed steps answer without running or costing anything, and only
   the failed, stopped or new calls run, which is what recovery already does after a reboot.
+  **So do its gates** (`Gates`' second argument): a resolved `sh`, `approve`, timer or
+  `waitFor` answers from the prior journal and is copied into the new one — matched on the
+  call itself (command and cwd, question and options, timer reason), because gate keys are
+  ordinals and an edited script can move them. A `sh("git push")` used to run twice.
   **A call that did not complete keeps its conversation**: `drive.ts` hands the replayed call
   the child thread its last attempt left, and `step.ts` revives it rather than spawning a fresh
   one (`onRestart: "rerun"` still refuses; a child that is gone falls back to a new thread).
@@ -647,7 +678,7 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
   without it had silently lost the capability. `serversFor` folds `requiredMcp` into the
   thread's effective links **before** the library is filtered on `linked`, so no stored link
   set can leave it out and an unlink changes nothing; one level still wins. The pickers draw
-  those rows on and locked with "required by <agent>" (`mcp-picker.tsx`), reading
+  those rows on and locked with "required by <agent>" (`thread-tools/mcp-section.tsx`), reading
   `requiredMcp` off the agent row so the client compares no ids.
 - **What that runtime gives up.** The in-process `task`/`list_agents`/`send_message`
   (`agent/src/tools/`) are **withdrawn where the thread has this server** and kept where it
@@ -739,8 +770,10 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
 ## Two owners: profile and thread
 
 - **MCP servers and skills are selected; library slash commands are globally available.**
-  Profiles and threads link MCP servers and skills. MCP servers are picked on the composer's
-  chip (`McpPicker`, `components/composer/mcp-picker.tsx`); skills are picked in the thread
+  Profiles and threads link MCP servers and skills. MCP servers are picked in the thread's
+  session settings menu, beside model and effort (`McpSection`,
+  `components/thread-tools/mcp-section.tsx`) — a link is a spawn input like the pair, so it
+  belongs with the pair and not on a chip of its own; skills are picked in the thread
   Tools menu (`ThreadToolsMenu`, `components/thread-tools/menu.tsx`). Library commands are
   different: they are not injected into ordinary prompts and are not a per-thread selection.
   Every library command is available to invoke by `/name` on runtimes with a declared command

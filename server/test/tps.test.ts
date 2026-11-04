@@ -8,11 +8,13 @@
 //   - the decode clock answers only for a turn it could see all of (no tool
 //     call), and prefers the runtime's own reading when one is sent
 //   - time to first token starts at the model's output, not at any update
+//   - a step's speed is its decode, prefers the tokens actually timed, and
+//     refuses a buffered burst
 // Run: pnpm test:tps
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
 
-const { addTps, tpsAverage, generationRate } = await import("../src/tps.js");
+const { addTps, tpsAverage, generationRate, stepRate } = await import("../src/tps.js");
 
 // --- one turn: 1,000 tokens in 50s of wall clock, 10s of it writing ---
 const turn = { outputTokens: 1_000, durationMs: 50_000, toolDurationMs: 35_000, generation: { outputTokens: 1_000, decodeMs: 10_000 } };
@@ -125,5 +127,13 @@ assert.equal(isModelOutput(call), true);
 assert.equal(isModelOutput({ sessionUpdate: "session_info_update", title: "t" } as never), false, "the title is sent before the model is called");
 assert.equal(isModelOutput({ sessionUpdate: "current_mode_update", currentModeId: "default" } as never), false);
 assert.equal(isModelOutput({ sessionUpdate: "usage_update", used: 1, size: 2 } as never), false);
+
+// --- one step: output tokens over first chunk to last ---
+const billed = { totalTokens: 1_500, inputTokens: 1_000, outputTokens: 500 };
+assert.equal(stepRate({ billed, timing: { ttftMs: 800, decodeMs: 5_000 } }), 100);
+assert.equal(stepRate({ billed, timing: { ttftMs: 800, decodeMs: 5_000, decodeTokens: 300 } }), 60, "hidden reasoning is not in the numerator");
+assert.equal(stepRate({ billed, timing: { ttftMs: 6_000, decodeMs: 60 } }), null, "a burst after a long wait is delivery, not decode");
+assert.equal(stepRate({ billed, timing: { ttftMs: 800 } }), null, "no decode, no rate");
+assert.equal(stepRate({ billed }), null);
 
 console.log("tps: ok");

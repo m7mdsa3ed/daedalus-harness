@@ -54,7 +54,7 @@ export interface ModelCall {
   billed: acp.Usage;
   /** Only when the runtime says it. */
   costUsd?: number;
-  timing?: { ttftMs?: number; decodeMs?: number };
+  timing?: { ttftMs?: number; decodeMs?: number; decodeTokens?: number };
   /** ~ Where the prompt went. Present parts sum, with `unknown`, to fresh + cacheRead + cacheWrite.
       A part the door could not see is null and named in `missing`. */
   prompt?: PromptParts;
@@ -354,7 +354,8 @@ export class Tracer {
     this.steps.set(key, step);
     const billed = toAcpUsage(normalizeUsage(event.usage))!;
     const perf = event.performance;
-    const decodeMs = generationOf(event)?.decodeMs;
+    const generation = generationOf(event);
+    const decodeMs = generation?.decodeMs;
     const call: ModelCall = {
       /* The SDK mints one `callId` per `streamText` and repeats it on every
          step's start and end, so it names an attempt, not a request; the
@@ -375,6 +376,7 @@ export class Tracer {
             timing: {
               ...(perf.timeToFirstOutputMs !== undefined ? { ttftMs: Math.round(perf.timeToFirstOutputMs) } : {}),
               ...(decodeMs !== undefined ? { decodeMs } : {}),
+              ...(generation && generation.outputTokens !== billed.outputTokens ? { decodeTokens: generation.outputTokens } : {}),
             },
           }
         : {}),

@@ -60,6 +60,13 @@ export const FEATURES = [
       answer `{ ok }` whatever happens, so a client that cannot warm (a hosted
       sandbox answers `false`) sends exactly as it always did. */
   "draftPrewarm",
+  /** A new thread's first message may pick its persona (`persona-classify.ts`,
+      in `POST /api/sessions`), said as an ordinary `Persona` config notice, and
+      `ProjectDefaults.classifyPersona` turns it off per project. */
+  "personaClassify",
+  /** `GET /api/decision/persona/prompt`: the body the persona classifier sends
+      its decision model, for Settings › AI to show. */
+  "personaPrompt",
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];

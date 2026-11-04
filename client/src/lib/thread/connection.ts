@@ -791,6 +791,7 @@ export class ThreadConnection {
        holds the words already typed into it. */
     this.apply({ type: "open-begin" })
     this.state.promptActiveAtLoad = false
+    this.state.backgroundAtLoad = false
     /* Whatever was on this thread before is not this socket, and two sockets on
        one session are two peers folding every event into the same store — which
        is what a duplicated transcript is. */
@@ -817,7 +818,14 @@ export class ThreadConnection {
        this object says once it is not the registered one — so connecting here
        would put a second peer on the same session. */
     if (this.socket !== socket) return false
-    if (read && !live && !this.state.promptActiveAtLoad) {
+    /* A thread whose workflow (or ask, or subagent) is still running has news
+       coming with no turn open and, often, no process at all: the steps are
+       their own threads and report onto this one. Reading its document and
+       stopping there was a card frozen at the moment the thread was opened —
+       every step that started or finished afterwards never arrived until a
+       reload. It attaches, as a running turn does; attaching never revives. */
+    const newsComing = this.state.promptActiveAtLoad || this.state.backgroundAtLoad
+    if (read && !live && !newsComing) {
       /* Read, and nothing asked for a peer. `read` rather than a dressed-up
          "connected": the composer takes words exactly as it does on an archived
          thread, and sending is what opens the socket.
@@ -831,7 +839,7 @@ export class ThreadConnection {
       if (!archived) this.apply({ type: "read" })
       return archived
     }
-    if (archived) {
+    if (archived && !(read && !live && newsComing)) {
       /* Nothing to connect to, and nothing coming — `onCaughtUp` has already
          moved the phase to `archived`, which is a state of its own rather than
          a dressed-up "connected". Sending is what revives it.

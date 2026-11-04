@@ -40,6 +40,7 @@ import {
   PersonaRow,
   PILL,
   PillLabel,
+  RecentConfigsGroup,
   SessionSettingsSub,
   MenuSearchInput,
   menuFilter,
@@ -57,7 +58,7 @@ import {
 import { useIsMobile } from "@/hooks/use-device";
 import { useMenuShortcut } from "@/hooks/use-hotkey";
 import type { ShortcutId } from "@/lib/shortcuts";
-import { McpPicker } from "@/components/composer/mcp-picker";
+import { McpSection } from "@/components/thread-tools/mcp-section";
 import { ThreadToolsSections } from "@/components/thread-tools/menu";
 import { cn } from "@/lib/utils";
 import type { Actions } from "@/lib/actions";
@@ -164,7 +165,6 @@ export function DraftScopeRow({
   remember = true,
   editable = true,
   trailing,
-  showSelectedMcps = true,
   keys = false,
 }: {
   meta: SessionMeta;
@@ -179,11 +179,9 @@ export function DraftScopeRow({
       full the window is belongs with where the thread runs, not with the
       controls that send. */
   trailing?: React.ReactNode;
-  /** Keep the scope path focused on location when the composer has its own
-      selected-MCP readout beside model configuration. */
-  showSelectedMcps?: boolean;
-  /** Answer `changeProject` (and `chooseMcp` when the MCPs are drawn here) —
-      only the composer in front of you may. */
+  /** Answer `changeProject` — only the composer in front of you may. The MCPs
+      are not here any more: they are a spawn input, so they sit in the settings
+      menu beside model and effort (`McpSection`). */
   keys?: boolean;
 }) {
   const { projects, project, configure } = useDraft(meta, actions, remember);
@@ -253,9 +251,6 @@ export function DraftScopeRow({
           editable={editable && remember}
           onToggle={(isolate) => configure({ isolate })}
         />
-        {showSelectedMcps && (
-          <McpPicker meta={meta} actions={actions} remember={remember} keys={keys} />
-        )}
       </nav>
       {trailing && <span className="flex shrink-0 items-center gap-1">{trailing}</span>}
     </div>
@@ -809,6 +804,16 @@ export function DraftConfigPopover({
         }
       />
       <DropdownMenuContent align="start" className="w-60" finalFocus={shell?.finalFocus}>
+        {/* No agent filter: a draft can still pick its runtime. */}
+        <RecentConfigsGroup
+          current={{
+            agentId: meta.agentId,
+            profileId: meta.profileId,
+            model: meta.model ?? "",
+            effort: meta.effort ?? "",
+          }}
+          onPick={(config) => configure(config)}
+        />
         <DropdownMenuGroup>
           <DropdownMenuLabel>Start this thread with</DropdownMenuLabel>
           {/* First, because it decides what every row below it even means —
@@ -831,6 +836,10 @@ export function DraftConfigPopover({
             <MenuRow {...modelPick} />
           )}
           {effortPick && <MenuRow {...effortPick} />}
+          {/* The servers it will carry, beside the pair — a spawn input, like
+              model and effort. The mode stays under Agent options: it goes
+              over `session/set_mode` on a live process, not over the spawn. */}
+          <McpSection meta={meta} actions={actions} remember={remember} />
           <PersonaRow value={meta.personaId} onSelect={(personaId) => configure({ personaId })} />
           <AskAgentsSub
             value={meta.askProfiles ?? {}}

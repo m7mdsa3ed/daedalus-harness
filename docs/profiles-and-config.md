@@ -156,7 +156,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   the transcript like a live pick and drops a refusal with a notice rather than failing the
   send. **Approving** is `{applyStaged}` → `approveStaged`: with a turn running it is
   `steerStaged` — picks, plus a profile/model/effort move `applyConfigLive` accepts, and
-  never a respawn — so a persona or follow-ups pick stays staged for the next turn; on an
+  never a respawn — so a follow-ups pick stays staged for the next turn; on an
   idle thread it is the whole flush a send would make. The queue drain calls `steerStaged`
   before `startTurn`: live-capable picks land at the next turn, still no restart between two
   messages sent together. A patch holding only selectors never reaches `applyConfig`
@@ -442,9 +442,19 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   trailers after, and every door carries the one text (`personaVia`: AIR `customInstructions`,
   `{personaPrompt}`, `{personaFile}`). The row is read at spawn, so an edit reaches a thread on
   its next respawn and a deleted persona reads as none — no foreign key, no cascade.
-- **A pick is staged like any spawn input** (`StagedConfig.personaId`, `null` = none):
-  `applyConfigLive` refuses it, so it waits for the next turn, a spawn or Apply now, and is
-  narrated as a `Persona` config row. The pick publishes onto the project like `uiGroups`.
+- **A pick on a started thread is taken at once and said in the next message, not staged.**
+  The persona heads the system prompt, so a respawn onto a new one sends a new prefix and the
+  whole history misses the provider's prompt cache once. Instead `applyConfig` freezes what the
+  system prompt carries (`sessions.system_persona_id`: `""` = none, null = follows
+  `persona_id`), moves `persona_id`, sets `persona_pending` and says a `Persona` config row;
+  `startTurn` appends `personaSwitchBlock` to the next prompt — a send, a drained row or a
+  steer — through `AcpBridge.prompt`'s `suffix`, which reaches the agent and never the journal.
+  A `session/load` replay can bring it back, so the client folds it out of the bubble
+  (`dropPersonaSwitch`). Every later spawn reads the frozen persona, so its prefix is the
+  cached one. A rewind and a fork set the note again (the cut may have taken it); an agent
+  move clears both, since a different runtime spawns from its own store. A pick that leaves
+  nothing else changed answers `{live:true}` rather than staging the menu's model and effort.
+  The pick publishes onto the project like `uiGroups`.
 - **Model and effort stay the profile's.** The first personas carried a thinking budget and
   an effort; those columns are still declared (a push would drop them) and never read.
 - **A workflow step inherits its parent's persona; an ask does not** — the asked pair works

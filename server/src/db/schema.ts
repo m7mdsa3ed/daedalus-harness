@@ -17,7 +17,7 @@ import type { AuthorizationServerMetadata } from "@modelcontextprotocol/sdk/shar
 import type * as acp from "../acp.js";
 import type { AutonomyPolicy } from "../autonomy.js";
 import type { PeakSchedule } from "../peak.js";
-import type { CallDoor, ToolUse } from "../protocol.js";
+import type { CallDoor, ModelCall, ToolUse } from "../protocol.js";
 
 /*
  * The harness's own data. Everything that used to be a `data/*.json` file lives
@@ -638,6 +638,10 @@ export const projects = pgTable("projects", {
   defaultUiGroups: jsonb("default_ui_groups").$type<string[]>(),
   /** The persona a new thread here starts under; null for none, like `sessions.persona_id`. */
   defaultPersonaId: text("default_persona_id"),
+  /** Whether a new thread here may have its first message classified into a
+      persona (`persona-classify.ts`). On unless turned off; the global
+      `config.classifyPersona: false` turns it off everywhere. */
+  defaultClassifyPersona: boolean("default_classify_persona").notNull().default(true),
   /** Which voice backend a call on a thread in this project uses (`voice.ts`);
       the first scope asked. Null = no say, the profile's then the default. */
   defaultVoiceProvider: text("default_voice_provider"),
@@ -1061,6 +1065,14 @@ export const sessions = pgTable(
         foreign key: a deleted persona reads as none on the next spawn, which is
         what it is. Spawn text like `ui_groups`, so a change costs a respawn. */
     personaId: text("persona_id"),
+    /** The persona the system prompt keeps carrying after a started thread's
+        persona moved: "" for none, null while it simply follows `persona_id`.
+        Frozen so every later spawn sends the same prefix and the provider's
+        prompt cache still hits; the change itself rides a message
+        (`personaSwitchBlock`). */
+    systemPersonaId: text("system_persona_id"),
+    /** A persona change the agent has not been told yet: the next prompt carries it. */
+    personaPending: boolean("persona_pending").notNull().default(false),
     title: text("title").notNull(),
     /** The git worktree this thread runs in, project-relative
         (`.daedalus/worktrees/<short-id>`), or null for a thread in the
@@ -1822,6 +1834,7 @@ export const modelCalls = pgTable(
     /** `ModelCall.toolUse` / `.called` as sent — read back whole, never queried into. */
     toolUse: jsonb("tool_use").$type<ToolUse[]>(),
     called: jsonb("called").$type<string[]>(),
+    timing: jsonb("timing").$type<NonNullable<ModelCall["timing"]>>(),
     threadTitle: text("thread_title").notNull(),
     profileId: text("profile_id").notNull(),
     profileName: text("profile_name").notNull(),

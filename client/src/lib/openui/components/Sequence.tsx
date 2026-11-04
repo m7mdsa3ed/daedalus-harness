@@ -15,8 +15,7 @@ import { z } from "zod/v4"
 import { RotateCw } from "lucide-react"
 import { defineComponent } from "@openuidev/react-lang"
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
-import { BODY, Box, META, PAD } from "../kit"
+import { BODY, Box, META, PAD } from "@/lib/openui/kit"
 
 /** Two tracks per actor: actor `i`'s lifeline is grid line `2i + 2`. */
 const mid = (i: number) => 2 * i + 2
@@ -74,13 +73,20 @@ export const Sequence = defineComponent({
         const hi = Math.max(a, b)
         return [
           <li key={i} className="grid" style={columns}>
-            <div
-              className={cn(BODY, "flex min-w-0 items-start justify-center gap-1.5 rounded-md border bg-muted px-2 py-1 text-center")}
-              style={{ gridColumn: `${2 * lo + 1} / ${2 * hi + 3}` }}
-            >
-              {kind !== "note" && <RotateCw aria-hidden className="mt-[0.3em] size-3 shrink-0 text-muted-foreground" />}
-              <span className="sr-only">{kind === "note" ? `Note over ${who}: ` : `${who} to itself: `}</span>
-              <span className="min-w-0">{text}</span>
+            {/* A note over one actor hugs its words, centred on the lifeline;
+                over several it reaches from the first to the last. */}
+            <div className="flex min-w-0 justify-center px-1" style={{ gridColumn: `${2 * lo + 1} / ${2 * hi + 3}` }}>
+              <div
+                className={cn(
+                  META,
+                  "flex min-w-0 items-start justify-center gap-1.5 rounded-md border border-border/70 bg-muted px-2 py-1 text-center text-foreground",
+                  lo === hi ? "w-fit max-w-full" : "w-full"
+                )}
+              >
+                {kind !== "note" && <RotateCw aria-hidden className="mt-[0.3em] size-3 shrink-0 text-muted-foreground" />}
+                <span className="sr-only">{kind === "note" ? `Note over ${who}: ` : `${who} to itself: `}</span>
+                <span className="min-w-0">{text}</span>
+              </div>
             </div>
           </li>,
         ]
@@ -88,8 +94,8 @@ export const Sequence = defineComponent({
 
       return [
         <li key={i} className="grid" style={columns}>
-          <div className="flex min-w-0 flex-col gap-1" style={{ gridColumn: `${mid(Math.min(a, b))} / ${mid(Math.max(a, b))}` }}>
-            <span className={cn(kind === "reply" ? META : BODY, "px-1.5 text-center")}>
+          <div className="flex min-w-0 flex-col gap-0.5" style={{ gridColumn: `${mid(Math.min(a, b))} / ${mid(Math.max(a, b))}` }}>
+            <span className={cn(kind === "reply" ? META : BODY, "px-1 text-center")}>
               <span className="sr-only">{kind === "reply" ? `${who}, reply: ` : `${who}: `}</span>
               {text}
             </span>
@@ -106,20 +112,22 @@ export const Sequence = defineComponent({
             className={cn("min-w-[calc(var(--n)*5.25rem)] @panel-sm:min-w-[calc(var(--n)*8rem)]", PAD)}
             style={{ "--n": n } as React.CSSProperties}
           >
-            <div aria-label="Actors" className="grid pb-2" style={columns}>
+            <div aria-label="Actors" className="grid pb-1" style={columns}>
               {actors.map((actor, i) => (
                 <div key={i} className="flex min-w-0 justify-center" style={{ gridColumn: `${2 * i + 1} / span 2` }}>
-                  <Badge variant="outline" className="h-auto min-w-0 whitespace-normal text-center [overflow-wrap:anywhere]">{actor}</Badge>
+                  <span className={cn(META, "min-w-0 rounded-md border border-border/70 bg-muted/40 px-2 py-0.5 text-center font-medium text-foreground [overflow-wrap:anywhere]")}>
+                    {actor}
+                  </span>
                 </div>
               ))}
             </div>
             <div className="relative">
               <div aria-hidden className="pointer-events-none absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}>
                 {actors.map((_, i) => (
-                  <span key={i} className="mx-auto h-full w-px border-l border-dashed" />
+                  <span key={i} className="mx-auto h-full w-px border-l border-dashed border-border" />
                 ))}
               </div>
-              <ol className="relative flex flex-col gap-3 py-1">{rows}</ol>
+              <ol className="relative flex flex-col gap-3 py-2">{rows}</ol>
             </div>
           </div>
         </div>

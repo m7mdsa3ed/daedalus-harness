@@ -186,8 +186,8 @@ const FormControl = defineComponent({
     /* Not a `<label>`: a Checkbox draws one of its own, and a label inside a
        label is not a thing HTML has. The field names itself for a screen
        reader with its `name`. */
-    <Field className="min-w-0 gap-2">
-      <FieldTitle>{props.label}</FieldTitle>
+    <Field className="min-w-0 gap-1">
+      <FieldTitle className="text-[0.75rem] leading-tight font-medium">{props.label}</FieldTitle>
       {renderNode(props.children)}
       {props.hint && <FieldDescription>{props.hint}</FieldDescription>}
     </Field>
@@ -209,7 +209,7 @@ const Input = defineComponent({
   component: ({ props }) => {
     const field = useField(props.name, props.value, props.rules)
     return (
-      <div className="min-w-0 space-y-1">
+      <div className="min-w-0 space-y-0.5">
         <UiInput
           name={props.name}
           aria-label={props.name}
@@ -238,7 +238,7 @@ const Textarea = defineComponent({
   component: ({ props }) => {
     const field = useField(props.name, props.value, props.rules)
     return (
-      <div className="min-w-0 space-y-1">
+      <div className="min-w-0 space-y-0.5">
         <UiTextarea
           name={props.name}
           aria-label={props.name}
@@ -287,7 +287,7 @@ const Select = defineComponent({
     const field = useField(props.name, props.value, props.rules)
     const value = field.value == null ? null : String(field.value)
     return (
-      <div className="min-w-0 space-y-1">
+      <div className="min-w-0 space-y-0.5">
         <UiSelect
           value={value}
           onValueChange={(next) => {
@@ -350,7 +350,7 @@ const Slider = defineComponent({
           value={[value]}
           onValueChange={(next) => field.set(Array.isArray(next) ? next[0] : next)}
         />
-        <span className={cn(META, "w-10 shrink-0 text-right tabular-nums")}>{value}</span>
+        <span className={cn(META, "w-9 shrink-0 text-end tabular-nums")}>{value}</span>
       </div>
     )
   },

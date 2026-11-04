@@ -36,6 +36,19 @@ export function splitMentionContext(text: string): { text: string; mentions: Map
   return { text: end.slice(0, at).trimEnd(), mentions }
 }
 
+/* A persona change the server appended for the agent (`personaSwitchBlock`,
+   server/src/personas.ts). It is always last, and the transcript already says
+   the change as a config notice, so the bubble drops it whole. It reaches a
+   bubble only through a `session/load` replay; the journal never holds it. */
+const PERSONA_OPEN = "\n\n<persona>\n"
+const PERSONA_CLOSE = "\n</persona>"
+
+export function dropPersonaSwitch(text: string): string {
+  const end = text.trimEnd()
+  const at = end.lastIndexOf(PERSONA_OPEN)
+  return at >= 0 && end.endsWith(PERSONA_CLOSE) ? end.slice(0, at) : text
+}
+
 /** Both trailing blocks, in either order: the typed text, each task's part
     (keyed `KEY-12`) and each mention's (keyed `kind:ref`). */
 export function splitSentContext(text: string): {
@@ -45,7 +58,7 @@ export function splitSentContext(text: string): {
 } {
   const tasks = new Map<string, string>()
   const mentions = new Map<string, string>()
-  let rest = text
+  let rest = dropPersonaSwitch(text)
   for (;;) {
     const m = splitMentionContext(rest)
     if (m.mentions.size > 0) {

@@ -73,6 +73,7 @@ import {
   SeparatorHorizontal,
   Sparkles,
   Terminal as TerminalIcon,
+  UnfoldVertical,
   WrapText,
   Wrench,
   type LucideIcon,
@@ -316,6 +317,13 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
         title: "Open while streaming",
         description:
           "Show the reasoning as it is written. It folds away the moment the step finishes — click a row to read a settled one.",
+      },
+      {
+        key: "thoughtFullHeight",
+        icon: UnfoldVertical,
+        title: "Full height thinking",
+        description:
+          "Let an open thought run as tall as it is, with the transcript scrolling instead of the box. Off, the reading stops at a fraction of the panel and scrolls inside itself, so the steps after it stay in reach.",
       },
     ],
   },

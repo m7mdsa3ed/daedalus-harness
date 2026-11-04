@@ -1,4 +1,4 @@
-import type { TpsStats, TurnGeneration, TurnWaits } from "./protocol.js";
+import type { ModelCall, TpsStats, TurnGeneration, TurnWaits } from "./protocol.js";
 
 /**
  * Output speed — one pure function, run at both ends.
@@ -86,4 +86,19 @@ export function tpsAverage(stats: TpsStats | null): { rate: number; kind: "gener
   }
   const rate = rateOf(stats.outputTokens, stats.durationMs);
   return rate === null ? null : { rate, kind: "throughput" };
+}
+
+/* A decode under a tenth of the wait before it measured delivery, not writing:
+   a gateway that holds the answer until it is whole hands it over in one burst
+   (the agent's own `BURST_RATIO`, metering.ts — applied here too because the
+   proxy and OTLP doors cannot tell). */
+const BURST_RATIO = 10;
+
+/** One step's output speed — tokens per second after the first chunk, the
+    figure benchmarks call output speed (Artificial Analysis, NVIDIA AIPerf's
+    per-request decode). `null` where the door could not time a decode. */
+export function stepRate(call: Pick<ModelCall, "billed" | "timing">): number | null {
+  const { ttftMs, decodeMs, decodeTokens } = call.timing ?? {};
+  if (decodeMs === undefined || (ttftMs !== undefined && decodeMs * BURST_RATIO < ttftMs)) return null;
+  return rateOf(decodeTokens ?? call.billed.outputTokens, decodeMs);
 }

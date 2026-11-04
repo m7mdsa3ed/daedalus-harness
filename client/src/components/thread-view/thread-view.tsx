@@ -337,7 +337,7 @@ export function ThreadView({
         buildRows(
           visible,
           options.groupTools,
-          thread.turnActive,
+          working,
           options.groupShellCommands,
           !options.expandEdits,
           options.answersOnly,
@@ -352,7 +352,7 @@ export function ThreadView({
       options.groupShellCommands,
       options.parallelGroups,
       visible,
-      thread.turnActive,
+      working,
     ]
   )
   /* Where a Sources strip goes: after the item that ends each finished turn.
@@ -1070,17 +1070,11 @@ export function ThreadView({
                   approvals and the queue below keep their own rows. */}
               {/* `-ms-3 ps-3` on the status item: `.harness-status` hangs its
                   tone rule 10px left of its box, and the item's paint
-                  containment would clip it. `mt-auto`, because the content box
-                  is `min-h-full` and this is the foot's own slot: on a thread
-                  shorter than the pane every item sat at the top and the live
-                  line floated in the middle of the blank paper (an opening
-                  replay, a new thread's first turn). The auto margin eats that
-                  free space, so the line rests where the next thing happens —
-                  just above the composer, which is why the reserved dock height
-                  is the padding it stops at. It costs nothing once the
-                  transcript is taller than the pane, where the space is zero. */}
+                  containment would clip it. No `mt-auto`: the line is the
+                  newest of the thread's events and follows them, rather than
+                  resting on the composer with blank paper above it. */}
               {status && (
-                <MessageScrollerItem messageId="status" className="-ms-3 mt-auto ps-3">
+                <MessageScrollerItem messageId="status" className="-ms-3 ps-3">
                   <div
                     className={status.tone === "progress" && status.opening ? undefined : "harness-item-in"}
                     style={stagger(0)}

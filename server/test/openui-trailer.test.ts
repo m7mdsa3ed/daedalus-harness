@@ -95,6 +95,13 @@ const persona = { id: "p1", prompt: "PERSONA TEXT" };
       OPENUI_INSTRUCTIONS.includes("Flowchart("),
     "and carries the generated component table, so every runtime gets the same one",
   );
+  /* The lane is opt-in per thread, so once it is on the default has to be
+     drawing — the wording that said "reach for a fence only when…" was read as
+     permission to answer in markdown, and a reader who picked components got
+     pipe tables back. */
+  assert.ok(OPENUI_INSTRUCTIONS.includes("Drawn answers are ON for this thread"), "states that the lane is the default, not an option");
+  assert.ok(/Prose is right for exactly/.test(OPENUI_INSTRUCTIONS), "names the narrow cases where prose still wins");
+  assert.ok(!/Reach for a fenced block ONLY/i.test(OPENUI_INSTRUCTIONS), "no leftover hedging that reads as permission to skip the lane");
   console.log("openui-trailer: instructions ok");
 }
 

@@ -189,6 +189,8 @@ try {
     commandIds: [],
     suggestKinds: ["prompts", "commands"],
     uiGroups: [...UI_GROUP_IDS],
+    personaId: "",
+    classifyPersona: true,
     voiceProvider: "",
     askProfiles: {},
   });

@@ -974,6 +974,10 @@ export interface ProjectDefaults {
   /** The persona a thread here starts under; "" = none. Absent from a server
       that predates personas coming back. */
   personaId?: string
+  /** Whether a new thread's first message may pick its persona, on the
+      thread's Small helper model; absent from a server without
+      `personaClassify`. */
+  classifyPersona?: boolean
   /** Which profile and model a thread here asks each agent with (the `agent` tool). */
   askProfiles: AskProfiles
   /** Voice backend for calls on a thread here; "" or absent = the profile's,

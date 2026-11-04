@@ -49,8 +49,13 @@ function tpsFields(session: Session): { tps?: TpsStats } {
    hand-overs a replay cannot be trusted with: the run's own beats are journaled
    updates, so an archive folded from a killed run still ends on its last
    `running`. Read off the bridge, so a thread with no process says nothing. */
-function backgroundFields(session: Session): { background?: true } {
-  return session.bridge?.background ? { background: true } : {};
+/** Whether the thread has work still going — its agent's own background task, or a
+    run of the harness's engine. The second does not need the agent: a workflow's
+    steps are their own threads and report onto this one with its process gone,
+    so reading this off the bridge alone said "nothing going" for exactly the
+    thread whose run was busiest. */
+function backgroundFields(session: Session, host: SocketHost): { background?: true } {
+  return session.bridge?.background || host.runsLive(session.id) ? { background: true } : {};
 }
 
 /**
@@ -69,6 +74,8 @@ export interface SocketHost {
   answerChild(parentId: string, requestId: string, response: unknown): { toolCallId?: string } | null;
   /** Resolves once a thread held for boot adoption is bound (bounded); instant otherwise. */
   whenAdopted(id: string): Promise<void>;
+  /** Whether the engine still has a run of this thread going, process or not. */
+  runsLive(id: string): boolean;
   journal: SessionJournal;
   prompt(
     id: string,
@@ -270,7 +277,7 @@ export class SessionSocket {
       ...stagedFields(session),
       ...contextFields(session),
       ...tpsFields(session),
-      ...backgroundFields(session),
+      ...backgroundFields(session, this.host),
     });
     /* Caught up: everything held while the replay was on the wire goes out now,
        in the order it was journaled, and from here the peer is live. */
@@ -372,7 +379,7 @@ export class SessionSocket {
       ...stagedFields(session),
       ...contextFields(session),
       ...tpsFields(session),
-      ...backgroundFields(session),
+      ...backgroundFields(session, this.host),
     };
     yield `],"caughtUp":${JSON.stringify(caughtUp)}}`;
   }

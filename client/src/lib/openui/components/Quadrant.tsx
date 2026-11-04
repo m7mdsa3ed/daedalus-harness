@@ -31,19 +31,19 @@ export const Quadrant = defineComponent({
     return (
       <Box className="w-full">
         {props.title && <BoxHeader title={props.title} />}
-        <div className={cn("space-y-3", PAD)}>
-          <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1.5">
-            <span className={cn(LABEL, "self-center text-center [writing-mode:vertical-rl] rotate-180")}>{props.yLabel}</span>
-            <div aria-hidden="true" className="relative aspect-square max-h-104 w-full overflow-hidden rounded-xl border">
-              <div className="absolute inset-y-0 left-1/2 border-l border-dashed" />
-              <div className="absolute inset-x-0 top-1/2 border-t border-dashed" />
+        <div className={cn("space-y-2.5", PAD)}>
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-1">
+            <span className={cn(LABEL, "rotate-180 self-center text-center [writing-mode:vertical-rl]")}>{props.yLabel}</span>
+            <div aria-hidden="true" className="relative aspect-square max-h-96 w-full overflow-hidden rounded-md border border-border/70 bg-muted/20">
+              <div className="absolute inset-y-0 left-1/2 border-l border-dashed border-border" />
+              <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-border" />
               {[0, 1, 2, 3].map((slot) =>
                 corners[slot] ? (
                   <span
                     key={slot}
                     className={cn(
                       LABEL,
-                      "absolute max-w-[46%] p-1.5 text-[0.625rem] @panel-sm:text-xs",
+                      "absolute max-w-[46%] p-1.5 text-[0.625rem] @panel-sm:text-[0.6875rem]",
                       slot < 2 ? "top-0" : "bottom-0",
                       slot % 2 === 0 ? "left-0 text-left" : "right-0 text-right"
                     )}
@@ -52,11 +52,11 @@ export const Quadrant = defineComponent({
                   </span>
                 ) : null
               )}
-              <div className="absolute inset-3">
+              <div className="absolute inset-2.5">
                 {points.map((point, n) => (
                   <span
                     key={point.index}
-                    className="absolute flex size-5 -translate-x-1/2 translate-y-1/2 items-center justify-center rounded-full text-[0.625rem] leading-none font-medium text-background tabular-nums"
+                    className="absolute flex size-4.5 -translate-x-1/2 translate-y-1/2 items-center justify-center rounded-full text-[0.625rem] leading-none font-medium text-background tabular-nums"
                     style={{ left: `${point.x}%`, bottom: `${point.y}%`, background: chartColor(n) }}
                   >
                     {n + 1}
@@ -68,10 +68,10 @@ export const Quadrant = defineComponent({
             <span className={cn(LABEL, "text-center")}>{props.xLabel}</span>
           </div>
           {points.length > 0 && (
-            <ol className="grid gap-x-4 gap-y-1.5 @panel-sm:grid-cols-2">
+            <ol className="grid gap-x-4 gap-y-1 @panel-sm:grid-cols-2">
               {points.map((point, n) => (
-                <li key={point.index} className="flex min-w-0 items-baseline gap-2">
-                  <span className="mt-0.5 size-2.5 shrink-0 self-center rounded-full" style={{ background: chartColor(n) }} aria-hidden="true" />
+                <li key={point.index} className="flex min-w-0 items-baseline gap-1.5">
+                  <span aria-hidden="true" className="size-2 shrink-0 self-center rounded-full" style={{ background: chartColor(n) }} />
                   <span className={cn(BODY, "min-w-0 flex-1")}>
                     <span className="tabular-nums">{n + 1}. </span>
                     {point.label}

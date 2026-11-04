@@ -29,9 +29,11 @@ export type SideLane = "completion" | "decision";
 /** What a lane is, in the words its surfaces use. `key` is the `app_settings`
  *  row: `fim` is the completion lane's and predates the generalisation, so it
  *  keeps its name rather than moving a stored value for tidiness. */
-const LANES: Record<SideLane, { kind: "completion" | "decision"; wire: string; key: string; noun: string }> = {
-  completion: { kind: "completion", wire: "openai-completions", key: "fim", noun: "completion" },
-  decision: { kind: "decision", wire: "systemone", key: "decision", noun: "decision" },
+const LANES: Record<SideLane, { kind: "completion" | "decision"; wires: readonly string[]; key: string; noun: string }> = {
+  completion: { kind: "completion", wires: ["openai-completions"], key: "fim", noun: "completion" },
+  /* Both System One doors: the editor offers `systemone-gateway` for a decision
+     model, and a lane that accepted only `systemone` never listed it. */
+  decision: { kind: "decision", wires: ["systemone", "systemone-gateway"], key: "decision", noun: "decision" },
 };
 
 export const SIDE_LANES = Object.keys(LANES) as SideLane[];
@@ -56,7 +58,7 @@ export interface SideDefault {
 /** A model this lane can actually call: the lane's kind, and a wire it speaks. */
 function callable(profile: Profile, lane: SideLane): ModelDef[] {
   const spec = LANES[lane];
-  return profile.models.filter((model) => model.kind === spec.kind && model.wire === spec.wire);
+  return profile.models.filter((model) => model.kind === spec.kind && !!model.wire && spec.wires.includes(model.wire));
 }
 
 /** Every callable model on one profile, in catalogue order. */
@@ -138,8 +140,8 @@ export async function setSideDefault(
   if ((entry.kind ?? "chat") !== spec.kind) {
     throw new HttpError(`"${choice.model}" is not a ${spec.noun} model`, 400);
   }
-  if (entry.wire !== spec.wire) {
-    throw new HttpError(`"${choice.model}" has no ${spec.wire} wire, so nothing here could call it`, 400);
+  if (!entry.wire || !spec.wires.includes(entry.wire)) {
+    throw new HttpError(`"${choice.model}" has no ${spec.wires.join(" or ")} wire, so nothing here could call it`, 400);
   }
 
   const value = JSON.stringify({ profileId: profile.id, model: entry.id });
@@ -181,4 +183,54 @@ export async function sideTarget(
   const profile = await getProfile(resolved.default.profileId);
   if (!profile) throw new HttpError(`the chosen ${LANES[lane].noun} profile no longer exists`, 409);
   return { profile, model: resolved.default.model };
+}
+
+/* ── The persona question's thresholds ──
+ *
+ * A decision answers with a distribution, so "pick the top label" is not a
+ * decision: the pick must clear `minProbability` and beat the runner-up by
+ * `margin` (`persona-classify.ts`). They are the persona question's numbers, not
+ * the lane's — the lane is install-wide and will have other consumers — so they
+ * are their own `app_settings` key, read as defensively as `readStored`: a row
+ * somebody hand-edited is the defaults, never a crash on a first send.
+ */
+export interface PersonaDecisionThresholds {
+  minProbability: number;
+  margin: number;
+}
+
+export const PERSONA_DECISION_DEFAULTS: PersonaDecisionThresholds = { minProbability: 0.5, margin: 0.15 };
+const PERSONA_DECISION_KEY = "personaDecision";
+
+const unit = (value: unknown, fallback: number): number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : fallback;
+
+export async function readPersonaDecision(): Promise<PersonaDecisionThresholds> {
+  const row = (await db.select().from(appSettings).where(eq(appSettings.key, PERSONA_DECISION_KEY)).limit(1))[0];
+  if (!row) return PERSONA_DECISION_DEFAULTS;
+  try {
+    const parsed = JSON.parse(row.value) as { minProbability?: unknown; margin?: unknown } | null;
+    return {
+      minProbability: unit(parsed?.minProbability, PERSONA_DECISION_DEFAULTS.minProbability),
+      margin: unit(parsed?.margin, PERSONA_DECISION_DEFAULTS.margin),
+    };
+  } catch {
+    return PERSONA_DECISION_DEFAULTS;
+  }
+}
+
+/** Store the thresholds; a number outside 0..1 is refused where the person is looking. */
+export async function setPersonaDecision(next: Partial<PersonaDecisionThresholds>): Promise<PersonaDecisionThresholds> {
+  for (const [name, value] of Object.entries(next)) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+      throw new HttpError(`${name} must be a number from 0 to 1`, 400);
+    }
+  }
+  const merged = { ...(await readPersonaDecision()), ...next };
+  const value = JSON.stringify(merged);
+  await db
+    .insert(appSettings)
+    .values({ key: PERSONA_DECISION_KEY, value })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value } });
+  return merged;
 }

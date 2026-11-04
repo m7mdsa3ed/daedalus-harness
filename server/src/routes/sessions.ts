@@ -8,7 +8,10 @@ import { enhancePrompt } from "../enhance.js";
 import { streamFormBuilder } from "../ai.js";
 import { getAgent, profileHasAgent } from "../registry.js";
 import { defaultProfileFor, getProfile, profileSupports, resolveProfileAgent } from "../profiles.js";
-import { mcpServers } from "../library.js";
+import { mcpServers, personas } from "../library.js";
+import { getConfig } from "../config.js";
+import { classifyGate, classifyPersona, personaLane } from "../persona-classify.js";
+import { readPersonaDecision } from "../side-models.js";
 import { getProject } from "../projects.js";
 import { getTask } from "../tasks-board.js";
 import { listAgentSessions } from "../session-list.js";
@@ -239,7 +242,49 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       prompt && typeof prompt === "object" && typeof prompt.text === "string"
         ? { text: prompt.text as string, attachmentIds: ids(prompt.attachmentIds) }
         : null;
+    const draftPersona = typeof personaId === "string" && personaId ? personaId : null;
     const run = async (): Promise<Created> => {
+      /* The first message may pick the persona (`persona-classify.ts`) — but
+         only one nobody picked: the draft still carries the project's default.
+         Here and not later because no row and no agent exist yet, so the pick
+         is a spawn input rather than a respawn. It is asked of the install's
+         decision model and of nothing else: no decision model, no call.
+         The lane's profile is what must be reachable, not the thread's, so a
+         thread on a virtual Default is classified too. */
+      const skip = classifyGate({
+        text: first?.text,
+        globalSwitch: getConfig().classifyPersona,
+        projectSwitch: project.defaults?.classifyPersona,
+        draftPersonaId: draftPersona,
+        projectPersonaId: project.defaults?.personaId,
+      });
+      /* What the thread says about it, when there is anything to say: a pick, or
+         why there was none. A feature that fails in silence cannot be told from
+         one that does not work, so only the reader's own switches stay quiet. */
+      let said: string | null = skip && !skip.silent ? `not classified — ${skip.reason}` : null;
+      const lane = skip ? null : await personaLane();
+      let persona = draftPersona;
+      const catalogue = lane ? await personas.list() : [];
+      if (!skip && !lane) {
+        said = "not classified — no decision model is available (Settings › AI)";
+      } else if (lane && first && !catalogue.some((p) => p.id !== draftPersona)) {
+        said = "not classified — there is no other persona to choose from";
+      } else if (lane && first) {
+        const outcome = await classifyPersona({
+          profile: lane.profile,
+          model: lane.model,
+          projectName: project.name,
+          text: first.text,
+          personas: catalogue,
+          thresholds: await readPersonaDecision(),
+        });
+        if (outcome.picked === null) {
+          said = `kept — ${outcome.reason}`;
+        } else {
+          persona = outcome.picked;
+          said = `${catalogue.find((p) => p.id === persona)?.name ?? persona} — ${outcome.reason}`;
+        }
+      }
       const session = await sessions.create(profile, agentId, project, model, effort, id, configChoices, {
         mcpServerIds: linkedIds,
         skillIds: ids(skillIds),
@@ -252,8 +297,8 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         // The drawn-UI lane, the same draft-picked spawn input: empty is off,
         // omitted (or not an array) reads as all.
         uiGroups: Array.isArray(uiGroups) ? normalizeUiGroups(uiGroups) : undefined,
-        // The draft's persona; anything but a non-empty string is none.
-        personaId: typeof personaId === "string" && personaId ? personaId : null,
+        // The draft's persona, or the one its first message picked.
+        personaId: persona,
         // Which profile and model `ask_agent` uses per agent; omitted = ask.
         askProfiles: AskProfilesSchema.safeParse(askProfiles).data,
         // The draft's permission mode, picked against the agent's probed `modes`.
@@ -285,17 +330,38 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
          is already in the log — so the socket the client opens next inherits a
          thread that is genuinely ready rather than one still booting. */
       await session.bridge!.ready;
+      /* Said once, in the row a hand pick writes, so the reader sees what the
+         classifier did and its undo is the ordinary persona pick. A pick reads
+         `Persona: None → Writer — 87% match for your first message; next was no persona at 9%`; everything else reads
+         `Persona: not classified — why` or `Persona: kept — why`.
+
+         It is said **after** the first message, not before: the classifier ran
+         on those words and the line is about them, so it belongs under the
+         bubble they draw (`turn_started`). `now` because the turn has only just
+         opened — there is no step to hold it for. */
+      const sayPersona = () => {
+        if (said === null) return;
+        const name = (id: string | null) => (id && catalogue.find((p) => p.id === id)?.name) || "None";
+        session.bridge!.noteConfigChange("Persona", persona !== draftPersona ? name(draftPersona) : undefined, said, {
+          now: true,
+        });
+      };
       /* The first message rides the create, so it is on the server the moment
          the draft is: it used to follow over a socket opened afterwards, and a
          reload in between lost words the composer had already cleared. No origin
          peer — `turn_started` is journaled, and the socket the client opens next
          draws the bubble from it. A failure here is the prompt's, not the
          thread's: the thread exists, so it is answered, not thrown. */
-      if (!first) return { id: session.id };
+      if (!first) {
+        sayPersona();
+        return { id: session.id };
+      }
       try {
         const reply = await sessions.prompt(session.id, first.text, undefined, { attachmentIds: first.attachmentIds });
+        sayPersona();
         return "turnId" in reply ? { id: session.id, turnId: reply.turnId } : { id: session.id };
       } catch (error) {
+        sayPersona();
         return { id: session.id, promptError: error instanceof Error ? error.message : String(error) };
       }
     };

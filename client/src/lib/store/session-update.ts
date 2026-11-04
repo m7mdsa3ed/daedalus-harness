@@ -513,6 +513,7 @@ export function applySessionUpdate(
         capabilities: update.capabilities ?? {},
         workflow: workflowInfoOf(metaOf(update)) ?? existing?.workflow,
         ask: askInfoOf(metaOf(update)) ?? existing?.ask,
+        runId: harnessRunOf(metaOf(update)) ?? existing?.runId,
         /* A `session/load` restating the spawn keeps what the first one said. */
         model: spawnModelOf(metaOf(update)).model ?? existing?.model,
         role: spawnModelOf(metaOf(update)).role ?? existing?.role,
@@ -876,6 +877,17 @@ export function applyMetaUpdate(
  *  the run had been fine the whole time. Callers that expect to come back and
  *  be corrected (a close that will reconnect, a parked reconnect ladder) pass
  *  `settle: false`; only an ending the *agent* reported settles. */
+/** The engine run a spawn belongs to (`_meta.daedalus.runId`). */
+function harnessRunOf(meta: unknown): string | undefined {
+  const runId = vendorMeta(meta, "daedalus")?.runId
+  return typeof runId === "string" && runId ? runId : undefined
+}
+
+/** A child the harness's workflow engine spawned rather than the agent. A
+    journal written before `runId` was stamped still has `workflow`/`ask`. */
+const harnessChild = (item: SubagentItem): boolean =>
+  item.runId !== undefined || item.workflow !== undefined || item.ask !== undefined
+
 export function settleTools(items: ThreadItem[]): ThreadItem[] {
   return items.map((item) => {
     if (item.kind === "tool" && (item.status === "pending" || item.status === "in_progress")) {
@@ -887,7 +899,13 @@ export function settleTools(items: ThreadItem[]): ThreadItem[] {
     /* The RFD's own word for a child whose outcome the agent can no longer
        report: not failed, not cancelled — unknown. The turn ending is exactly
        that for any child still marked running. */
-    if (item.kind === "subagent" && item.state === "running") {
+    /* Except a child the harness runs itself: a workflow step, an ask or an
+       own-pair subagent is the engine's, outlives the turn that launched it
+       (`background`), and the engine says its end with its own
+       `subagent_state_update` — even after a restart (`failRow`). Marking it
+       here was every card reading `disconnected` the moment the launching turn
+       answered "started", while its steps ran on. */
+    if (item.kind === "subagent" && item.state === "running" && !harnessChild(item)) {
       return { ...item, state: "disconnected" }
     }
     return item

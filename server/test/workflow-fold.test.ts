@@ -277,5 +277,18 @@ test("B3: folded values are in canonical key order whatever order the journal st
   assert.equal(JSON.stringify(stepOutputs([ev("a#0", { kind: "step_completed", name: "a", output: { zz: 1, a: 0 }, sessionId: null, tokens: 0, toolUses: 0 })]).get("a#0")!.output), '{"a":0,"zz":1}');
 });
 
+test("the shape of a run is read off its spec, not off how many steps it happens to have", () => {
+  reset();
+  /* A workflow with ONE step is still a workflow: its kind is what the tool reads
+     before deciding to answer as "the one step's output", and a graph must keep
+     its result, gates, usage and budgets. */
+  const kindOf = (over: Partial<RunSpec>) => foldRun({ ...header(), spec: { ...spec, ...over } }, []).kind;
+  assert.equal(kindOf({}), "workflow");
+  assert.equal(kindOf({ ask: { agent: "codex", profile: "p", agentId: "a", profileId: "b" } }), "ask");
+  assert.equal(kindOf({ subagent: true }), "subagent");
+  /* A spec that names neither, and an older run whose spec predates kinds. */
+  assert.equal(foldRun({ ...header(), spec: { ...spec, ask: undefined, subagent: undefined } }, []).kind, "workflow");
+});
+
 console.log(`\n${passed} passed, ${failures.length} failed`);
 if (failures.length) process.exit(1);

@@ -345,6 +345,7 @@ export function ComposerEditor({
   onPaste,
   onKeyDown,
   onOverflowChange,
+  onWrapChange,
   onFocusChange,
   expanded,
   coarse,
@@ -369,6 +370,9 @@ export function ComposerEditor({
   onPaste: (event: ClipboardEvent) => boolean
   onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void
   onOverflowChange: (overflowing: boolean) => void
+  /** The text runs past one line (a newline or a wrap) — the mini box's cue to
+      give the words a row of their own. */
+  onWrapChange?: (wrapped: boolean) => void
   expanded: boolean
   coarse: boolean
   pastes: Paste[]
@@ -509,6 +513,8 @@ export function ComposerEditor({
 
     const measure = () => {
       onOverflowChange(tiptap.scrollHeight > 161)
+      /* Over the box's own one-line floor by more than a rounding error. */
+      onWrapChange?.(tiptap.scrollHeight > parseFloat(getComputedStyle(tiptap).minHeight) + 8)
     }
     measure()
     const observer = new ResizeObserver(measure)
@@ -519,7 +525,7 @@ export function ComposerEditor({
       observer.disconnect()
       window.removeEventListener("resize", measure)
     }
-  }, [editor, expanded, onOverflowChange, value, coarse])
+  }, [editor, expanded, onOverflowChange, onWrapChange, value, coarse])
 
   // The placeholder is a decoration; a new one needs a transaction to redraw.
   React.useEffect(() => {

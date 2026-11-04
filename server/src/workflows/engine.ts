@@ -62,17 +62,15 @@ import {
   type JournalEvent,
   type JournalPayload,
   type OnRestart,
+  type RunKind,
   type RunSpec,
   type RunStatus,
   type RunView,
   type Trigger,
+  runKindOf,
 } from "./types.js";
 
-export type { AgentPair, AskInfo };
-
-/** What kind of run this is, which decides the cap it counts against, the words
-    its notification uses and how its child is drawn. */
-export type RunKind = "workflow" | "ask" | "subagent";
+export type { AgentPair, AskInfo, RunKind };
 
 /** The cap per kind — split by shape on purpose: consulting two agents must not
     lock a thread out of a workflow, and a fan-out of subagents must not take
@@ -84,11 +82,10 @@ const CAPS: Record<RunKind, number> = {
   workflow: ENGINE_LIMITS.runsPerParent,
 };
 
-/** Which kind a live run or a stored spec is. A spec that names neither is a
-    workflow, which is every run written before kinds existed. */
-const kindOfRun = (run: { ask: AskInfo | null; spec: EngineSpec }): RunKind =>
-  run.ask ? "ask" : run.spec.subagent ? "subagent" : "workflow";
-const kindOfSpec = (spec: EngineSpec): RunKind => (spec.ask ? "ask" : spec.subagent ? "subagent" : "workflow");
+/** Which kind a live run or a stored spec is (`runKindOf` in types.ts, so the
+    notification here and the `kind` the fold reports cannot disagree). */
+const kindOfRun = (run: { ask: AskInfo | null; spec: EngineSpec }): RunKind => runKindOf(run.spec);
+const kindOfSpec = (spec: EngineSpec): RunKind => runKindOf(spec);
 /** How long a finished run stays readable from memory. */
 const GRACE_MS = 10 * 60_000;
 /** A cancel waits this long for its steps to unwind before it writes the run's end. */
@@ -104,7 +101,7 @@ export class WorkflowError extends HttpError {
 
 /** What the engine keeps on `RunSpec` beyond the contract (jsonb, so extra keys survive). */
 type EngineSpec = RunSpec & {
-  /** Run-level wall clock (paused time excluded) that FAILS the run. Absent = the engine default. */
+  /** Run-level wall clock (paused time excluded) that FAILS the run. Absent = none at all. */
   totalTimeoutSec?: number;
   /** Set when the run is an ask: the pair it went to. */
   ask?: AskInfo;
@@ -502,6 +499,8 @@ export class WorkflowEngine {
       role?: string;
       effort?: string;
       timeoutSec?: number;
+      /** Another project to work in; absent or the thread's own = the thread's cwd. */
+      projectId?: string;
     },
   ): Promise<RunView> {
     this.assertOpen();
@@ -512,6 +511,8 @@ export class WorkflowEngine {
     if (!project) throw new WorkflowError("this thread's project no longer exists", 409);
     if (!(await this.getProfile(parent.profileId))) throw new WorkflowError("this thread's profile no longer exists", 409);
     const model = input.role ? await this.resolveRole(parent, input.role, input.model) : input.model;
+    const projectId = input.projectId && input.projectId !== parent.projectId ? input.projectId : undefined;
+    if (projectId && !(await this.getProject(projectId))) throw new WorkflowError(`no project "${projectId}"`, 404);
     const description = input.description?.trim() || undefined;
     return await this.launchOneStep(
       parent,
@@ -521,6 +522,7 @@ export class WorkflowEngine {
         prompt,
         description,
         options: {
+          ...(projectId ? { projectId } : {}),
           ...(model ? { model } : {}),
           ...(input.effort ? { effort: input.effort } : {}),
           ...(input.timeoutSec ? { timeoutSec: Math.min(input.timeoutSec, ENGINE_LIMITS.stepTimeoutSec.max) } : {}),
@@ -820,13 +822,21 @@ export class WorkflowEngine {
     const used = usageOf(o.events);
     run.tracker.seed(used);
     if (o.status === "paused") run.tracker.pauseClock();
-    run.gates = new Gates(this.gateHost(run));
+    run.gates = new Gates(this.gateHost(run), run.priorEvents);
 
     if (run.kind !== "ask") {
-      const totalSec = Math.min(run.spec.totalTimeoutSec ?? ENGINE_LIMITS.totalTimeoutSec.default, ENGINE_LIMITS.totalTimeoutSec.max);
-      run.total = this.clock(run, Math.max(1_000, (totalSec - used.wallSec) * 1000), () =>
-        this.markEnding(run, "failed", `timed out after ${totalSec}s`),
-      );
+      /* Armed only when the run names one: an unset `totalTimeoutSec` is no wall
+         clock at all, not a default somebody else chose (it used to be two hours,
+         which failed long workflows by themselves). `budgets.wallSec` is the
+         explicit budget and stays its own clock. */
+      const totalSec = run.spec.totalTimeoutSec === undefined
+        ? null
+        : Math.min(run.spec.totalTimeoutSec, ENGINE_LIMITS.totalTimeoutSec.max);
+      if (totalSec !== null) {
+        run.total = this.clock(run, Math.max(1_000, (totalSec - used.wallSec) * 1000), () =>
+          this.markEnding(run, "failed", `timed out after ${totalSec}s`),
+        );
+      }
     }
     const wallSec = run.spec.budgets.wallSec;
     if (wallSec !== undefined) {
@@ -924,13 +934,19 @@ export class WorkflowEngine {
       const parent = this.manager.get(row.parentSessionId);
       let events = await this.store.events(row.id);
       /* The journal already ends the run (the crash fell between `run_finished` and the row):
-         fix the row up from it. Driving it again would re-run a finished script and tell the
-         parent twice. */
+         fix the row up from it. Driving it again would re-run a finished script. The parent
+         was never told — `finalize` tells it only after the row is written, and a waiter's
+         tool call died with the process — so it is told now, by the same scheduled message
+         `failRow` leaves. */
       const finished = events.find((e) => e.payload.kind === "run_finished");
       if (finished && finished.payload.kind === "run_finished") {
+        const { status, error, result } = finished.payload;
         await this.store
-          .setStatus(row.id, finished.payload.status, finished.payload.error, finished.at, finished.payload.result ?? null)
+          .setStatus(row.id, status, error, finished.at, result ?? null)
           .catch((e: unknown) => console.error(`[workflows] could not fix up run ${row.id.slice(0, 8)}`, e));
+        if (parent && parent.deletedAt === null) {
+          await this.notifyLater(row, foldRun({ ...row, status, error, endedAt: finished.at }, events));
+        }
         continue;
       }
       if (!parent || parent.deletedAt !== null) {
@@ -998,15 +1014,17 @@ export class WorkflowEngine {
         this.manager.emitOn(row.parentSessionId, stateUpdate(s.sessionId, "disconnected"));
       }
     }
+    await this.notifyLater(row, view);
+  }
+
+  /** A run's end told to its parent from boot, when the run asked to be (`notify`). A
+      scheduled message rather than a prompt now: boot has not adopted the agents yet,
+      and the scheduler starts after it has. */
+  private async notifyLater(row: StoredHeader, view: RunView): Promise<void> {
     if (!row.notify) return;
-    /* A scheduled message rather than a prompt now: boot has not adopted the
-       agents yet, and the scheduler starts after it has. */
-    await createScheduled({
-      sessionId: row.parentSessionId,
-      text: notification(view, kindOfSpec(row.spec as EngineSpec)),
-      nextAt: Date.now(),
-      ephemeral: true,
-    }).catch(() => {});
+    const text = notification(view, kindOfSpec(row.spec as EngineSpec));
+    if (this.opts.notify) return this.opts.notify(row.parentSessionId, text);
+    await createScheduled({ sessionId: row.parentSessionId, text, nextAt: Date.now(), ephemeral: true }).catch(() => {});
   }
 
   // ---- reads ----------------------------------------------------------------------------
@@ -1312,6 +1330,12 @@ export class WorkflowEngine {
   // ---- per-run services ------------------------------------------------------------------------
 
   private async append(run: Run, key: string | null, payload: JournalPayload): Promise<JournalEvent> {
+    /* A detached run (server shutdown) writes nothing, as `shutdown` promises: the abort makes
+       the script unwind, and a compiled definition logs every in-flight step as "failed: the
+       run was cancelled" and every dependent as skipped on its way out. Journaled, those lines
+       were replayed by the next boot as already said — the reader saw a cancellation that never
+       happened, and the replay's log count no longer matched what the script will say. */
+    if (run.detached) throw new WorkflowError("the server is shutting down — the run resumes at the next boot", 409);
     const event = await this.store.append(run.id, key, payload);
     run.events.push(event);
     return event;
@@ -1363,11 +1387,17 @@ export class WorkflowEngine {
       detached: () => run.detached,
       cancelReason: () => run.error,
       ask: run.ask,
+      /* Without it `announce` stamps a one-step subagent as a one-step workflow, and the
+         client draws a "0/1 steps" card where a plain subagent row belongs. */
+      subagent: run.kind === "subagent",
       /* An ask grants every permission: the call is the person's go-ahead for its brief. A
          subagent on the parent's own pair is the same bargain — the call WAS the go-ahead —
          and what no policy can answer still parks, repeated on the parent. */
       ...(run.kind === "workflow" ? {} : { autonomy: ASK_AUTONOMY }),
-      defaultTimeoutSec: run.kind === "ask" ? null : ENGINE_LIMITS.stepTimeoutSec.default,
+      /* A step carries no clock unless it names `timeoutSec` — same bargain as the
+         run's own. `stepTimeoutSec.default` is null, so the ternary is only kept to
+         say out loud that an ask has never had one. */
+      defaultTimeoutSec: ENGINE_LIMITS.stepTimeoutSec.default,
       defaultOnRestart: run.spec.onRestart,
       recovered: call.recovered,
       ...(call.resume ? { resume: call.resume } : {}),

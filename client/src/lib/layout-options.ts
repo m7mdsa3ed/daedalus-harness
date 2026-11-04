@@ -212,6 +212,11 @@ export interface LayoutOptions {
    *  muted block that stands in the transcript. Off, thinking keeps that block:
    *  its duration over three lines of excerpt. */
   thoughtStep: boolean
+  /** Draw a thought at the height it is rather than in a capped box. On, a long
+   *  reasoning block runs on and the transcript is what scrolls; off, the
+   *  reading stops at a fraction of the panel and scrolls inside itself
+   *  (`THOUGHT_MAX_H`), so the calls after it stay in reach. */
+  thoughtFullHeight: boolean
   /** Soft-wrap long code and diff lines instead of scrolling. */
   codeWrap: boolean
   /** Wider transcript column. */
@@ -358,6 +363,7 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   autoScroll: true,
   showThinking: true,
   thoughtStep: true,
+  thoughtFullHeight: false,
   codeWrap: false,
   wideTranscript: false,
   showToolDetails: false,
