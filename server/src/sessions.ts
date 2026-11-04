@@ -48,6 +48,7 @@ import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
 import { AcpBridge, resolveAgentSpawn, spawnProcess, toWireError, type BridgeHost, type ConfigNoticeLabel, type SpawnSpec } from "./acp-bridge.js";
+import { archiveAgentSessions } from "./session-archive.js";
 import { AcpPool, detachAllConnections, flushAllProcessStates, pool, type AcpConnection } from "./acp-connection.js";
 import { makeBridgeHost, makeCallThread } from "./bridge-host.js";
 import { chooseDoor, fileCall, recordCall, usageFallback, type ChosenDoor } from "./model-calls/index.js";
@@ -2301,8 +2302,13 @@ export class SessionManager {
          runtime as two literal name lists; it is the row's, so an agent with
          no entry keeps its built-ins and one that grows a switch can say so. */
       builtinTools: agent?.builtinTools ?? null,
-      persona: agent?.personaVia === "acp-meta" || agent?.personaVia === "air-meta" ? persona : undefined,
-      personaVia: agent?.personaVia === "air-meta" ? "air-meta" : "acp-meta",
+      /* Every door but `"env"` is the bridge's to open (`personaRequestFields`);
+         an `"env"` row's persona went into the spawn above and is not repeated.
+         `personaInEnv` is the `"acp-system-prompt"` row whose fallback did the
+         same on this spawn — the bridge then says nothing, or it is said twice. */
+      persona: agent?.personaVia && agent.personaVia !== "env" ? persona : undefined,
+      personaVia: agent?.personaVia && agent.personaVia !== "env" ? agent.personaVia : "acp-meta",
+      personaInEnv: spec.personaInEnv,
       /* A runtime with no pause of its own is held by the harness's hooks when
          its row names the door; the URL names the thread, not the process, so
          a shared process's sessions are held one at a time. */
@@ -4266,6 +4272,20 @@ export class SessionManager {
    * possible, so deleting must not drop it.
    */
   softDelete(id: string): boolean {
+    const trashed: Session[] = [];
+    if (!this.trashTree(id, trashed)) return false;
+    /* The runtime's own store is told too (`session/archive`, best effort,
+       after the retire so it never races the close on the thread's wire), so
+       the conversation stops being offered for import as if it were new. The
+       whole tree goes in one call: one process per runtime, not one per
+       thread (`archiveAgentSessions`). */
+    void archiveAgentSessions(trashed, true);
+    return true;
+  }
+
+  /** The trash itself, for a thread and every child under it; `trashed`
+      collects what went, for the one archive call that follows. */
+  private trashTree(id: string, trashed: Session[]): boolean {
     const session = this.sessions.get(id);
     if (!session || session.deletedAt !== null) return false;
     this.closePeers(session, 4000, "This thread was moved to Trash. Restoring it brings the conversation back.");
@@ -4278,18 +4298,31 @@ export class SessionManager {
       "This thread was moved to Trash, so its agent process was stopped. Restoring the thread brings the conversation back.",
     );
     this.persist(session);
-    for (const child of this.childrenOf(id)) this.softDelete(child.id);
+    trashed.push(session);
+    for (const child of this.childrenOf(id)) this.trashTree(child.id, trashed);
     return true;
   }
 
   restore(id: string): boolean {
+    const restored: Session[] = [];
+    if (!this.restoreTree(id, restored)) return false;
+    /* The mirror of the trash's `session/archive`: the runtime's listing shows
+       it again. Archiving kept the id and the history, so the revive's
+       `session/load` would have worked either way. One call for the tree, as
+       the trash made. */
+    void archiveAgentSessions(restored, false);
+    return true;
+  }
+
+  private restoreTree(id: string, restored: Session[]): boolean {
     const session = this.sessions.get(id);
     if (!session || session.deletedAt === null) return false;
     session.deletedAt = null;
     // Still process-less: the client revives it the same way it revives any
     // retired thread.
     this.persist(session);
-    for (const child of this.childrenOf(id)) this.restore(child.id);
+    restored.push(session);
+    for (const child of this.childrenOf(id)) this.restoreTree(child.id, restored);
     return true;
   }
 

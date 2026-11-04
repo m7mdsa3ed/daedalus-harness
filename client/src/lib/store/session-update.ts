@@ -1,5 +1,11 @@
 import type * as acp from "@daedalus/acp"
-import type { SessionFailure, SessionUpdate } from "@daedalus/protocol"
+import type {
+  SessionFailure,
+  SessionUpdate,
+  SubagentDisconnectedState,
+  SubagentState,
+  SubagentUpdate,
+} from "@daedalus/protocol"
 // Value import, but tools.ts imports only *types* from here — erased at build,
 // so there is no runtime cycle.
 import {
@@ -494,62 +500,41 @@ export function applySessionUpdate(
       const id = owner ? `plan:${update.planId}@${owner}` : `plan:${update.planId}`
       return items.filter((i) => !(i.kind === "plan" && i.id === id))
     }
-    case "subagent_spawned": {
-      /* The RFD's announcement. Sent on the parent's session — so `owner` here
-         is the parent when the parent is itself a child, and undefined at the
-         top — and it precedes every update of the child's, which is what lets
-         the reducer file those under an item that already exists. Upsert:
-         a `session/load` restates spawns it has already sent. */
-      const id = subagentItemId(update.subagentSessionId)
-      const existing = items.find((i): i is SubagentItem => i.kind === "subagent" && i.id === id)
-      const daedalusBrief = vendorMeta(metaOf(update), "daedalus")?.prompt
-      const spawnBrief = typeof daedalusBrief === "string" ? daedalusBrief : undefined
-      const item: SubagentItem = {
-        kind: "subagent",
-        id,
-        sessionId: update.subagentSessionId,
-        name: update.name,
-        task: update.task,
-        capabilities: update.capabilities ?? {},
-        workflow: workflowInfoOf(metaOf(update)) ?? existing?.workflow,
-        ask: askInfoOf(metaOf(update)) ?? existing?.ask,
-        runId: harnessRunOf(metaOf(update)) ?? existing?.runId,
-        /* A `session/load` restating the spawn keeps what the first one said. */
-        model: spawnModelOf(metaOf(update)).model ?? existing?.model,
-        role: spawnModelOf(metaOf(update)).role ?? existing?.role,
-        /* Our runtime trims `task` for the RFD and sends the whole brief in
-           `_meta.daedalus.prompt`. */
-        prompt: update.prompt ?? spawnBrief ?? existing?.prompt,
-        usage: existing?.usage,
-        context: existing?.context,
-        durationMs: existing?.durationMs,
-        /* A restated spawn keeps the run it restates; a settled child spawned
-           again is a wake, and its clock starts here. */
-        runningSince: existing?.state === "running" ? (existing.runningSince ?? now) : now,
-        state: "running",
-        startedAt: existing?.startedAt ?? now,
-        at: existing?.at ?? at,
-        parentId: owner ?? existing?.parentId,
-      }
-      return existing
-        ? items.map((i) => (i.kind === "subagent" && i.id === id ? item : i))
-        : [...items, item]
-    }
-    case "subagent_state_update": {
-      const id = subagentItemId(update.subagentSessionId)
-      /* Only a running child's settle adds time — a restated end is not a second turn. */
-      return items.map((i) =>
-        i.kind === "subagent" && i.id === id
-          ? {
-              ...i,
-              state: update.state,
-              ...(i.state === "running"
-                ? { durationMs: (i.durationMs ?? 0) + Math.max(0, now - (i.runningSince ?? i.startedAt)) }
-                : {}),
-            }
-          : i
+    case "subagent_update":
+      /* The RFD's one upsert, the harness's canonical subagent shape. Sent on
+         the parent's session — so `owner` here is the parent when the parent
+         is itself a child, and undefined at the top — and the first for an
+         unknown child announces it, before every update of the child's, which
+         is what lets the reducer file those under an item that already
+         exists. An omitted field is unchanged, `null` clears one, and `state`
+         is a whole snapshot; a `session/load` restates it. */
+      return upsertSubagent(items, subagentPatchOf(update), owner, now, at)
+    case "subagent_spawned":
+      /* The superseded draft pair, which old journals hold and the workflow
+         engine's mirror still writes (an old reader is never deleted). Read
+         as exactly the patch the RFD's announcement is — a spawn restates
+         name and task and is running by definition — so the two shapes build
+         one tree. */
+      return upsertSubagent(
+        items,
+        {
+          sessionId: update.subagentSessionId,
+          title: update.name,
+          description: update.task,
+          capabilities: update.capabilities ?? {},
+          state: "running",
+          cwd: update.cwd,
+          additionalDirectories: update.additionalDirectories,
+          prompt: update.prompt,
+          meta: metaOf(update),
+        },
+        owner,
+        now,
+        at
       )
-    }
+    case "subagent_state_update":
+      /* The draft's ending: the RFD's state snapshot and nothing else. */
+      return upsertSubagent(items, { sessionId: update.subagentSessionId, state: update.state, meta: metaOf(update) }, owner, now, at)
     /* ── Async background tasks ──
        A dynamic workflow, announced by the adapter's AIR lifecycle. Only a
        workflow is kept: a backgrounded shell command is already drawn as its
@@ -789,6 +774,159 @@ export function applySessionUpdate(
  * later, larger figure is dropped rather than risk reading the next request's
  * opening as a refinement. The figure is drawn as approximate for both reasons.
  */
+/* ── Subagent sessions ──
+   What one update says about a child, whichever shape said it. `undefined` is
+   "unchanged" and `null` is "cleared", as the RFD has it; `state` is what the
+   snapshot can say in the row's own words — running, or how it ended — and
+   absent when it says nothing the row can keep (`unknown`, an extension state
+   nobody here knows, a cleared snapshot). */
+interface SubagentPatch {
+  sessionId: string
+  title?: string | null
+  description?: string | null
+  capabilities?: SubagentItem["capabilities"] | null
+  state?: "running" | SubagentState
+  /** What the child spent, when its ending says it (the RFD's `idle.usage`). */
+  usage?: acp.Usage
+  cwd?: string | null
+  additionalDirectories?: string[] | null
+  /** The whole brief, where a shape has a field for it (the draft's `prompt`). */
+  prompt?: string
+  meta: unknown
+}
+
+/** The harness's one extension state: a child that was lost rather than
+    finished (`subagent-update.ts` on the server spells the value). */
+const DISCONNECTED_STATE: SubagentDisconnectedState = "_daedalus/disconnected"
+
+/** The RFD's snapshot in the row's words. `idle` is an ending named by its
+    stop reason; `requires_action` is a child blocked on a question — still at
+    work; `unknown` and a foreign extension keep what the row had. */
+function subagentStateOf(state: SubagentUpdate["state"]): "running" | SubagentState | undefined {
+  if (!state) return undefined
+  switch (state.state) {
+    case "running":
+    case "requires_action":
+      return "running"
+    case "idle": {
+      /* `idle` is "ready for another prompt", not "finished": only the stop
+         reason says how the work ended. `end_turn` is the one success; a
+         child cut off by a limit did not do what it was asked (the same rule
+         a `length` finish follows on the thread's own turn); and an omitted,
+         `null` or unknown reason is "not reported" — the row keeps what it
+         had rather than being drawn as a success nobody claimed. */
+      const reason = (state as { stopReason?: unknown }).stopReason
+      if (reason === "end_turn") return "completed"
+      if (reason === "cancelled") return "cancelled"
+      if (reason === "error" || reason === "refusal" || reason === "max_tokens" || reason === "max_turn_requests") {
+        return "failed"
+      }
+      return undefined
+    }
+    case DISCONNECTED_STATE:
+      return "disconnected"
+    default:
+      return undefined
+  }
+}
+
+function subagentPatchOf(update: SubagentUpdate): SubagentPatch {
+  return {
+    sessionId: update.sessionId,
+    title: update.title,
+    description: update.description,
+    /* `cancel` is a capability object (`{}` is "supported") or absent/null. */
+    capabilities:
+      update.capabilities === undefined
+        ? undefined
+        : update.capabilities === null
+          ? null
+          : { ...(update.capabilities.cancel ? { cancel: true } : {}) },
+    state: subagentStateOf(update.state),
+    /* The RFD's idle snapshot may carry what the child's foreground work
+       cost (`IdleStateUpdate.usage`) — the one place a runtime speaking the
+       RFD reports it. Our own runtime says it on `_daedalus/subagent_usage`
+       instead and leaves this empty, so the two never meet on one row. */
+    usage: update.state?.state === "idle" ? ((update.state as { usage?: acp.Usage | null }).usage ?? undefined) : undefined,
+    cwd: update.cwd,
+    additionalDirectories: update.additionalDirectories,
+    meta: metaOf(update),
+  }
+}
+
+/** Upsert by `subagent:<sessionId>`: the first update fixes the row's place
+    and every later one patches it where it sits. */
+function upsertSubagent(
+  items: ThreadItem[],
+  patch: SubagentPatch,
+  owner: string | undefined,
+  now: number,
+  at: number | undefined
+): ThreadItem[] {
+  const id = subagentItemId(patch.sessionId)
+  const existing = items.find((i): i is SubagentItem => i.kind === "subagent" && i.id === id)
+  /* A stray: an update for a child nobody announced that announces nothing
+     itself — no name, no brief, not running. The RFD's first update for a
+     child IS its announcement, and one that names it or says it runs is one
+     whatever else it lacks; a bare ending for an unknown child (the draft's
+     `subagent_state_update` outliving its spawn) has always been dropped
+     rather than drawn as a headless row. */
+  if (!existing && patch.state !== "running" && patch.title == null && patch.description == null) return items
+  const meta = patch.meta
+  /* Our runtime trims `task` for the RFD and sends the whole brief in
+     `_meta.daedalus.prompt`. */
+  const daedalusBrief = vendorMeta(meta, "daedalus")?.prompt
+  const brief = typeof daedalusBrief === "string" ? daedalusBrief : undefined
+  const state = patch.state ?? existing?.state ?? "running"
+  const wasRunning = existing?.state === "running"
+  const item: SubagentItem = {
+    kind: "subagent",
+    id,
+    sessionId: patch.sessionId,
+    /* A cleared title or brief is the client's fallback to choose. */
+    name: patch.title === undefined ? (existing?.name ?? "Subagent") : (patch.title ?? "Subagent"),
+    task: patch.description === undefined ? (existing?.task ?? "") : (patch.description ?? ""),
+    capabilities: patch.capabilities === undefined ? (existing?.capabilities ?? {}) : (patch.capabilities ?? {}),
+    workflow: workflowInfoOf(meta) ?? existing?.workflow,
+    ask: askInfoOf(meta) ?? existing?.ask,
+    runId: harnessRunOf(meta) ?? existing?.runId,
+    /* A `session/load` restating the announcement keeps what the first said. */
+    model: spawnModelOf(meta).model ?? existing?.model,
+    role: spawnModelOf(meta).role ?? existing?.role,
+    /* Placement is a patch: a key the update leaves out keeps what was said,
+       `null` is "cleared" and reads as never said. */
+    cwd: patch.cwd === undefined ? existing?.cwd : (patch.cwd ?? undefined),
+    additionalDirectories:
+      patch.additionalDirectories === undefined
+        ? existing?.additionalDirectories
+        : (patch.additionalDirectories ?? undefined),
+    prompt: patch.prompt ?? brief ?? existing?.prompt,
+    /* The ending's figure is added once, on the settle (running → idle) or
+       for a child first met already ended — the same fold
+       `_daedalus/subagent_usage` uses. A restated snapshot (a `session/load`
+       saying the ending again) is not a second bill. */
+    usage:
+      patch.usage && (wasRunning || !existing) && state !== "running"
+        ? addUsage(existing?.usage ?? null, patch.usage)
+        : existing?.usage,
+    context: existing?.context,
+    /* Only a running child's settle adds time — a restated end is not a second turn. */
+    durationMs:
+      existing && wasRunning && state !== "running"
+        ? (existing.durationMs ?? 0) + Math.max(0, now - (existing.runningSince ?? existing.startedAt))
+        : existing?.durationMs,
+    /* A restated announcement keeps the run it restates; a settled child
+       announced again is a wake, and its clock starts here. */
+    runningSince:
+      state === "running" ? (wasRunning ? (existing?.runningSince ?? now) : now) : existing?.runningSince,
+    state,
+    startedAt: existing?.startedAt ?? now,
+    at: existing?.at ?? at,
+    parentId: owner ?? existing?.parentId,
+  }
+  return existing ? items.map((i) => (i.kind === "subagent" && i.id === id ? item : i)) : [...items, item]
+}
+
 function markStepUsage(
   thread: ThreadState,
   update: acp.UsageUpdate,

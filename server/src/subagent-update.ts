@@ -1,117 +1,123 @@
 /**
- * The current Subagent Sessions RFD, said in the draft every reader here speaks.
+ * The harness's canonical subagent shape is the Subagent Sessions RFD's own
+ * `subagent_update` — the one the SDK's `SessionUpdate` union carries, so it
+ * arrives on the typed path and passes through untouched. Everything that
+ * still speaks the superseded draft pair (`subagent_spawned` /
+ * `subagent_state_update`: older adapters, OpenCode 2's child extension) is
+ * translated INTO it here, once, on the way in, so nothing downstream learns a
+ * second shape. The draft pair stays declared in `protocol.ts` because old
+ * journals hold it (an old reader is never deleted — docs/protocol.md "AIR")
+ * and the workflow engine's own mirror still emits it straight into the
+ * journal; the client reads both.
  *
- * SDK 1.6+ carries the RFD's one upsert variant, `subagent_update {sessionId
- * (the child), title?, description?, capabilities?, state?}`, sent on the
- * parent's session — the first for an unknown child announces it, an omitted
- * field is unchanged, and `state` is a snapshot (`running`, `idle` with a
- * stopReason, `requires_action`, `unknown`, `_`-extensions). The adapters still
- * send the superseded draft pair (`subagent_spawned` / `subagent_state_update`),
- * and the bridge, the tracer, the journal and the client tree all read that
- * pair. So the new shape is translated once, on the way in (`agentStream`), and
- * nothing downstream learns a second one — the same bargain the OpenCode feed
- * makes. Old journals keep their shape for free.
+ * `subagent_update {sessionId (the child), title?, description?,
+ * capabilities?, state?, cwd?, additionalDirectories?}` is an upsert on the
+ * parent's session: the first for an unknown child announces it, an omitted
+ * field is unchanged, `null` clears one, and `state` is a whole snapshot
+ * (`running`, `idle` with a `stopReason`, `requires_action`, `unknown`, or an
+ * `_`-prefixed extension). The draft pair is stateless by comparison — a spawn
+ * restates name and task, an ending names its own state — so the translation
+ * needs no memory: each draft frame is one whole `subagent_update`.
  *
- * Stateful per process, because an upsert omits what it does not change: the
- * name and task a spawn must restate, and whether the child was running.
+ * Our own `_daedalus/subagent_usage` is not part of this: it is the harness's,
+ * said beside the ending, and stays its own frame.
  */
-import type { SubagentSpawned, SubagentState, SubagentStateUpdate, SubagentUsage } from "./protocol.js";
+import type {
+  SessionUpdate,
+  SubagentDisconnectedState,
+  SubagentSpawned,
+  SubagentState,
+  SubagentStateUpdate,
+  SubagentUpdate,
+} from "./protocol.js";
 
-/** A draft notification on the parent's session. */
-export interface DraftSubagentNotification {
-  sessionId: string;
-  update: SubagentSpawned | SubagentStateUpdate | SubagentUsage;
-}
-
-export interface KnownSubagent {
-  name: string;
-  task: string;
-  running: boolean;
-}
-
-interface SubagentUpdate {
-  sessionUpdate: "subagent_update";
-  sessionId: string;
-  title?: string | null;
-  description?: string | null;
-  capabilities?: { cancel?: unknown } | null;
-  state?: { state: string; stopReason?: unknown; usage?: SubagentUsage["usage"] | null } | null;
-  _meta?: Record<string, unknown> | null;
-}
+/** The one extension state the harness speaks: a draft `disconnected` ending
+    has no RFD stop reason (the child was lost, not finished), so it rides the
+    RFD's reserved `_` prefix. The client reads the same literal through
+    `protocol.ts`'s `SubagentDisconnectedState`. */
+export const DISCONNECTED_STATE: SubagentDisconnectedState = "_daedalus/disconnected";
 
 export const isRfdSubagentUpdate = (update: unknown): update is SubagentUpdate =>
   (update as { sessionUpdate?: unknown } | null)?.sessionUpdate === "subagent_update" &&
   typeof (update as { sessionId?: unknown }).sessionId === "string";
 
-/** `idle` is the draft's ending; how it ended is its stop reason. */
-function endingOf(stopReason: unknown): SubagentState {
-  if (stopReason === "cancelled") return "cancelled";
-  if (stopReason === "error" || stopReason === "refusal") return "failed";
-  return "completed";
+/** The draft's ending, as the RFD's `idle` snapshot (or the extension state
+    for a child that was lost rather than finished). */
+export function endingSnapshot(state: SubagentState): NonNullable<SubagentUpdate["state"]> {
+  switch (state) {
+    case "completed":
+      return { state: "idle", stopReason: "end_turn" };
+    case "failed":
+      return { state: "idle", stopReason: "error" };
+    case "cancelled":
+      return { state: "idle", stopReason: "cancelled" };
+    case "disconnected":
+      return { state: DISCONNECTED_STATE };
+  }
 }
 
-/**
- * The draft notifications one `subagent_update` stands for, in order — none
- * when it changes nothing the draft can say. Updates `known` in place.
- */
-export function translateSubagentUpdate(
-  parentSessionId: string,
-  update: SubagentUpdate,
-  known: Map<string, KnownSubagent>,
-): DraftSubagentNotification[] {
-  const child = update.sessionId;
-  const prev = known.get(child);
-  const state = update.state?.state;
-  /* `requires_action` is a child blocked on a question — still at work.
-     `unknown` and an extension state say nothing the draft can, so they keep
-     what was known; a child first seen that way is taken to be running. */
-  const running =
-    state === "running" || state === "requires_action"
-      ? true
-      : state === "idle"
-        ? false
-        : (prev?.running ?? true);
-  const next: KnownSubagent = {
-    name: update.title ?? prev?.name ?? "Subagent",
-    task: update.description ?? prev?.task ?? "",
-    running,
+/** A draft `subagent_spawned`, said as the RFD's announcement: a whole
+    snapshot (the draft restates everything), running. The brief the draft
+    carried on `prompt` has no RFD field, so it rides `_meta.daedalus.prompt`
+    — where our own runtime already puts it. Placement keys are carried only
+    when the draft said them: an omitted key is "unchanged" to the RFD too. */
+export function spawnToUpdate(update: SubagentSpawned): SubagentUpdate {
+  const meta: Record<string, unknown> | null | undefined = update._meta;
+  const daedalus =
+    meta && typeof meta.daedalus === "object" && meta.daedalus !== null
+      ? (meta.daedalus as Record<string, unknown>)
+      : undefined;
+  const withPrompt =
+    update.prompt !== undefined && daedalus?.prompt === undefined
+      ? { ...(meta ?? {}), daedalus: { ...(daedalus ?? {}), prompt: update.prompt } }
+      : meta;
+  return {
+    sessionUpdate: "subagent_update",
+    sessionId: update.subagentSessionId,
+    title: update.name,
+    description: update.task,
+    capabilities: update.capabilities?.cancel ? { cancel: {} } : {},
+    state: { state: "running" },
+    ...(update.cwd !== undefined ? { cwd: update.cwd } : {}),
+    ...(update.additionalDirectories !== undefined ? { additionalDirectories: update.additionalDirectories } : {}),
+    ...(withPrompt !== undefined ? { _meta: withPrompt } : {}),
   };
-  known.set(child, next);
+}
 
-  const out: DraftSubagentNotification[] = [];
-  const say = (u: DraftSubagentNotification["update"]) =>
-    out.push({ sessionId: parentSessionId, update: u });
-  /* A spawn upserts on the client and reads as "running", so it is said for a
-     child first seen, one whose name or task changed, and one that woke up. */
-  const respawn =
-    !prev || prev.name !== next.name || prev.task !== next.task || (!prev.running && running);
-  if (respawn) {
-    say({
-      sessionUpdate: "subagent_spawned",
-      subagentSessionId: child,
-      name: next.name,
-      task: next.task,
-      capabilities: update.capabilities?.cancel ? { cancel: true } : {},
-      ...(update._meta ? { _meta: update._meta } : {}),
-    });
-  }
-  if (!running && (respawn || prev?.running)) {
-    /* The turn that just ended, as the cost the client adds up per child —
-       said on the transition only, so a restated snapshot is not counted twice. */
-    if (update.state?.usage) {
-      say({ sessionUpdate: "_daedalus/subagent_usage", subagentSessionId: child, usage: update.state.usage });
-    }
-    say({
-      sessionUpdate: "subagent_state_update",
-      subagentSessionId: child,
-      state: endingOf(update.state?.stopReason),
-    });
-  }
-  return out;
+/** A draft `subagent_state_update`, said as the RFD's state snapshot alone —
+    a patch that leaves title, brief and placement as they were. */
+export function endingToUpdate(update: SubagentStateUpdate): SubagentUpdate {
+  return {
+    sessionUpdate: "subagent_update",
+    sessionId: update.subagentSessionId,
+    state: endingSnapshot(update.state),
+    ...(update._meta !== undefined ? { _meta: update._meta } : {}),
+  };
+}
+
+/** The one door: a draft frame becomes the RFD's; anything else is itself. */
+export function translateDraftSubagent(update: SessionUpdate): SessionUpdate {
+  if (update.sessionUpdate === "subagent_spawned") return spawnToUpdate(update);
+  if (update.sessionUpdate === "subagent_state_update") return endingToUpdate(update);
+  return update;
+}
+
+/** The same, on a notification: the frame's address is untouched. The
+    result is the input itself, or the input with its `update` said as the
+    RFD's `subagent_update` — an SDK variant the extension path's own type
+    excludes, which the return type says rather than hiding behind a cast. The
+    caller hands it on to `onUpdate`, which takes both. */
+export function translateDraftNotification<T extends { update: SessionUpdate }>(
+  notification: T,
+): T | (Omit<T, "update"> & { update: SubagentUpdate }) {
+  const { update } = notification;
+  if (update.sessionUpdate === "subagent_spawned") return { ...notification, update: spawnToUpdate(update) };
+  if (update.sessionUpdate === "subagent_state_update") return { ...notification, update: endingToUpdate(update) };
+  return notification;
 }
 
 /**
- * OpenCode 2's own child-session extension, said in the same draft pair.
+ * OpenCode 2's own child-session extension, said as `subagent_update`.
  *
  * `opencode acp` (2.x) sends a child's work on an extension notification —
  * once the client opts in with `clientCapabilities._meta["opencode/child-session-updates"]`
@@ -120,11 +126,12 @@ export function translateSubagentUpdate(
  * `running`, `completed`, `interrupted` or `failed`, and `type: "update"`
  * carrying an ordinary `SessionUpdate` (already stamped with
  * `_meta["opencode/child-session"]`, which the client reads as the same owner).
- * It is the RFD sequence in other words, so it becomes exactly that. (1.x
- * sent no children at all; a server-side sidecar read them off its event bus
- * until seed 30.) The method goes out without ACP's
- * `_` prefix (2.0.26, observed live), so it is matched both ways and taken
- * here, before the SDK's router would refuse it.
+ * It is the RFD sequence in other words, so it becomes exactly that — on the
+ * typed path, since `subagent_update` is in the SDK's union. (1.x sent no
+ * children at all; a server-side sidecar read them off its event bus until
+ * seed 30.) The method goes out without ACP's `_` prefix (2.0.26, observed
+ * live), so it is matched both ways and taken in `rewriteInbound`, before the
+ * SDK's router would refuse it.
  */
 export const OPENCODE_CHILD_UPDATE_METHODS: ReadonlySet<string> = new Set([
   "opencode/session/child_update",
@@ -146,9 +153,9 @@ const OPENCODE_ENDINGS: Record<string, SubagentState> = {
   failed: "failed",
 };
 
-/** The notifications one child update stands for: a draft spawn or ending on
-    the parent's session, or the child's own update on the child's session.
-    `running` says nothing the draft does not already assume. */
+/** The notifications one child update stands for: the RFD's announcement or
+    ending on the parent's session, or the child's own update on the child's
+    session. `running` says nothing the announcement did not already. */
 export function translateOpencodeChildUpdate(
   params: unknown,
 ): { sessionId: string; update: { sessionUpdate: string } & Record<string, unknown> }[] {
@@ -159,17 +166,18 @@ export function translateOpencodeChildUpdate(
   }
   if (p.type !== "status") return [];
   if (p.status === "created") {
-    const spawned: SubagentSpawned = {
-      sessionUpdate: "subagent_spawned",
-      subagentSessionId: p.childSessionId,
-      name: p.title || "Subagent",
-      task: p.title ?? "",
+    const announced: SubagentUpdate = {
+      sessionUpdate: "subagent_update",
+      sessionId: p.childSessionId,
+      title: p.title || "Subagent",
+      description: p.title ?? "",
       capabilities: {},
+      state: { state: "running" },
     };
-    return [{ sessionId: p.parentSessionId, update: { ...spawned } }];
+    return [{ sessionId: p.parentSessionId, update: { ...announced } }];
   }
   const state = p.status ? OPENCODE_ENDINGS[p.status] : undefined;
   if (!state) return [];
-  const ended: SubagentStateUpdate = { sessionUpdate: "subagent_state_update", subagentSessionId: p.childSessionId, state };
+  const ended: SubagentUpdate = { sessionUpdate: "subagent_update", sessionId: p.childSessionId, state: endingSnapshot(state) };
   return [{ sessionId: p.parentSessionId, update: { ...ended } }];
 }

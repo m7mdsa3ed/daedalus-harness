@@ -72,6 +72,10 @@ export async function handlePrompt(
   session: Session,
   ctx: acp.AgentContext,
   params: acp.PromptRequest,
+  /** The request's own signal (`AgentRequestContext.signal`): a cancelled
+      request or a closed connection. Chained into the turn's abort below, so
+      it ends the turn exactly as `session/cancel` does. */
+  requestSignal?: AbortSignal,
 ): Promise<acp.PromptResponse> {
   /* A between-turns compaction has no turn holding it, so the prompt waits for
      it here. Pushed into a history the summarizer is still reading, this
@@ -101,6 +105,17 @@ export async function handlePrompt(
   session.turnActive = true;
   const abort = new AbortController();
   session.abort = abort;
+  /* A dropped connection or a `$/cancel_request` for this prompt is a cancel:
+     `session.cancel()` is the one door, so the pause, the hold and the booked
+     compaction go with the turn exactly as they do for `session/cancel`. The
+     listener is removed when the turn ends, or a *later* turn on the session
+     would be cancelled by a signal belonging to a request that already
+     answered. */
+  const onRequestAbort = () => {
+    if (session.abort === abort) session.cancel();
+  };
+  if (requestSignal?.aborted) onRequestAbort();
+  else requestSignal?.addEventListener("abort", onRequestAbort, { once: true });
   const emit = new Emitter(ctx, session.id, deps.store);
 
   /* Every model call the turn makes, metered as each one answers
@@ -561,6 +576,7 @@ export async function handlePrompt(
     settleParked(session, (p) => p.reject(failed));
     throw failed;
   } finally {
+    requestSignal?.removeEventListener("abort", onRequestAbort);
     session.turnActive = false;
     session.abort = null;
     /* Whatever ended the turn — an answer, a throw, a cancel — it is not
@@ -985,7 +1001,7 @@ async function pumpStream(
    tool's row — and they must agree: a row withheld for a card that was never
    sent is a child that ran invisibly. */
 function subagentsNegotiated(deps: TurnDeps): boolean {
-  return Boolean((deps.clientCaps() as { subagents?: unknown } | null)?.subagents);
+  return Boolean(deps.clientCaps()?.subagents);
 }
 
 /* The two callbacks every model-call site passes: `record` is the site's own
@@ -1068,11 +1084,19 @@ async function runSubagent(
     deps.store.setSubagentStatus(session.id, childId, "running");
   }
   if (rfd) {
+    /* The RFD's one upsert, `subagent_update`, on the parent's session: the
+       first for an unknown child announces it, so title, description and the
+       `running` snapshot are restated on every launch — a follow-up to a saved
+       child is the same frame, and a server that has forgotten the child (a
+       restart) still gets a whole spawn. `cwd` is where the child works, which
+       is the parent's; `_meta` carries what ACP's shape has no field for. */
     await parentEmit.update({
-      sessionUpdate: "subagent_spawned",
-      subagentSessionId: childId,
-      name: childName,
-      task: task.length > 500 ? `${task.slice(0, 500)}…` : task,
+      sessionUpdate: "subagent_update",
+      sessionId: childId,
+      title: childName,
+      description: task.length > 500 ? `${task.slice(0, 500)}…` : task,
+      state: { state: "running" },
+      cwd: session.cwd,
       /* What the child runs on, for its row: ACP's spawn names no model. */
       _meta: { daedalus: { parentToolUseId: toolCallId, model: childModel, role: childRole, prompt: task } },
     });
@@ -1192,10 +1216,15 @@ async function runSubagent(
         const report = outcome.text.trim() || "(the subagent produced no report)";
         deps.store.setSubagentStatus(session.id, childId, "completed");
         if (rfd) {
+          /* `idle` is the RFD's ending; `stopReason` says how. The child's
+             usage is not restated here — `_daedalus/subagent_usage` above
+             already said it, once per attempt, and the client adds an
+             `idle.usage` to the row by the same fold, so saying it in both
+             places would bill the child twice. */
           await parentEmit.update({
-            sessionUpdate: "subagent_state_update",
-            subagentSessionId: childId,
-            state: "completed",
+            sessionUpdate: "subagent_update",
+            sessionId: childId,
+            state: { state: "idle", stopReason: "end_turn" },
           });
         }
         return report.length > SUBAGENT_REPORT_LIMIT ? `${report.slice(0, SUBAGENT_REPORT_LIMIT)}…` : report;
@@ -1215,10 +1244,16 @@ async function runSubagent(
     const status = session.abort?.signal.aborted ? "stopped" : "failed";
     deps.store.setSubagentStatus(session.id, childId, status);
     if (rfd) {
+      /* A failed ending says why — the schema's `ErrorStopReason.error`, a
+         JSON-RPC error object agents SHOULD include. A cancel is not a failure
+         and carries none. */
       await parentEmit.update({
-        sessionUpdate: "subagent_state_update",
-        subagentSessionId: childId,
-        state: status === "stopped" ? "cancelled" : "failed",
+        sessionUpdate: "subagent_update",
+        sessionId: childId,
+        state:
+          status === "stopped"
+            ? { state: "idle", stopReason: "cancelled" }
+            : { state: "idle", stopReason: "error", error: { code: -32603, message: err instanceof Error ? err.message : String(err) } },
       });
     }
     throw err;
@@ -1259,7 +1294,20 @@ export function systemSections(
      mode, where bash is not there at all, is exactly how that failed. */
   const toolNames = opts.toolNames ?? [];
   const has = (name: string) => toolNames.length === 0 || toolNames.includes(name);
-  section(
+  /* ACP `systemPrompt` in `override` mode: the client's text stands in for
+     the runtime's *built-in default instructions* — this core block and the
+     model guidance below — and for nothing else. The spec keeps tools, modes
+     and workspace context the agent's ("does not change tool availability …
+     context the Agent supplies from the workspace or environment MAY still be
+     included"), so the tool list, plan mode, the repo's instruction files, the
+     persona, skills and MCP notes stay exactly where they are. A subagent's
+     brief is not the default instructions the client wrote over — the child
+     is this runtime's own mechanism, and its brief is its role — so the
+     override is the root turn's alone. */
+  const override = opts.subagent ? null : session.systemPromptOverride;
+  if (override !== null) {
+    if (override) section("Core instructions", override);
+  } else section(
     opts.subagent ? "Subagent brief" : "Core instructions",
     opts.subagent
       ? "You are Daedalus Agent, running as a subagent on a delegated task. Complete the task and end with a concise report of what you did and found — your final message is all the caller sees."
@@ -1474,7 +1522,7 @@ assistant: Clients are marked as failed in the \`connectToServer\` function in s
      `session.modelId`, which is how a live model change swaps the guidance
      with no respawn. A session with no model (a spawn that never got one) is
      told nothing. */
-  if (session.modelId) {
+  if (session.modelId && override === null) {
     section(
       "Model guidance",
       modelPromptLayer(

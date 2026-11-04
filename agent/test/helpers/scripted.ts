@@ -190,8 +190,8 @@ export function makeClient(options: ClientOptions = {}): { app: acp.ClientApp; h
         harness.updates.push(params);
       },
     )
-    /* The RFD subagent updates arrive re-addressed (see connectPair), exactly
-       as the harness's own bridge receives them. */
+    /* The harness's own `_daedalus/*` updates arrive re-addressed (see
+       connectPair), exactly as the harness's own bridge receives them. */
     .onNotification(
       "_daedalus/subagent_update",
       (params: unknown) => params as UpdateParams,
@@ -225,13 +225,15 @@ export function makeClient(options: ClientOptions = {}): { app: acp.ClientApp; h
   return { app, harness };
 }
 
-const RFD_KINDS = new Set(["subagent_spawned", "subagent_state_update", "_daedalus/subagent_usage", "_daedalus/model_call"]);
+/* The kinds the SDK's closed SessionUpdate union does not carry. The RFD's
+   `subagent_update` is in it and travels on `session/update` itself. */
+const RFD_KINDS = new Set(["_daedalus/subagent_usage", "_daedalus/model_call"]);
 
 /* Connects agent and client over message streams with the same re-addressing
    the server's `agentStream` does: the SDK's SessionUpdateRouter validates
    every `session/update` against its closed union before any handler, so the
-   RFD kinds and the harness's own (`_daedalus/model_call`, one per model call
-   on every turn) have to travel under a private method name. Direct `connectWith`
+   harness's own kinds (`_daedalus/subagent_usage`, `_daedalus/model_call` —
+   one per model call on every turn) have to travel under a private method name. Direct `connectWith`
    composition offers no seam for that — this is the seam. */
 export async function connectPair(
   agent: acp.AgentApp,

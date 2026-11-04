@@ -58,8 +58,17 @@ function adapterDir() {
  * `done` is what the already-patched file looks like, so a second run is a
  * no-op rather than a failure.
  */
-function edit(source, { needle, replacement, done, what }) {
-  if (source.includes(done)) return { source, changed: false, what };
+function edit(source, { needle, replacement, done, what, repair }) {
+  /* A file patched by an earlier version of this script carries that
+     version's mistake under the same sentinel; `repair` names the wrong line
+     and its correction, so the re-run fixes it instead of reporting
+     "already patched" over a bug. */
+  let repaired = false;
+  if (repair && source.includes(repair.from)) {
+    source = source.split(repair.from).join(repair.to);
+    repaired = true;
+  }
+  if (source.includes(done)) return { source, changed: repaired, what: repaired ? `${what} (repaired)` : what };
   const hits = source.split(needle).length - 1;
   if (hits !== 1) {
     throw new Error(
@@ -79,9 +88,30 @@ if (!dir) {
   process.exit(0);
 }
 
+/** The oldest adapter these anchors fit: 0.100 moved the replay's reader into
+    `dist/subagent-replay.js`, so an older install would fail on a missing file
+    rather than say what it needs. */
+const MIN_VERSION = "0.100.0";
+const version = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version;
+const numeric = (v) => String(v).split(/[.-]/, 3).map((n) => Number.parseInt(n, 10) || 0);
+const olderThanMin = (() => {
+  const [have, need] = [numeric(version), numeric(MIN_VERSION)];
+  for (let i = 0; i < 3; i++) if (have[i] !== need[i]) return have[i] < need[i];
+  return false;
+})();
+if (olderThanMin) {
+  console.error(
+    `patch:acp — ${PACKAGE}@${version} at ${dir} is older than ${MIN_VERSION}, which these edits are written against.\n` +
+      `Upgrade it (npm install -g ${PACKAGE}@latest) and run this again.`,
+  );
+  process.exit(1);
+}
+
 const AGENT_FILE = join(dir, "dist", "acp-agent.js");
 const TASKS_FILE = join(dir, "dist", "async-tasks.js");
 const NATIVE_FILE = join(dir, "dist", "native-subagents.js");
+// 0.100 moved the replay's terminal-state reader out of acp-agent.js into here.
+const REPLAY_FILE = join(dir, "dist", "subagent-replay.js");
 
 const edits = [
   {
@@ -128,15 +158,23 @@ const edits = [
    * harness sees no subagent at all. The next three edits close that.
    */
   {
-    file: AGENT_FILE,
-    what: "acp-agent.js: a background launch's result is not its end",
+    file: REPLAY_FILE,
+    what: "subagent-replay.js: a background launch's result is not its end",
     // The launch answers "Async agent launched" at once, which the replay read
     // as `completed`. A child killed mid-run then looks finished; with no
     // result, the replay's own fallback says `disconnected`.
-    needle: `function replaySubagentTerminalState(block) {
+    //
+    // 0.100 split the replay in two. Its new RFD path (`RfdSubagentReplay.scan`)
+    // already skips the result of a launch its records mark `background`, but the
+    // AIR path — `nativeReplayEnabled = form === "air"` in acp-agent.js, the one
+    // this harness is on — still reads every tool result through this function
+    // with no such gate, and it is the path the next edit registers children
+    // from. The function itself moved here with its body unchanged, so the gate
+    // moves with it; on the RFD path a background launch never reaches it.
+    needle: `export function replaySubagentTerminalState(block) {
     if (block.is_error !== true)
         return "completed";`,
-    replacement: `function replaySubagentTerminalState(block) {
+    replacement: `export function replaySubagentTerminalState(block) {
     if (block.is_error !== true)
         return /^\\s*Async agent launched\\b/.test(replayContentText(block.content)) ? undefined : "completed";`,
     done: "/^\\s*Async agent launched\\b/.test(",
@@ -165,7 +203,9 @@ const edits = [
                 const liveChildren = (liveState.nativeSubagentsByTaskId ??= new Map());
                 const resumable = (liveState.resumableSubagents ??= new Map());
                 for (const [toolUseId, child] of replayChildren) {
-                    const agentId = subagents.ids.get(toolUseId);
+                    // 0.100: subagentHistory() answers { agents, dir }, keyed by the
+                    // launch's tool use; the old \`ids\` map is gone.
+                    const agentId = subagents.agents.get(toolUseId)?.agentId;
                     if (!agentId || !child.announced || liveChildren.has(agentId))
                         continue;
                     liveChildren.set(agentId, {
@@ -183,7 +223,21 @@ const edits = [
                 }
             }
         }`,
-    done: "// daedalus: a finished child under its SDK agent id",
+    // The sentinel is the corrected read under OUR comment, not the block's
+    // heading comment alone: an install patched by the script that wrote
+    // `subagents.ids.get(toolUseId)` (a TypeError on every load that replays a
+    // child — 0.100's history has no `ids`) carries that heading too, and would
+    // pass as already patched over the bug. Not the bare line either: upstream
+    // 0.100 has the same read in its own code, so a fresh install would pass
+    // without the insert.
+    done: `                    // launch's tool use; the old \`ids\` map is gone.
+                    const agentId = subagents.agents.get(toolUseId)?.agentId;`,
+    repair: {
+      from: `                    const agentId = subagents.ids.get(toolUseId);`,
+      to: `                    // 0.100: subagentHistory() answers { agents, dir }, keyed by the
+                    // launch's tool use; the old \`ids\` map is gone.
+                    const agentId = subagents.agents.get(toolUseId)?.agentId;`,
+    },
   },
   {
     file: AGENT_FILE,
@@ -206,11 +260,16 @@ const edits = [
   {
     file: AGENT_FILE,
     what: "acp-agent.js: the session record adopts the replay's subagent maps",
-    needle: `                liveBackgroundTasks: new Map(),
-                nativeSubagentsByTaskId: new Map(),`,
-    replacement: `                liveBackgroundTasks: new Map(),
-                nativeSubagentsByTaskId: creationOpts.replayState?.nativeSubagentsByTaskId ?? new Map(),
-                resumableSubagents: creationOpts.replayState?.resumableSubagents,`,
+    // Anchored on the line that FOLLOWS the map, not the one before it: 0.100
+    // put `reportsBackground`/`stopsWorkflowsOnCancel` between
+    // `liveBackgroundTasks` and this, and the edit above writes an identically
+    // indented `nativeSubagentsByTaskId: new Map(),` into the pending state, so
+    // the map's own line is not unique once that edit has run.
+    needle: `                nativeSubagentsByTaskId: new Map(),
+                nativeSubagentTaskIdByToolUseId: new Map(),`,
+    replacement: `                nativeSubagentsByTaskId: creationOpts.replayState?.nativeSubagentsByTaskId ?? new Map(),
+                resumableSubagents: creationOpts.replayState?.resumableSubagents,
+                nativeSubagentTaskIdByToolUseId: new Map(),`,
     done: "nativeSubagentsByTaskId: creationOpts.replayState?.nativeSubagentsByTaskId ?? new Map(),",
   },
   /*
@@ -244,7 +303,6 @@ const edits = [
   },
 ];
 
-const version = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version;
 const byFile = new Map();
 let changedAny = false;
 

@@ -766,8 +766,8 @@ const inFlight = (item: ThreadItem): boolean =>
  *   whose turn ended with nothing left going, has no workers.
  * - A worker whose *child* is at work is at work — a nested group that is
  *   active, or a step under it still in flight.
- * - An RFD session says so itself: `state: "running"` until the terminal
- *   `subagent_state_update`.
+ * - An RFD session says so itself: `state: "running"` until the `idle`
+ *   snapshot on its `subagent_update` (the draft's `subagent_state_update`).
  * - A launch call that is still open (a sync `Task`, OpenCode's `task`) is a
  *   child still working; one that failed is over; one that completed is over
  *   too — its report is in the result — *unless it was a background launch*.
@@ -900,7 +900,7 @@ function nestSubagents(
 /**
  * Session heads that a tool call launched, keyed on the session item's id.
  * Two links say so: the spawn filed under a launch call (our runtime's
- * `subagent_spawned` carries `_meta.daedalus.parentToolUseId`), or a launch
+ * `subagent_update` carries `_meta.daedalus.parentToolUseId`), or a launch
  * call whose output names the child session (OpenCode's `task`, whose child
  * the server feeds as an RFD session). Claude Code and Codex never need it:
  * with native subagent sessions they withhold the launch call themselves.

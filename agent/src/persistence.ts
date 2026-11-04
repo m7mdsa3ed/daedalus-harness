@@ -22,7 +22,14 @@ export interface IndexEntry {
   cwd: string;
   title: string | null;
   updatedAt: number;
+  /** ACP `session/archive`: out of the default `session/list`, log untouched.
+      Absent on rows written before the flag existed, which reads as false. */
+  archived?: boolean;
 }
+
+/** `ListSessionsRequest.archived` — the three values the spec names. Anything
+    else is the caller's -32602, decided at the door (app.ts), never here. */
+export type ArchiveFilter = "exclude" | "include" | "only";
 
 export interface ToolErrorRecord {
   timestamp: string;
@@ -141,6 +148,21 @@ function installExitHook(): void {
   });
 }
 
+/** index.json as a map, or null when there is none to read — missing, or
+    corrupt (a corrupt index loses the listing, never the transcripts). */
+function readIndexFile(path: string): Map<string, IndexEntry> | null {
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as IndexEntry[];
+    if (!Array.isArray(parsed)) return null;
+    const map = new Map<string, IndexEntry>();
+    for (const e of parsed) map.set(e.sessionId, e);
+    return map;
+  } catch {
+    return null;
+  }
+}
+
 /* One JSONL file per session — `msg` records are the model-facing history,
    `update` records are the replay stream `session/load` sends back — plus an
    index.json for `session/list`. The store is the agent's own
@@ -152,40 +174,71 @@ export class SessionStore {
   private flushTimer: NodeJS.Timeout | null = null;
   private activeSubagents = new Set<string>();
   private toolErrorsFd: number | null = null;
+  /* What this process changed since its last flush — the rows it wrote and
+     the rows it dropped — which is all a flush may write over the file's own
+     (see `flushIndex`). */
+  private touched = new Set<string>();
+  private removed = new Set<string>();
+  /* Rows whose archive flag THIS process flipped. The flag is the one field
+     another process writes on a row this one owns (`session/archive` arrives
+     on a one-shot process of its own while the thread's process may still be
+     flushing its recency), so on a row this process merely touched the flag
+     is the file's, not this map's. */
+  private flaggedArchive = new Set<string>();
 
   constructor(home: string) {
     this.home = home;
     mkdirSync(join(home, "sessions"), { recursive: true });
-    this.index = new Map();
-    const indexPath = join(home, "index.json");
-    if (existsSync(indexPath)) {
-      try {
-        const parsed = JSON.parse(readFileSync(indexPath, "utf8")) as IndexEntry[];
-        for (const e of parsed) this.index.set(e.sessionId, e);
-      } catch {
-        // A corrupt index loses the listing, never the transcripts.
-      }
-    }
+    this.index = readIndexFile(this.indexPath()) ?? new Map();
+  }
+
+  private indexPath(): string {
+    return join(this.home, "index.json");
   }
 
   private file(sessionId: string): string {
     return join(this.home, "sessions", `${sessionId}.jsonl`);
   }
 
-  /* The in-memory map is the authority; index.json is only for the next
-     process. touch() runs once per prompt, so it schedules a debounced flush
-     rather than rewriting the whole index each time — a crash inside the
-     window loses at most INDEX_FLUSH_MS of recency bumps, never a session:
-     create() (and a title landing) still flush synchronously, so session/list
-     answers after any crash. */
+  /* index.json is a multi-writer file: every daedalus process on this home
+     (one per live thread, plus a one-shot for `session/archive`) holds its own
+     copy, so a flush is a MERGE, never a wholesale write — the file is re-read
+     and only the rows this process changed since its last flush are written
+     over it (its deletions taken out, its touched rows put in, and on those
+     the archive flag kept from the file unless this process flipped it).
+     Rewriting the whole map from memory was how one thread's debounced
+     recency bump un-archived a session another process had just shelved.
+     touch() runs once per prompt, so it schedules a debounced flush rather
+     than rewriting the index each time — a crash inside the window loses at
+     most INDEX_FLUSH_MS of recency bumps, never a session: create() (and a
+     title landing) still flush synchronously, so session/list answers after
+     any crash. */
   flushIndex(): void {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
     dirtyStores.delete(this);
+    const disk = readIndexFile(this.indexPath());
+    if (disk) {
+      for (const id of this.removed) disk.delete(id);
+      for (const id of this.touched) {
+        const own = this.index.get(id);
+        if (!own) continue;
+        const theirs = disk.get(id);
+        const archived = this.flaggedArchive.has(id) || !theirs ? own.archived === true : theirs.archived === true;
+        if (archived) own.archived = true;
+        else delete own.archived;
+        disk.set(id, own);
+      }
+      this.index = disk;
+    }
+    // Without a readable file (none yet, or corrupt) the map is all there is.
+    this.touched.clear();
+    this.removed.clear();
+    this.flaggedArchive.clear();
     const entries = [...this.index.values()].sort((a, b) => b.updatedAt - a.updatedAt);
-    writeFileSync(join(this.home, "index.json"), JSON.stringify(entries, null, 2));
+    writeFileSync(this.indexPath(), JSON.stringify(entries, null, 2));
   }
 
   private scheduleFlush(): void {
@@ -228,6 +281,8 @@ export class SessionStore {
   create(sessionId: string, cwd: string): void {
     this.append(sessionId, { t: "meta", cwd, createdAt: Date.now() });
     this.index.set(sessionId, { sessionId, cwd, title: null, updatedAt: Date.now() });
+    this.touched.add(sessionId);
+    this.removed.delete(sessionId);
     this.flushIndex();
   }
 
@@ -240,6 +295,8 @@ export class SessionStore {
       cue to answer `invalid params` rather than pretend. */
   delete(sessionId: string): boolean {
     const known = this.index.delete(sessionId);
+    this.touched.delete(sessionId);
+    this.removed.add(sessionId);
     let removed = false;
     try {
       rmSync(this.file(sessionId));
@@ -271,6 +328,7 @@ export class SessionStore {
     const entry = this.index.get(sessionId);
     if (!entry) return;
     entry.updatedAt = Date.now();
+    this.touched.add(sessionId);
     if (title && !entry.title) {
       entry.title = title; // a title lands once per session — worth a sync flush
       this.flushIndex();
@@ -279,11 +337,28 @@ export class SessionStore {
     }
   }
 
+  /** The store half of `session/archive` / `session/unarchive`: a flag on the
+      index row, so the log and everything `session/load` reads from it stay
+      as they are. Idempotent — archiving an archived session is a success, as
+      the spec asks. False when the id is not one this store lists, which is
+      the caller's cue for -32002. */
+  setArchived(sessionId: string, archived: boolean): boolean {
+    const entry = this.index.get(sessionId);
+    if (!entry) return false;
+    if (archived) entry.archived = true;
+    else delete entry.archived;
+    this.touched.add(sessionId);
+    this.flaggedArchive.add(sessionId);
+    this.flushIndex();
+    return true;
+  }
+
   /** The generated title replaces the first-line one `touch` landed. */
   retitle(sessionId: string, title: string): void {
     const entry = this.index.get(sessionId);
     if (!entry) return;
     entry.title = title;
+    this.touched.add(sessionId);
     this.flushIndex();
   }
 
@@ -407,12 +482,19 @@ export class SessionStore {
     return this.listSubagents(sessionId).find((entry) => entry.id === id || entry.name === id) ?? null;
   }
 
-  list(cwd: string | null | undefined, cursor: string | null | undefined): {
+  list(
+    cwd: string | null | undefined,
+    cursor: string | null | undefined,
+    archived: ArchiveFilter = "exclude",
+  ): {
     sessions: IndexEntry[];
     nextCursor: string | null;
   } {
     const all = [...this.index.values()]
       .filter((e) => (cwd ? e.cwd === cwd : true))
+      .filter((e) =>
+        archived === "include" ? true : archived === "only" ? e.archived === true : e.archived !== true,
+      )
       .sort((a, b) => b.updatedAt - a.updatedAt);
     const offset = cursor ? Number.parseInt(cursor, 10) || 0 : 0;
     const page = all.slice(offset, offset + LIST_PAGE);

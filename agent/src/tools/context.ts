@@ -32,7 +32,7 @@ export interface ToolMeta {
   title(input: unknown): string;
   locations?(input: unknown): acp.ToolCallLocation[];
   /* This tool's work is already announced as a session of its own — the
-     subagent RFD's `subagent_spawned`, which carries the name, the brief and
+     subagent RFD's `subagent_update`, which carries the name, the brief and
      the child's whole transcript. Its ACP tool row is then the same subagent
      said twice: a row holding the brief as `rawInput` and the report as its
      content, drawn beside the card that holds both. So the row is not sent

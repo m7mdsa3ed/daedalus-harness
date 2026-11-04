@@ -337,20 +337,38 @@ export interface HistoryLost {
       than quietly replacing it. */
   acpSessionId: string;
   error: WireError;
+  /** Why the fresh session was started. `not_found`: the agent answered the
+      load with `-32002` naming this id — it does not hold the session, and
+      the fresh start is the deliberate answer. `failed`: the load was refused
+      for a reason the agent did not state (the error says what it did say).
+      Absent on a record an older server wrote. */
+  reason?: "not_found" | "failed";
 }
 
-/* ---- subagent sessions (draft ACP RFD) ----
-   The two update variants of the "Subagent Sessions" RFD
-   (agent-client-protocol PR #1992). They are ahead of the SDK — its
-   `SessionUpdate` union does not carry them yet — so they are declared here and
-   `SessionUpdate` below is what the harness handles, on both ends. The wire
-   shape is the RFD's exactly, so the day the SDK ships them these two collapse
-   into `acp.SessionUpdate` with nothing else to change.
+/* ---- subagent sessions (ACP's Subagent Sessions RFD) ----
+   The canonical shape is the SDK's own `subagent_update` (`acp.SessionUpdate`
+   carries it, so `SessionUpdate` below has it for free): one upsert on the
+   *parent* session naming the child — `sessionId`, `title`, `description`,
+   `capabilities`, a whole `state` snapshot, `cwd`, `additionalDirectories` —
+   where the first for an unknown child announces it, an omitted field is
+   unchanged and `null` clears one. The child's own updates then arrive as
+   ordinary `session/update`s whose `sessionId` is the child's. Nesting is an
+   update sent on a child session. */
+export type SubagentUpdate = Extract<acp.SessionUpdate, { sessionUpdate: "subagent_update" }>;
 
-   A spawn is sent on the *parent* session and names the child; the child's own
-   updates then arrive as ordinary `session/update`s whose `sessionId` is the
-   child's, and the terminal state arrives on the parent again, after all of
-   them. Nesting is a spawn sent on a child session. */
+/** The harness's one extension state (the RFD reserves the `_` prefix): a
+    child that was lost rather than finished — the draft's `disconnected`,
+    which has no RFD stop reason. Spelled as a value in `subagent-update.ts`
+    (`DISCONNECTED_STATE`); the client reads this type. */
+export type SubagentDisconnectedState = "_daedalus/disconnected";
+
+/* The superseded DRAFT pair of the same RFD (agent-client-protocol PR #1992).
+   Still declared because old journals hold it and an old reader is never
+   deleted, and because the workflow engine's own mirror still writes it; what
+   arrives on the wire in this shape (older adapters) is translated into
+   `subagent_update` on the way in (`subagent-update.ts`), so a live reader
+   never meets it from an agent. A spawn is running by definition and restates
+   name and task; the ending names its own state. */
 export interface SubagentSpawned {
   sessionUpdate: "subagent_spawned";
   subagentSessionId: string;
@@ -360,6 +378,13 @@ export interface SubagentSpawned {
       native sessions do; `task` is then a one-line description). */
   prompt?: string;
   capabilities: { cancel?: boolean; close?: boolean };
+  /** Where the runtime placed the child (RFD `SubagentUpdate.cwd`), absolute.
+      Absent: never reported — the child inherits its parent's effective cwd.
+      `null`: reported and then cleared, which means the same (an upsert on
+      the client has to be told to forget it). */
+  cwd?: string | null;
+  /** The child's extra workspace roots, the same way; `[]` is "none". */
+  additionalDirectories?: string[] | null;
   _meta?: Record<string, unknown> | null;
 }
 

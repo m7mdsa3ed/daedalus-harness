@@ -224,4 +224,148 @@ process.env.HOME = home;
   console.log("instructions: end to end ok");
 }
 
+/* --- ACP `systemPrompt` is the same text through a second door ---
+
+   The harness spells its rules once (`personaVia`), and which door carries
+   them is the runtime's row. So the prompt the model gets must not depend on
+   the door: `systemPrompt {mode:"append"}` has to build the byte-identical
+   prompt `customInstructions` builds, or a runtime moved to the new door would
+   lose its provider's prefix cache and gain a difference nobody chose. */
+{
+  const personaFile = join(outside, "persona-doors.md");
+  writeFileSync(personaFile, "FROM THE FILE: must lose to either door");
+  const RULES = "HARNESS RULE: cite files\n\n<persona>\nThink it through.\n</persona>";
+
+  /* One agent, one captured system prompt per door. The same env (same
+     persona file, same instructions scan) and the same cwd, so the only thing
+     that differs between the two is the door the rules came through. */
+  const capture = async (
+    open: (ctx: Parameters<Parameters<typeof connectPair>[2]>[0]) => Promise<string>,
+  ): Promise<string> => {
+    let sawSystem = "";
+    const env = testEnv({ projectInstructions: true, personaFile });
+    const agent = buildAgentApp({
+      env,
+      makeModel: (e, id) => {
+        const model = scriptedModel([textScript("Noted. ")])(e, id);
+        return new Proxy(model as object, {
+          get(target, prop, receiver) {
+            if (prop === "doStream") {
+              return async (options: { prompt: { role: string; content: unknown }[] }) => {
+                const system = options.prompt.find((m) => m.role === "system");
+                sawSystem = typeof system?.content === "string" ? system.content : JSON.stringify(system?.content ?? "");
+                return (target as { doStream: (o: unknown) => unknown }).doStream(options);
+              };
+            }
+            return Reflect.get(target, prop, receiver);
+          },
+        }) as never;
+      },
+    });
+    const { app: client } = makeClient();
+    await connectPair(agent, client, async (ctx) => {
+      await initialize(ctx);
+      const sessionId = await open(ctx);
+      await ctx.request("session/prompt", { sessionId, prompt: promptOf("hello") });
+    });
+    return sawSystem;
+  };
+
+  const viaMeta = await capture(async (ctx) => {
+    const { sessionId } = await ctx.request("session/new", {
+      cwd: pkg,
+      mcpServers: [],
+      _meta: { jetbrains: { air: { customInstructions: RULES } } },
+    });
+    return sessionId;
+  });
+  const viaSystemPrompt = await capture(async (ctx) => {
+    const { sessionId } = await ctx.request("session/new", {
+      cwd: pkg,
+      mcpServers: [],
+      systemPrompt: { mode: "append", content: [{ type: "text", text: RULES }] },
+    });
+    return sessionId;
+  });
+  assert.ok(viaMeta.includes("HARNESS RULE: cite files"), "the rules reached the request through _meta");
+  assert.ok(!viaMeta.includes("FROM THE FILE"), "the request outranks the env file");
+  assert.equal(viaSystemPrompt, viaMeta, "systemPrompt append builds the byte-identical prompt customInstructions does");
+
+  // The two doors on one request: ACP's own is the one read.
+  const bothDoors = await capture(async (ctx) => {
+    const { sessionId } = await ctx.request("session/new", {
+      cwd: pkg,
+      mcpServers: [],
+      systemPrompt: { mode: "append", content: [{ type: "text", text: RULES }] },
+      _meta: { jetbrains: { air: { customInstructions: "META RULE: must lose to systemPrompt" } } },
+    });
+    return sessionId;
+  });
+  assert.equal(bothDoors, viaMeta, "systemPrompt outranks customInstructions when both are sent");
+
+  // A load and a resume read it too, and a new text replaces the old.
+  const viaResume = await capture(async (ctx) => {
+    const { sessionId } = await ctx.request("session/new", {
+      cwd: pkg,
+      mcpServers: [],
+      systemPrompt: { mode: "append", content: [{ type: "text", text: "FIRST RULES" }] },
+    });
+    await ctx.request("session/resume", {
+      sessionId,
+      cwd: pkg,
+      mcpServers: [],
+      systemPrompt: { mode: "append", content: [{ type: "text", text: RULES }] },
+    });
+    return sessionId;
+  });
+  assert.equal(viaResume, viaMeta, "a resume applies the new systemPrompt and drops the old");
+  const viaLoad = await capture(async (ctx) => {
+    const { sessionId } = await ctx.request("session/new", { cwd: pkg, mcpServers: [] });
+    await ctx.request("session/load", {
+      sessionId,
+      cwd: pkg,
+      mcpServers: [],
+      systemPrompt: { mode: "append", content: [{ type: "text", text: RULES }] },
+    });
+    return sessionId;
+  });
+  assert.equal(viaLoad, viaMeta, "a load reads systemPrompt too");
+
+  /* `override`: the client's text stands where the runtime's built-in
+     instructions stood — the core block and the model guidance — and nothing
+     else moves: the repo's files, the env persona, the tool list and the
+     environment line are all still there. */
+  const OVERRIDE = "OVERRIDE: you are a terse reviewer.";
+  const overridden = await capture(async (ctx) => {
+    const { sessionId } = await ctx.request("session/new", {
+      cwd: pkg,
+      mcpServers: [],
+      systemPrompt: { mode: "override", content: [{ type: "text", text: OVERRIDE }] },
+      _meta: { jetbrains: { air: { customInstructions: "HARNESS RULE: still appended" } } },
+    });
+    return sessionId;
+  });
+  assert.ok(overridden.startsWith(OVERRIDE), "override leads the prompt where the core instructions were");
+  assert.ok(!overridden.includes("You are Daedalus Agent"), "the built-in identity block is gone");
+  assert.ok(!overridden.includes("## Personality"), "and the built-in guidance with it");
+  assert.ok(overridden.includes("PACKAGE RULE"), "workspace instructions stay (the spec lets context stay)");
+  assert.ok(overridden.includes("HARNESS RULE: still appended"), "customInstructions still lands in the persona slot");
+  assert.ok(overridden.includes("## Tools available to you"), "tool availability is untouched");
+  assert.ok(overridden.includes("WorkDir:"), "the environment line stays");
+  assert.ok(viaMeta.includes("You are Daedalus Agent") && viaMeta.includes("## Personality"), "append left them in place");
+
+  // The unit of it: systemPrompt() with the override set, no agent in between.
+  const env = testEnv({ projectInstructions: false });
+  const session = new Session("override-1", pkg, env);
+  const plain = systemPrompt(session, env, { toolNames: ["read_file"] });
+  session.systemPromptOverride = OVERRIDE;
+  const replaced = systemPrompt(session, env, { toolNames: ["read_file"] });
+  assert.ok(plain.startsWith("You are Daedalus Agent") && replaced.startsWith(OVERRIDE));
+  assert.ok(replaced.includes("- read_file"), "the tool list is the turn's, not the client's to remove");
+  // A subagent's brief is the runtime's own role, not the default instructions the client wrote over.
+  const child = systemPrompt(session, env, { subagent: true, toolNames: ["read_file"] });
+  assert.ok(child.startsWith("You are Daedalus Agent, running as a subagent"), "the subagent brief is not overridden");
+  console.log("instructions: systemPrompt door ok");
+}
+
 console.log("instructions.test.ts passed");

@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import type { PromptResponse } from "@agentclientprotocol/sdk";
+import type { PromptResponse } from "./acp.js";
 import { AcpConnection, pool as defaultPool, type AcpPool } from "./acp-connection.js";
 import type { AcpBridge } from "./acp-bridge.js";
 import { dropProcessState, loadProcessStates, type OrphanPrompt, type ProcessState } from "./adopt-state.js";

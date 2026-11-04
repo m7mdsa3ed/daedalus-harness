@@ -7,7 +7,8 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - `server/` — Node 22 + Hono + ws. **The ACP client lives here.** It spawns an agent
   process per thread (agent registry, `{apiKey}`/`{baseUrl}`/`{model}`/`{cwd}` placeholders
   filled from profile + project) and drives the protocol over its stdio with
-  `@agentclientprotocol/sdk` — one `AcpBridge` (`src/acp-bridge.ts`) per process, owning the
+  `@agentclientprotocol/sdk` (2.4.0, through the `/unstable` entry, via the `src/acp.ts`
+  barrel only — see `docs/protocol.md` "The SDK seam") — one `AcpBridge` (`src/acp-bridge.ts`) per process, owning the
   handshake, `session/new`-vs-`session/load`, prompts, config, and the permission and
   elicitation requests the agent blocks on. What reaches the browser is *derived state*: the
   small command/event protocol in `src/protocol.ts`, over the same WebSocket. Also owns
@@ -92,12 +93,14 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   '%:<id>:%'`, device-local `dropAgentOptionsFor`) — the probe's answer is a
   function of the env — and touches no running thread: the edit reaches one at
   its next spawn. The listing reports a computed `builtIn`, which is only ever
-  "is there something to reset to". Two SDK
-  sharp edges are load-bearing: **inbound zod strips capability keys it does not
-  know**, so `initialize` is registered with an identity parser or the harness's
-  `subagents` claim silently vanishes; and outbound `notify()` is unvalidated, which
-  is what lets the RFD updates travel (`Emitter` in `src/updates.ts` — the tests'
-  `connectPair` re-addresses them exactly as the server's `agentStream` does).
+  "is there something to reset to". One SDK
+  edge is load-bearing: outbound `notify()` is unvalidated, which is what lets the
+  agent's own `_daedalus/*` updates travel (`Emitter` in `src/updates.ts` — the
+  tests' `connectPair` re-addresses those exactly as the server's `rewriteInbound`
+  does; `subagent_update` is in the SDK's union and needs no help). The other edge
+  is gone: on the `/unstable` entry the inbound parser types `subagents`/`plan`, so
+  `initialize` is registered on the SDK's own parser and the harness's claim
+  survives it (`test:handshake` checks per key).
   Tests are in-process ACP clients over scripted `MockLanguageModelV4`s
   (`test/helpers/scripted.ts`); `cd agent && pnpm test`.
 
@@ -142,6 +145,14 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   profile, in the server's cwd), whose answer carries the negotiated `protocolVersion` and
   `agentInfo {name, version}` — every runtime we ship fills it, so no `--version` output is
   parsed per CLI. The harness's own half (SDK pin, `acp.PROTOCOL_VERSION`) rides beside them.
+  **Whether it is logged in is the agent's own answer first** (feature `agentAuthStatus`): when
+  that `initialize` advertises `agentCapabilities.auth.status`, the probe asks ACP `auth/status`
+  on the same connection (`advertisesAuthStatus`, `readAuthStatus` — the `AuthState` variants,
+  anything unrecognised reads `unknown` as the schema says it MUST, accounts kept as display
+  fields) and exposes it as `AgentStatus.auth`; `authenticated` is that answer, else the
+  adapter's `_auth/status_update` push, else the CLI quota probe. The same answer is recorded
+  per runtime in `agent-capabilities.ts` for the spawn decisions that need it before a
+  handshake can answer.
   Cached in memory for five minutes, never in the database (the next boot may be on a host
   where the binary moved); an edit or reset of the row evicts, and `?refresh=1` re-measures
   for the case the cache cannot see — an `npm install -g` that just ran.

@@ -31,6 +31,9 @@ import type { CallDoor } from "./protocol.js";
  * resolved from the active profile: {apiKey} {baseUrl} {model} {smallModel} {cwd}.
  * An env entry whose placeholders resolve empty is omitted entirely.
  */
+/** The spawn-instruction doors a runtime row may name — see `AgentDef.personaVia`. */
+export type PersonaVia = "acp-meta" | "air-meta" | "env" | "acp-system-prompt";
+
 export interface AgentDef {
   id: string;
   name: string;
@@ -108,12 +111,29 @@ export interface AgentDef {
    *    reach a revived Codex thread — codex stays on `"env"`. The bridge checks
    *    the runtime advertised `customInstructions` at `initialize` and says so
    *    when it did not (`AcpBridge.sessionMeta`).
-   *  - `"env"` (codex, opencode): a key in the agent's own config template,
+   *  - `"env"` (opencode): a key in the agent's own config template,
    *    filled from `{personaPrompt}` (inline text) or `{personaFile}` (a path).
    *    Which of the two an agent wants is the template's business — it asks by
    *    naming the placeholder — exactly as the Codex catalog does.
+   *  - `"acp-system-prompt"` (claude-code, codex): ACP's own `systemPrompt
+   *    {mode, content}` on `session/new`, `load`, `resume` and `fork`, sent
+   *    **only when the live `initialize` answer advertises
+   *    `sessionCapabilities.systemPrompt`** (the spec forbids sending it
+   *    otherwise), always in `append` mode — the one mode every advertiser
+   *    supports. The content is exactly the text the other doors carry. When
+   *    the runtime does not advertise it — an older adapter — the old door is
+   *    the fallback, and which old door is read off the row, not the id: a
+   *    template naming `{personaPrompt}`/`{personaFile}` is the `"env"` door
+   *    (codex), anything else is `"air-meta"` (claude-code). Env is fixed at
+   *    spawn, before the handshake can answer, so the env half is decided on
+   *    the runtime's *last measured* answer (`agent-capabilities.ts`): never
+   *    measured, or measured absent → env carries it and the handshake sends
+   *    nothing; measured present → env carries nothing and the handshake
+   *    sends `systemPrompt`. One door per spawn, never both — claude-agent-acp
+   *    joins `systemPrompt` and `customInstructions`, so both would be the
+   *    text said twice. Built by `AcpBridge`/`resolveAgentSpawn`, not here.
    */
-  personaVia?: "acp-meta" | "air-meta" | "env" | null;
+  personaVia?: PersonaVia | null;
   /**
    * Whether threads may share one process of this runtime, and how a thread's
    * own env reaches it when they do — or null/absent for one process per
@@ -394,6 +414,22 @@ const MODEL_PROMPTS_FILE_VAR = "modelPromptsFile";
     don't match on the agent's id" rule the Codex catalog uses. */
 export function usesPersonaFile(agent: AgentDef): boolean {
   return Object.values(agent.env).some((t) => t.includes(`{${PERSONA_FILE_VAR}}`));
+}
+
+/** Does this agent's env ask for the persona at all — either placeholder? The
+    env door exists when the template names one, whatever the row's
+    `personaVia` says: for `"env"` it is the only door, and for
+    `"acp-system-prompt"` it is the fallback an older adapter still gets. */
+export function usesPersonaEnv(agent: AgentDef): boolean {
+  return Object.values(agent.env).some((t) => t.includes(`{${PERSONA_PROMPT_VAR}}`) || t.includes(`{${PERSONA_FILE_VAR}}`));
+}
+
+/** Whether a persona may reach this agent through its env on some spawn:
+    the `"env"` door, or the `"acp-system-prompt"` door with a template that
+    names a placeholder (its fallback). What `resolvePersonaSpawn` reads to
+    decide whether writing the `{personaFile}` is worth it. */
+export function personaMayUseEnv(agent: AgentDef): boolean {
+  return agent.personaVia === "env" || (agent.personaVia === "acp-system-prompt" && usesPersonaEnv(agent));
 }
 
 /** Add codex's `developer_instructions` to an existing CODEX_CONFIG. Textual
@@ -1022,7 +1058,11 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // OTEL_* keys seed 34 added go (`withoutClaudeOtlp`).
     // Seed 36 names the doors its model calls come through (`callsVia`); the
     // OTEL_* switches live on the `otlp` door now, not in the env.
-    since: 36,
+    // Seed 40 moves rules to ACP's own `systemPrompt` (`personaVia:
+    // "acp-system-prompt"`, claude-agent-acp ≥ 0.100), with `"air-meta"` as the
+    // fallback an adapter that does not advertise it still gets. Only the two
+    // seeded doors move; a row naming anything else keeps it. Env untouched.
+    since: 40,
     backfill: (existing) => ({
       env: withoutClaudeOtlp(withoutSubagentModelKey(
         withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
@@ -1030,7 +1070,10 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       callsVia: existing.callsVia ?? CALLS_VIA["claude-code"],
       quotaProbe: withProbeLogin(existing.quotaProbe, QUOTA_PROBES["claude-code"]),
       liveConfig: existing.liveConfig ?? "acp",
-      personaVia: !existing.personaVia || existing.personaVia === "acp-meta" ? "air-meta" : existing.personaVia,
+      personaVia:
+        !existing.personaVia || existing.personaVia === "acp-meta" || existing.personaVia === "air-meta"
+          ? "acp-system-prompt"
+          : existing.personaVia,
       sharedProcess: existing.sharedProcess ?? "acp-meta",
       subagentModelsVia: null,
       rewindVia: existing.rewindVia ?? "acp-fork-point",
@@ -1054,7 +1097,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     spawnCategories: SPAWN_CATEGORIES,
     quotaProbe: QUOTA_PROBES["claude-code"],
     liveConfig: "acp",
-    personaVia: "air-meta",
+    personaVia: "acp-system-prompt",
     sharedProcess: "acp-meta",
     rewindVia: "acp-fork-point",
     pauseVia: "acp-meta",
@@ -1097,14 +1140,20 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // skills and prompts only under `$CODEX_HOME`, never per project, so there
     // is nowhere in a cwd to write them and pretending otherwise is what the
     // old `.claude` write did. Seed 36 names its call doors (`callsVia`).
-    since: 36,
+    // Seed 40 moves rules to ACP's own `systemPrompt` (`personaVia:
+    // "acp-system-prompt"`, codex-acp ≥ 2.5), which reaches a revived thread
+    // on `session/resume` and `load` where `developer_instructions` is read
+    // once per process. The `CODEX_CONFIG` key stays: it is the `"env"`
+    // fallback an adapter that does not advertise `systemPrompt` still gets,
+    // and the template naming `{personaPrompt}` is what declares it.
+    since: 40,
     introduced: 2,
     backfill: (existing) => ({
       env: withCodexPersonaKey(withCodexGatewayUrl(withCodexCatalogKey(existing.env))),
       callsVia: existing.callsVia ?? CALLS_VIA.codex,
       quotaProbe: existing.quotaProbe ?? QUOTA_PROBES.codex,
       liveConfig: existing.liveConfig ?? "gateway",
-      personaVia: existing.personaVia ?? "env",
+      personaVia: !existing.personaVia || existing.personaVia === "env" ? "acp-system-prompt" : existing.personaVia,
       rewindVia: existing.rewindVia ?? "acp-fork-point",
       ...backfill20(existing),
     }),
@@ -1116,7 +1165,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     spawnCategories: SPAWN_CATEGORIES,
     quotaProbe: QUOTA_PROBES.codex,
     liveConfig: "gateway",
-    personaVia: "env",
+    personaVia: "acp-system-prompt",
     rewindVia: "acp-fork-point",
     callsVia: CALLS_VIA.codex,
     env: {
@@ -1820,8 +1869,9 @@ export function resolveSpawn(
   sessionId?: string,
   /** The thread's persona, for an agent that takes one through its env. Absent
       for a thread with no persona, for the probe (which opens no session), and
-      for an `"acp-meta"` agent, whose persona travels in the ACP handshake
-      instead — see `AgentDef.personaVia`. */
+      for an agent whose persona travels in the ACP handshake instead — a
+      `_meta` door, or `"acp-system-prompt"` once its runtime has been measured
+      to advertise it (`resolveAgentSpawn` decides). See `AgentDef.personaVia`. */
   persona?: PersonaSpawn,
   /** The model-role vocabulary (`model_roles`) for the role → model map. Read by
       the caller, not here: this runs on synchronous spawn paths and cannot

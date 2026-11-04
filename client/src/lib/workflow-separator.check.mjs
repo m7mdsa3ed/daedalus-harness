@@ -10,11 +10,34 @@ import assert from "node:assert"
 import { applySessionUpdate } from "./store/session-update.ts"
 import { buildRows, separatorAfterRun } from "./transcript-rows.ts"
 
-/** Feed `[update, sessionId?]` pairs through the reducer, build the rows. */
+/** The engine writes the draft pair; the RFD's `subagent_update` is the
+    canonical shape. Both must draw the same card (the server's translation,
+    `subagent-update.ts`, restated). */
+const ENDINGS = {
+  completed: { state: "idle", stopReason: "end_turn" },
+  failed: { state: "idle", stopReason: "error" },
+  cancelled: { state: "idle", stopReason: "cancelled" },
+  disconnected: { state: "_daedalus/disconnected" },
+}
+const toRfd = (u) =>
+  u.sessionUpdate === "subagent_spawned"
+    ? { sessionUpdate: "subagent_update", sessionId: u.subagentSessionId, title: u.name, description: u.task, capabilities: {}, state: { state: "running" }, _meta: u._meta }
+    : u.sessionUpdate === "subagent_state_update"
+      ? { sessionUpdate: "subagent_update", sessionId: u.subagentSessionId, state: ENDINGS[u.state] }
+      : u
+const STAMP = 1_700_000_000_000
+/** Feed `[update, sessionId?]` pairs through the reducer in both shapes, build the rows. */
 const rows = (frames) => {
-  let items = []
-  for (const [update, sessionId] of frames) items = applySessionUpdate(items, update, false, sessionId)
-  return buildRows(items, false, true)
+  const reduce = (shape) => {
+    let items = []
+    for (const [update, sessionId] of frames) items = applySessionUpdate(items, shape(update), false, sessionId, STAMP)
+    return items
+  }
+  const draft = reduce((u) => u)
+  // A text run's id is minted off a process-wide counter: the one honest difference.
+  const minted = (items) => items.map((i) => (/^(agent|thought|user|notice)-\d+$/.test(i.id) ? { ...i, id: `${i.kind}-*` } : i))
+  assert.deepStrictEqual(minted(reduce(toRfd)), minted(draft), "the RFD's subagent_update and the draft pair build the same items")
+  return buildRows(draft, false, true)
 }
 const text = (t) => ({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: t } })
 const step = (runId, index, total) => ({

@@ -15,15 +15,25 @@ export interface ImportableSession {
   updatedAt: string | null
   /** Already a thread here: its id, so the row offers Open instead. */
   existing?: { sessionId: string; deleted: boolean }
+  /** Whether the runtime has archived it (ACP `SessionInfo.archived`), said
+      only by a runtime that can tell (`SessionListing.archive`); null or
+      absent otherwise. */
+  archived?: boolean | null
 }
 
 export interface SessionListing {
   /** False when the runtime cannot enumerate its own sessions. An answer, not
       an error — the dialog says so in words. */
   supported: boolean
+  /** Whether the runtime could filter on archived (`sessionCapabilities.archive`).
+      Absent from a server without the `sessionArchive` feature. */
+  archive?: boolean
   sessions: ImportableSession[]
   truncated: boolean
 }
+
+/** The server's `archived` filter: left out, archived sessions are excluded. */
+export type ArchiveFilter = "exclude" | "include" | "only"
 
 export interface ImportResult {
   created: { id: string; acpSessionId: string }[]
@@ -40,7 +50,7 @@ function server(): ServerSettings {
     only supplies the directory to spawn the agent in; the listing is
     machine-wide and each entry carries its own cwd. */
 export function listImportable(
-  body: { profileId: string; agentId: string; projectId: string },
+  body: { profileId: string; agentId: string; projectId: string; archived?: ArchiveFilter },
   signal?: AbortSignal
 ): Promise<SessionListing> {
   return api<SessionListing>(server(), "/api/sessions/importable", {

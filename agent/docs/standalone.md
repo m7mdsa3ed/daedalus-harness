@@ -79,7 +79,7 @@ Any other ACP client is the same three fields — a command, its args, and an en
 With the ACP SDK, in process or over a spawned pipe:
 
 ```ts
-import * as acp from "@agentclientprotocol/sdk"
+import * as acp from "@agentclientprotocol/sdk/unstable" // 2.4.0; the entry that types `subagents`, `subagent_update`, `systemPrompt`, `session/archive`
 
 await acp.client({ name: "my-client" })
   .onRequest("session/request_permission", ({ params }) => {
@@ -127,6 +127,25 @@ offered to a client that cannot render it is a hang. Claim what you can handle:
 | `session: { configOptions: { boolean: {} } }` | the `autoCompact` switch appears in `configOptions` |
 | `session: { compaction: {} }` | compaction is announced as it happens (it still *runs* either way) |
 | `subagents: {}` | the `task` tool reports as real child sessions instead of folding into one tool result |
+
+**What the agent claims back**, in its `initialize` answer, and what each buys
+you as a client:
+
+| It advertises | Which means |
+| --- | --- |
+| `sessionCapabilities.systemPrompt: { mode: { override: {} } }` | a request may carry ACP's `systemPrompt {mode, content}` on `session/new`, `load`, `resume` and `fork`: `append` lands as the persona layer (byte-identical to AIR `customInstructions`, which it outranks), `override` replaces the core instructions and model guidance and keeps tool guidance, plan mode and the workspace files; an unadvertised mode or a non-text block is `-32602` |
+| `sessionCapabilities.archive: {}` | `session/archive` (closes a live session first, then flags it in `index.json`; the log is untouched, an archived session still `load`s and keeps talking) and `session/unarchive`; `session/list` takes `archived: "exclude" \| "include" \| "only"` (`exclude` by default, anything else `-32602`) and says `archived` on every row |
+| `sessionCapabilities.list`, `.resume`, `.fork` | the store below; `session/fork` copies the store and returns the new id without opening a live session |
+| `subagents: {}` (echoed) | children arrive as the RFD's one upsert, `subagent_update` on the parent's session — spawn as `{title, description, state: {state: "running"}, cwd, _meta.daedalus}`, an ending as `{state: "idle", stopReason: "end_turn" \| "error" \| "cancelled"}` (a failed one with `error {code, message}`), a `send_message` resume restating the spawn on the same id — plus the agent's own `_daedalus/subagent_usage`, which is where the usage is (never `state.usage`, so a client that sums both counts once) |
+
+**Unknown session ids are `-32002`** (`RequestError.sessionNotFound`, `data.sessionId`)
+from `session/prompt`, `load`, `resume`, `fork`, `delete`, `archive` and
+`unarchive`; a bad fork point in a session that exists stays `-32602`. The SDK's
+typed client resolves a `-32002` on `session/close`/`delete` as success
+(`treatSessionNotFoundAsSuccess`), so over the SDK a delete of nothing is quiet.
+A request's cancellation (`$/cancel_request`, or the connection dropping) is
+chained into the turn through the same door `session/cancel` uses, so a held or
+paused turn clears exactly as a cancel would.
 
 **Permissions.** `session/request_permission` is a real request the agent blocks
 on. Answer it, or set the session mode to `bypassPermissions` and never be
@@ -231,7 +250,11 @@ hand and they work.
 `session/load` replays a session's `update` records as live notifications and
 then keeps talking with the `msg` history restored, so a client can reopen a
 conversation across restarts. `session/list` pages that index (100 at a time,
-`cursor`/`nextCursor`, optional `cwd` filter) — which is also exactly what the
-harness's **Import threads** dialog reads, so work done standalone in Zed can be
-imported into the harness later, and vice versa. The store is one directory:
-back it up by copying it, reset it by deleting it.
+`cursor`/`nextCursor`, optional `cwd` filter, `archived` filter — archived rows
+are left out unless asked for) — which is also exactly what the harness's
+**Import threads** dialog reads, so work done standalone in Zed can be imported
+into the harness later, and vice versa. The archive flag lives on the index row
+alone (`IndexEntry.archived`, no record in the session's JSONL), written
+merge-on-write so two processes over one home do not clobber each other's rows;
+a corrupt index loses archive flags with the listing, as it loses titles today.
+The store is one directory: back it up by copying it, reset it by deleting it.

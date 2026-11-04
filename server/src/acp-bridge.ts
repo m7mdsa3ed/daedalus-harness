@@ -10,7 +10,8 @@ import type { Project } from "./projects.js";
 import { mentionLinks } from "./mentions.js";
 import { attachmentBlocks } from "./attachment-blocks.js";
 import type { PersonaSpawn } from "./personas.js";
-import { getAgent, resolveSpawn } from "./registry.js";
+import { getAgent, resolveSpawn, usesPersonaEnv, type AgentDef, type PersonaVia } from "./registry.js";
+import { lastSystemPromptAdvertised, systemPromptAdvertised } from "./agent-capabilities.js";
 import { listModelRoles } from "./model-roles.js";
 import type {
   AsyncTaskState,
@@ -37,13 +38,7 @@ import { WORKFLOW_SERVER_NAME } from "./workflows/types.js";
 import type { BuiltinToolOverrides } from "./db/schema.js";
 import type { AcpConnection, ConnectionRoute } from "./acp-connection.js";
 import type { OrphanPrompt, WireLedger } from "./adopt-state.js";
-import {
-  isRfdSubagentUpdate,
-  OPENCODE_CHILD_UPDATE_METHODS,
-  translateOpencodeChildUpdate,
-  translateSubagentUpdate,
-  type KnownSubagent,
-} from "./subagent-update.js";
+import { OPENCODE_CHILD_UPDATE_METHODS, translateOpencodeChildUpdate } from "./subagent-update.js";
 
 /**
  * The ACP client, server-side.
@@ -83,9 +78,10 @@ export async function spawnAgent(
       credentials and model behind it stay the harness's to change while the
       process runs. The probe has no thread and passes nothing. */
   sessionId?: string,
-  /** The thread's persona, for an agent whose `personaVia` is `"env"`. An
-      `"acp-meta"` agent's persona travels in the handshake instead
-      (`sessionMeta`), and the probe has no thread and passes nothing. */
+  /** The thread's persona, for an agent that takes one through its env
+      (`resolveAgentSpawn` decides which spawn does). A `_meta` agent's persona
+      travels in the handshake instead (`sessionMeta`), and the probe has no
+      thread and passes nothing. */
   persona?: PersonaSpawn,
   /** No human in front of this thread — a workflow step, a scheduled run. The
       harness's own runtime holds a failed turn at its step boundary and waits
@@ -99,6 +95,33 @@ export async function spawnAgent(
 }
 
 export type { SpawnSpec };
+
+/** `resolveAgentSpawn`'s answer: the spawn, plus one fact about it the bridge
+    has to know and the process cannot say — whether the thread's persona was
+    placed in the env. A `SpawnSpec` structurally, so the pool and the prewarm
+    key it as before (`personaInEnv` changes the env, which the key reads). */
+export interface ResolvedSpawn extends SpawnSpec {
+  /** The persona went into the env (`{personaPrompt}`/`{personaFile}`), so the
+      handshake must not say it again. False for a `_meta` door, for an
+      `"acp-system-prompt"` runtime measured to advertise `systemPrompt`, and
+      for a spawn with no persona at all. */
+  personaInEnv: boolean;
+}
+
+/**
+ * Whether this spawn's persona goes through the env. The `"env"` door always;
+ * the `"acp-system-prompt"` door only as the fallback — a template that names
+ * a placeholder and a runtime whose last measured `initialize` did not
+ * advertise `systemPrompt` (`agent-capabilities.ts`; never measured reads as
+ * not advertised). The env is fixed before the handshake can answer, so this
+ * is the one reading a spawn can honestly take; the bridge reads the live
+ * answer afterwards and sends `systemPrompt` only where the env said nothing.
+ */
+export function personaGoesInEnv(agent: AgentDef): boolean {
+  if (agent.personaVia === "env") return true;
+  if (agent.personaVia !== "acp-system-prompt") return false;
+  return usesPersonaEnv(agent) && !lastSystemPromptAdvertised(agent.id);
+}
 
 /** Spawn the process a spec describes — the one place an agent is started, via the sandbox. */
 export function spawnProcess(spec: SpawnSpec): Promise<Handle> {
@@ -126,7 +149,7 @@ export async function resolveAgentSpawn(
       server, `"off"` for a child, absent when it has neither. Decided by the
       caller because only it knows the server list. */
   subagents?: "harness" | "off",
-): Promise<SpawnSpec> {
+): Promise<ResolvedSpawn> {
   const agent = await getAgent(agentId);
   if (!agent) throw new Error(`unknown agent: ${agentId}`);
   if (!profileSupports(profile, agentId)) {
@@ -139,6 +162,7 @@ export async function resolveAgentSpawn(
      `resolveSpawn` is synchronous (it is also called by `checkInstalled` and the
      probes, which spawn nothing a role would reach). Only the daedalus runtime's
      env names it, and this is the one path that spawns it for real. */
+  const personaInEnv = persona !== undefined && personaGoesInEnv(agent);
   const { command, args, env, cwd } = resolveSpawn(
     agent,
     profile,
@@ -146,27 +170,102 @@ export async function resolveAgentSpawn(
     model,
     effort,
     sessionId,
-    agent.personaVia === "env" ? persona : undefined,
+    personaInEnv ? persona : undefined,
     await listModelRoles(),
     helperModels,
     subagents,
   );
   if (unattended) env.DAEDALUS_AGENT_HOLD_ON_ERROR = "0";
-  return { command, args, env, cwd };
+  return { command, args, env, cwd, personaInEnv };
 }
 
-/** `acp.SessionNotification` widened to the updates the SDK does not know yet
-    (protocol.ts `SessionUpdate`). */
-export interface SessionNotification {
+/** The spawn-instruction doors the bridge itself opens — every `PersonaVia`
+    but `"env"`, which `resolveSpawn` served before the process existed. */
+export type BridgePersonaVia = Exclude<PersonaVia, "env">;
+
+/** What a session request carries for the thread's persona, by door. */
+export interface PersonaRequestFields {
+  /** ACP's own `systemPrompt`, present only for the `"acp-system-prompt"` door
+      on a runtime whose live `initialize` advertised it. Spread into the
+      request beside `cwd`/`mcpServers`. */
+  systemPrompt?: acp.SystemPrompt;
+  /** The persona's share of `_meta` — `jetbrains.air.customInstructions` or
+      `systemPrompt.append` — empty when it rides `systemPrompt` or the env. */
+  meta: Record<string, unknown>;
+  /** A row naming a door the runtime never advertised is rules going nowhere;
+      worth one line in the log rather than none. */
+  warn?: string;
+}
+
+/**
+ * Place the persona on a session request, through exactly one door.
+ *
+ * `"acp-system-prompt"` is the spec's: `systemPrompt {mode: "append", content}`
+ * — `append` because every runtime advertising the capability supports it
+ * (`SessionSystemPromptCapabilities.mode` lists the *extra* modes, and an
+ * `override` would make the harness responsible for the runtime's own tool
+ * guidance), `text` content because that is the one block type the spec lets a
+ * client send. Sent **only when `sessionCapabilities.systemPrompt` is
+ * advertised**; the spec forbids it otherwise, and the fallback is the AIR
+ * `customInstructions` key — harmless to a runtime that ignores it, which is
+ * what the `"air-meta"` door already relied on. A persona already placed in
+ * the env (`personaInEnv`: the `"env"` fallback of a runtime measured not to
+ * advertise `systemPrompt` before it spawned) is said by no door here, because
+ * claude-agent-acp joins `systemPrompt` and `customInstructions` into one text
+ * and codex-acp appends over `developer_instructions`: two doors is the text
+ * said twice.
+ *
+ * Pure, so the test can assert the one rule that matters — `systemPrompt` is
+ * emitted when advertised and never otherwise — without a process.
+ */
+export function personaRequestFields(
+  persona: PersonaSpawn | undefined,
+  personaVia: BridgePersonaVia | undefined,
+  personaInEnv: boolean,
+  capabilities: acp.AgentCapabilities,
+): PersonaRequestFields {
+  if (!persona || personaInEnv) return { meta: {} };
+  const airCapabilities = ((): readonly unknown[] => {
+    const meta = capabilities._meta as { jetbrains?: { air?: { capabilities?: unknown } } } | null | undefined;
+    const caps = meta?.jetbrains?.air?.capabilities;
+    return Array.isArray(caps) ? caps : [];
+  })();
+  /* Sent regardless — an agent that ignores the key loses nothing — and the
+     warn only when the runtime never advertised the key. */
+  const air = (warn: string): PersonaRequestFields => ({
+    meta: { jetbrains: { air: { customInstructions: persona.prompt } } },
+    ...(airCapabilities.includes("customInstructions") ? {} : { warn }),
+  });
+  if (personaVia === "acp-system-prompt") {
+    if (systemPromptAdvertised(capabilities)) {
+      return { systemPrompt: { mode: "append", content: [{ type: "text", text: persona.prompt }] }, meta: {} };
+    }
+    return air("agent did not advertise sessionCapabilities.systemPrompt; falling back to AIR customInstructions, which it did not advertise either — this thread's rules may not reach it");
+  }
+  if (personaVia === "air-meta") {
+    return air("agent did not advertise AIR customInstructions; this thread's rules may not reach it");
+  }
+  return { meta: { systemPrompt: { append: persona.prompt } } };
+}
+
+/** The session updates the SDK's `SessionUpdate` union does not carry:
+    protocol.ts's own variants (the draft subagent pair, the AIR async-task
+    lifecycle, `_daedalus/*`). What `SESSION_UPDATE_EXT_METHOD` delivers. */
+export type ExtensionSessionUpdate = Exclude<SessionUpdate, acp.SessionUpdate>;
+
+/** A `session/update` whose tag the SDK does not know, re-addressed by
+    `agentStream` to `SESSION_UPDATE_EXT_METHOD` and parsed by
+    `parseSessionNotification` — the genuinely foreign half of what a route's
+    `onUpdate` takes. */
+export interface ExtensionSessionNotification {
   sessionId: string;
-  update: SessionUpdate;
+  update: ExtensionSessionUpdate;
   _meta?: Record<string, unknown> | null;
 }
 
-/** `clientCapabilities.subagents: {}` — the RFD's opt-in, typed as the SDK's
-    capabilities so it can be spread into the handshake literal without the
-    excess-property check refusing a key the SDK has not learned yet. */
-const SUBAGENT_CAPABILITY = { subagents: {} } as unknown as Partial<acp.ClientCapabilities>;
+/** What a route's `onUpdate` takes: the SDK's own notification off the typed
+    `session/update` handler, or a foreign one off the extension method. */
+export type SessionNotification = acp.SessionNotification | ExtensionSessionNotification;
 
 /* The fifth bargain, and the one that decides whether a *dynamic workflow* is
    legible. Claude Code runs one as a background task that outlives the turn,
@@ -183,8 +282,8 @@ const SUBAGENT_CAPABILITY = { subagents: {} } as unknown as Partial<acp.ClientCa
 
    The shape is the JetBrains AIR extension's, spelled exactly as
    `clientSupportsAirCapability` reads it — a version and a list of capability
-   names, under `_meta.jetbrains.air`. Declared here as a constant, like
-   SUBAGENT_CAPABILITY, because none of it is in the SDK's types.
+   names, under `_meta.jetbrains.air`. Declared here as a constant because
+   none of it is in the SDK's types (`_meta` is free-form).
 
    Requires the adapter's `workflow_progress` passthrough (`pnpm patch:acp`).
    Without the patch this still earns the run's name, live token and tool
@@ -200,8 +299,8 @@ const SUBAGENT_CAPABILITY = { subagents: {} } as unknown as Partial<acp.ClientCa
      unclaimed, codex sends a Bash step with no output at all and Claude Code
      draws no terminal. The adapters spell it at the top of `_meta`.
    - `asyncTasks` — the background-task lifecycle above.
-   - `nativeSubagentSessions` — the AIR spelling of SUBAGENT_CAPABILITY's
-     opt-in. Released SDKs may strip the draft `clientCapabilities.subagents`
+   - `nativeSubagentSessions` — the AIR spelling of the `subagents: {}`
+     opt-in below. Released SDKs may strip the draft `clientCapabilities.subagents`
      field on the way out, and both adapters accept this as the same signal,
      so a child keeps its own session whichever one survives. Both are sent.
    - `sessionFailure` — a warning or a failed turn arrives as a typed record
@@ -303,65 +402,79 @@ export interface RetryParams {
 export const parseRetryParams = (params: unknown): RetryParams => (params ?? {}) as RetryParams;
 
 /**
- * The subagent RFD's two updates are ahead of the SDK, and the SDK is not
- * lenient about that: `acp.client()` installs a `session/update` router *ahead
- * of every handler* which validates each frame against a closed union of the
- * variants it knows and throws on anything else — the frame is logged and
- * dropped before a handler registered with its own parser gets a look. So the
- * two are moved to a private method name on the way in (`agentStream`), where
- * the SDK has nothing to say about them, and the bridge listens on both names.
- * The SDK's union now carries the RFD's *current* shape (`subagent_update`,
- * translated into this pair in `subagent-update.ts`), but the adapters still
- * send the draft, so the detour stays until they move. The agent runtime meets
- * the same closed schema from the other side (`agent/src/app.ts`, the identity
- * parser on `initialize`); the one fact behind both is written up once in
- * docs/protocol.md ("The SDK seam").
+ * The SDK's `acp.client()` installs a `session/update` router *ahead of every
+ * handler* which validates each frame against the closed `SessionUpdate`
+ * union and throws on anything else — the frame is logged and dropped before
+ * a handler registered with its own parser gets a look. The harness speaks
+ * more than the union: the draft subagent pair an older adapter still sends
+ * (`subagent_spawned` / `subagent_state_update`), the AIR async-task lifecycle
+ * (`async_task_*`, found by driving a dynamic workflow end to end after
+ * `AIR_META` went in: every beat logged as unknown and dropped, the client
+ * saw nothing), and its own `_daedalus/*` records (`_daedalus/subagent_usage`,
+ * `_daedalus/model_call` — the workflow runner and our runtime emit them, the
+ * server-built ones take the same path through `emit`).
  *
- * `_daedalus/subagent_usage` rides the same detour. It is ours, not the RFD's
- * — the workflow runner emits it server-side, where no validator ever sees it
- * — and it is listed here so an agent may say it too: a runtime that one day
- * reports what a child spent has somewhere to put it. The bridge forwards it whole either way, as it does
- * every other update.
+ * So the set of tags the SDK knows is read off the SDK's own published schema
+ * at module load, and `agentStream` re-addresses ANY `session/update` whose
+ * tag is not in it to `SESSION_UPDATE_EXT_METHOD`, where the SDK has nothing
+ * to say about it and `acp-connection.ts` listens with
+ * `parseSessionNotification` — and says the draft subagent pair an older
+ * adapter still sends as `subagent_update` there (`subagent-update.ts`). A tag
+ * in the union — `subagent_update` included, the harness's canonical subagent
+ * shape — goes through the SDK untouched. An SDK release
+ * that learns a tag moves it to the typed path by itself; one that drops a tag
+ * moves it here, and neither is a code change. The agent runtime meets the
+ * same closed schema from the other side (`agent/src/app.ts`); the one fact
+ * behind both is written up once in docs/protocol.md ("The SDK seam").
  */
-export const SUBAGENT_UPDATE_METHOD = "_daedalus/subagent_update";
-const SUBAGENT_UPDATE_KINDS: ReadonlySet<string> = new Set([
-  "subagent_spawned",
-  "subagent_state_update",
-  "_daedalus/subagent_usage",
-  /* The AIR async-task lifecycle (protocol.ts `AsyncTaskSpawned` and kin) is
-     ahead of the SDK in exactly the same way, and met exactly the same fate:
-     the adapter sent every beat of a dynamic workflow, the server logged each
-     one as an unknown variant and dropped it, and the client saw nothing —
-     found by driving a run end to end after `AIR_META` went in.
-     Same detour, for as long as the SDK's union lacks them. */
-  "async_task_spawned",
-  "async_task_progress",
-  "async_task_state_update",
-  /* One record per model call (protocol.ts `ModelCallUpdate`): our runtime
-     sends it itself (`agent/src/trace.ts`), and the server-built ones take the
-     same path through `emit`, so nothing downstream can tell who built one. */
-  "_daedalus/model_call",
-]);
+export const SESSION_UPDATE_EXT_METHOD = "_daedalus/session_update_ext";
+
+
+/** Every `sessionUpdate` tag the SDK's `SessionUpdate` union carries, read off
+    its published schema by the barrel (`acp.ts`, the one file that names the
+    package). */
+export const SDK_SESSION_UPDATE_TAGS: ReadonlySet<string> = acp.readSdkSessionUpdateTags();
 
 /** The structural check the rerouted frames are parsed with: the shape the
     bridge itself relies on. An agent that sends something else is speaking a
     protocol this bridge does not, and the SDK's own answer to that (a logged
     error, the frame dropped) is the right one, so this throws the same way
     its parser would. */
-export function parseSessionNotification(params: unknown): SessionNotification {
-  const p = params as Partial<SessionNotification> | null;
+export function parseSessionNotification(params: unknown): ExtensionSessionNotification {
+  const p = params as Partial<ExtensionSessionNotification> | null;
   const tag = (p?.update as { sessionUpdate?: unknown } | undefined)?.sessionUpdate;
   if (!p || typeof p.sessionId !== "string" || typeof tag !== "string") {
     throw acp.RequestError.invalidParams("session/update: expected {sessionId, update.sessionUpdate}");
   }
-  return p as SessionNotification;
+  return p as ExtensionSessionNotification;
 }
 
-const isSubagentUpdate = (message: acp.AnyMessage): boolean => {
+/** A `session/update` whose tag the SDK's union does not carry. Anything
+    without a string tag is left to the SDK's parser, which refuses it. */
+export const isForeignSessionUpdate = (message: acp.AnyMessage): boolean => {
   if (!("method" in message) || message.method !== acp.methods.client.session.update) return false;
   const tag = ((message.params as { update?: { sessionUpdate?: unknown } } | undefined)?.update)?.sessionUpdate;
-  return typeof tag === "string" && SUBAGENT_UPDATE_KINDS.has(tag);
+  return typeof tag === "string" && !SDK_SESSION_UPDATE_TAGS.has(tag);
 };
+
+/**
+ * The inbound rewrite `agentStream` applies to every frame, as a pure function
+ * so it can be tested without a process: OpenCode 2's child extension becomes
+ * `subagent_update` on `session/update` (a tag the SDK knows, so it stays on
+ * the typed path), and any `session/update` the SDK would drop is re-addressed
+ * to `SESSION_UPDATE_EXT_METHOD`. Everything else — a `subagent_update`
+ * included — passes through untouched.
+ */
+export function rewriteInbound(message: acp.AnyMessage): acp.AnyMessage[] {
+  const reroute = (frame: acp.AnyMessage): acp.AnyMessage =>
+    isForeignSessionUpdate(frame) ? { ...frame, method: SESSION_UPDATE_EXT_METHOD } : frame;
+  if ("method" in message && OPENCODE_CHILD_UPDATE_METHODS.has(message.method)) {
+    return translateOpencodeChildUpdate(message.params).map((note) =>
+      reroute({ jsonrpc: "2.0", method: acp.methods.client.session.update, params: note } as acp.AnyMessage),
+    );
+  }
+  return [reroute(message)];
+}
 
 /**
  * Codex's "Model metadata for `…` not found. Defaulting to fallback metadata"
@@ -436,9 +549,8 @@ export const CLIENT_CAPABILITIES: acp.ClientCapabilities = {
   // implements it — codex-acp from 1.7 — sends a child's transcript as
   // its own session only if the client claimed this. Unclaimed, the
   // same runtime folds the child into one lifecycle tool call with no
-  // steps in it. `{}` is the whole contract here too. Spread from a
-  // typed constant because the key is not in the SDK's type yet.
-  ...SUBAGENT_CAPABILITY,
+  // steps in it. `{}` is the whole contract here too.
+  subagents: {},
   // claude-agent-acp's older, `_meta`-only version of the same thing: it
   // stamps every update a subagent produces with
   // `_meta.claudeCode.parentToolUseId`, but withholds the subagent's
@@ -453,8 +565,9 @@ export const CLIENT_CAPABILITIES: acp.ClientCapabilities = {
 
 /** The ndJSON stream over a spawned agent's stdio. From here on the SDK owns
     stdout — a stray 'data' listener anywhere else silently steals its bytes.
-    Inbound frames pass through one rewrite: a `session/update` carrying an RFD
-    subagent variant is re-addressed to `SUBAGENT_UPDATE_METHOD` (see there). */
+    Inbound frames pass through one rewrite (`rewriteInbound`): a
+    `session/update` whose tag the SDK does not know is re-addressed to
+    `SESSION_UPDATE_EXT_METHOD` (see there). */
 export function agentStream(
   proc: Handle,
   /** Id shifting and progress bookkeeping on the pipes (`adopt-state.ts`). */
@@ -472,30 +585,9 @@ export function agentStream(
     void out.readable.pipeTo(raw.writable).catch(() => {});
     stream = { writable: out.writable, readable: raw.readable.pipeThrough(ledger.inbound()) };
   }
-  /* The children this process has announced through the current RFD's
-     upsert, so each `subagent_update` can be said as the draft pair. */
-  const known = new Map<string, KnownSubagent>();
   const reroute = new TransformStream<acp.AnyMessage, acp.AnyMessage>({
     transform(message, controller) {
-      const params = "method" in message && message.method === acp.methods.client.session.update
-        ? (message.params as { sessionId?: unknown; update?: unknown } | undefined)
-        : undefined;
-      if (params && typeof params.sessionId === "string" && isRfdSubagentUpdate(params.update)) {
-        for (const note of translateSubagentUpdate(params.sessionId, params.update, known)) {
-          controller.enqueue({ jsonrpc: "2.0", method: SUBAGENT_UPDATE_METHOD, params: note } as acp.AnyMessage);
-        }
-        return;
-      }
-      if ("method" in message && OPENCODE_CHILD_UPDATE_METHODS.has(message.method)) {
-        for (const note of translateOpencodeChildUpdate(message.params)) {
-          const frame = { jsonrpc: "2.0", method: acp.methods.client.session.update, params: note } as acp.AnyMessage;
-          controller.enqueue(isSubagentUpdate(frame) ? { ...frame, method: SUBAGENT_UPDATE_METHOD } : frame);
-        }
-        return;
-      }
-      controller.enqueue(
-        isSubagentUpdate(message) ? { ...message, method: SUBAGENT_UPDATE_METHOD } : message,
-      );
+      for (const frame of rewriteInbound(message)) controller.enqueue(frame);
     },
   });
   return { writable: stream.writable, readable: stream.readable.pipeThrough(reroute) };
@@ -677,14 +769,20 @@ export interface BridgeOptions {
   /** The harness's workflow MCP server is replacing the runtime's own
       orchestration tool, for the same reason and with the same allow rule. */
   workflowViaMcp?: boolean;
-  /** The thread's persona, for an agent whose `personaVia` is `"acp-meta"` or
-      `"air-meta"` — see `sessionMeta`. Undefined for every other agent and for
-      a thread with no persona; an `"env"` agent's persona was placed by
-      `resolveSpawn` before this process existed. */
+  /** The thread's persona, for an agent whose `personaVia` is one of the
+      bridge's doors (`BridgePersonaVia`) — see `personaRequestFields`.
+      Undefined for an `"env"` agent and for a thread with no persona; an
+      `"env"` agent's persona was placed by `resolveSpawn` before this process
+      existed. */
   persona?: PersonaSpawn;
-  /** Which `_meta` key carries `persona`: `_meta.systemPrompt.append`
-      (`"acp-meta"`) or the AIR extension's `customInstructions`. */
-  personaVia?: "acp-meta" | "air-meta";
+  /** Which door carries `persona`: `_meta.systemPrompt.append` (`"acp-meta"`),
+      the AIR extension's `customInstructions` (`"air-meta"`), or ACP's own
+      `systemPrompt` when the runtime advertises it (`"acp-system-prompt"`). */
+  personaVia?: BridgePersonaVia;
+  /** `persona` already went into the process env (`ResolvedSpawn.personaInEnv`):
+      the `"acp-system-prompt"` door's env fallback. The handshake then says it
+      through no door of its own, or it is said twice. */
+  personaInEnv?: boolean;
   /** Which of the runtime's own tools the two flags above replace, and how it
       is told to switch them off (`AgentDef.builtinTools`). Null/absent — every
       runtime but claude-code today — means its built-ins stay on beside ours,
@@ -770,7 +868,7 @@ export class AcpBridge implements ConnectionRoute {
   private readonly conn: AcpConnection;
   private readonly connection: acp.ClientConnection;
   /** Session ids that are this thread's without being its own: subagents
-      (RFD), learned from their `subagent_spawned`. How a shared connection
+      (RFD), learned from their `subagent_update`. How a shared connection
       knows whose child a frame is. */
   private readonly children = new Set<string>();
   /** The id a `session/load`/`session/resume` is asking for, before the
@@ -788,6 +886,12 @@ export class AcpBridge implements ConnectionRoute {
       way `newSession` does) and the forked session needs the same server list
       the original got, since ACP does not say a fork inherits it. */
   private readonly mcpServers: acp.McpServer[];
+  /** The persona and its door — kept for `forkAt`, for the reason `mcpServers`
+      is: the spec says a fork SHOULD carry the same `systemPrompt` the source
+      session was given, and `forkAt` has no `BridgeOptions` to read it off. */
+  private readonly persona: PersonaSpawn | undefined;
+  private readonly personaVia: BridgePersonaVia | undefined;
+  private readonly personaInEnv: boolean;
   /** Prompts the agent has not answered yet. A turn is over when this hits
       zero — NOT when the first prompt returns, or steering (a second prompt
       sent mid-turn) would clear the indicator while the agent is still
@@ -807,6 +911,24 @@ export class AcpBridge implements ConnectionRoute {
       updates it produces are journaled as history rather than as news. */
   private historyReplay = false;
   private closed = false;
+  /** Aborted by `close()`. Every `session/prompt` this bridge sends carries it
+      (`stopWaitingOnCancel`), so a prompt a dead or discarded session still
+      owed is released at once — and on a shared process the SDK sends the
+      agent `$/cancel_request` and drops the answer it would otherwise keep a
+      slot for. Never aborted by `session/cancel`: that is the protocol's own
+      notification, and the prompt it interrupts still answers normally. */
+  private readonly lifetime = new AbortController();
+  /** The handshake's own: aborted when its inactivity clock fires and by
+      `close()`, so `session/new`/`resume`/`load` reject at once rather than
+      dangling under a race whose other side already lost (see `handshake`). */
+  private handshakeAbort: AbortController | null = null;
+  /** Latched by the handshake clock when it fires, read by
+      `handshakeAbandoned`. A fact and not a reading of the controller: the
+      controller is nulled in `handshake`'s `finally`, which can run before
+      the aborted request's `catch` once any await sits between the SDK's
+      rejection and that catch — and then the catch would read "not abandoned"
+      and run the fallback the clock had already given up on. */
+  private handshakeGaveUp = false;
   /** Prompt texts whose turns are waiting on close() for a reason worth
       reporting — see onPromptRejected. */
   private readonly held: string[] = [];
@@ -859,6 +981,9 @@ export class AcpBridge implements ConnectionRoute {
     this.host = host;
     this.cwd = opts.cwd;
     this.mcpServers = opts.mcpServers;
+    this.persona = opts.persona;
+    this.personaVia = opts.personaVia;
+    this.personaInEnv = opts.personaInEnv === true;
     this.suppressModelMetadataWarning = opts.suppressModelMetadataWarning === true;
     this.pauseViaHooks = !!opts.pauseHookUrl;
     this.callsVia = opts.callsVia;
@@ -899,8 +1024,22 @@ export class AcpBridge implements ConnectionRoute {
        times out. */
     let timer: ReturnType<typeof setTimeout> | undefined;
     let fire = (): void => {};
+    /* The race used to decide the wait and nothing else: the request on the
+       losing side stayed pending in the SDK for as long as the connection
+       lived. Now the clock aborts the controller every handshake request
+       carries (`handshakeRequestOptions`), so the SDK rejects it at once
+       (`-32800`) and tells the agent `$/cancel_request`. The budget itself
+       is unchanged — same span, same re-arms, same "silent for the whole
+       span" meaning. */
+    const abort = new AbortController();
+    this.handshakeAbort = abort;
+    this.handshakeGaveUp = false;
     const deadline = new Promise<never>((_, reject) => {
-      fire = () => reject(timeout);
+      fire = () => {
+        this.handshakeGaveUp = true;
+        abort.abort(timeout);
+        reject(timeout);
+      };
     });
     const arm = (): void => {
       clearTimeout(timer);
@@ -928,11 +1067,27 @@ export class AcpBridge implements ConnectionRoute {
     } finally {
       clearTimeout(timer);
       this.handshakeActivity = null;
+      if (this.handshakeAbort === abort) this.handshakeAbort = null;
     }
   }
 
   /** Re-arms the handshake's inactivity clock while one is running. */
   private handshakeActivity: (() => void) | null = null;
+
+  /** The options every request of the handshake is sent with: its
+      controller's signal, and `stopWaitingOnCancel` so the abort is a
+      rejection now, not a `$/cancel_request` the agent may never answer. */
+  private handshakeRequestOptions(): acp.SendRequestOptions {
+    return { cancellationSignal: this.handshakeAbort?.signal ?? this.lifetime.signal, stopWaitingOnCancel: true };
+  }
+
+  /** The handshake request that just failed was given up on by *this side* —
+      the clock fired, or the bridge was closed — rather than refused by the
+      agent. No fallback applies: `session/new` at a dead connection, or after a
+      timeout that is about to throw anyway, is a second failure to read. */
+  private handshakeAbandoned(): boolean {
+    return this.closed || this.handshakeGaveUp || (this.handshakeAbort?.signal.aborted ?? false);
+  }
 
   private async runHandshake(opts: BridgeOptions): Promise<void> {
     /* Said once per process, by the connection — every session on it shares
@@ -966,7 +1121,9 @@ export class AcpBridge implements ConnectionRoute {
    * web-search server nor a persona.
    *
    * The **persona** rides here too, for an agent whose `personaVia` is
-   * `"acp-meta"`, and it is why this is built once and used by both requests
+   * `"acp-meta"` or `"air-meta"` (and `"acp-system-prompt"` falling back to
+   * the latter — the advertised case rides beside `_meta` as the spec's own
+   * `systemPrompt`, `sessionSystemPrompt`), and it is why this is built once and used by both requests
    * rather than only by `newSession`: claude-agent-acp forwards `_meta` from
    * `session/load` into the same `createSession` path, so a respawn — which is
    * what a persona change costs — reapplies it against the loaded conversation
@@ -997,7 +1154,7 @@ export class AcpBridge implements ConnectionRoute {
    * allow says "this one instead". Verified with the CLI: the same prompt on
    * the same gateway went from two denials to none.
    */
-  private sessionMeta(opts: BridgeOptions): Record<string, unknown> {
+  private sessionMeta(opts: BridgeOptions, persona: PersonaRequestFields): Record<string, unknown> {
     const meta: Record<string, unknown> = {};
     const options: Record<string, unknown> = {};
 
@@ -1021,17 +1178,10 @@ export class AcpBridge implements ConnectionRoute {
     }
     if (disallowedTools.length > 0) Object.assign(options, { disallowedTools, allowedTools });
 
-    // "persona" = spawn instructions, see personas.ts. Either key appends to
-    // the runtime's own system prompt; never both, or it is said twice.
-    if (opts.persona && opts.personaVia === "air-meta") {
-      /* Sent regardless — an agent that ignores the key loses nothing — but a
-         row naming a door the runtime never advertised is rules going nowhere,
-         which is worth one line in the log rather than none. */
-      if (!this.airCapabilities.includes("customInstructions")) {
-        console.warn(`agent did not advertise AIR customInstructions; this thread's rules may not reach it`);
-      }
-      meta.jetbrains = { air: { customInstructions: opts.persona.prompt } };
-    } else if (opts.persona) meta.systemPrompt = { append: opts.persona.prompt };
+    // "persona" = spawn instructions, see personas.ts. One door, never two, or
+    // it is said twice — `personaRequestFields` picks it; the `systemPrompt`
+    // half of the same answer rides beside `_meta` (`sessionRequestFields`).
+    Object.assign(meta, persona.meta);
 
     if (opts.sessionEnv && Object.keys(opts.sessionEnv).length > 0) options.env = opts.sessionEnv;
     /* The adapter takes one `settings` object and nothing else sets it, so it
@@ -1048,15 +1198,50 @@ export class AcpBridge implements ConnectionRoute {
     return Object.keys(env).length > 0 ? { claudeCode: { options: { env } } } : {};
   }
 
+  /** The persona's placement on this session's requests, read against the
+      live `initialize` answer (`personaRequestFields`). Computed once per
+      request — both halves of the answer come from the one call — so the
+      warn is said once per handshake request, which is once per spawn in
+      practice. */
+  private personaFields(): PersonaRequestFields {
+    const fields = personaRequestFields(this.persona, this.personaVia, this.personaInEnv, this.agentCapabilities);
+    if (fields.warn) console.warn(fields.warn);
+    return fields;
+  }
+
+  /** ACP's `systemPrompt` — present only when the runtime advertised it (the
+      spec forbids it otherwise), spread into the request so an absent one is
+      omitted rather than sent as `null`. */
+  private static systemPromptField(persona: PersonaRequestFields): { systemPrompt?: acp.SystemPrompt } {
+    return persona.systemPrompt ? { systemPrompt: persona.systemPrompt } : {};
+  }
+
+  /** What `session/new`, `load` and `resume` carry beyond their own fields:
+      the persona's `systemPrompt` and the `_meta` block, from ONE reading of
+      the persona's placement. */
+  private sessionRequestFields(opts: BridgeOptions): { systemPrompt?: acp.SystemPrompt; _meta: Record<string, unknown> } {
+    const persona = this.personaFields();
+    return { ...AcpBridge.systemPromptField(persona), _meta: this.sessionMeta(opts, persona) };
+  }
+
+  /** `systemPrompt` for `session/fork`, which carries no `_meta` doors. */
+  private sessionSystemPrompt(): { systemPrompt?: acp.SystemPrompt } {
+    return AcpBridge.systemPromptField(this.personaFields());
+  }
+
   private async newSession(opts: BridgeOptions): Promise<void> {
     /* Through the connection's creation lane: until the answer names the id,
        a frame about this session can only be routed by who is asking. */
     const response = await this.conn.create(this, () =>
-      this.connection.agent.request(acp.methods.agent.session.new, {
-        cwd: opts.cwd,
-        mcpServers: opts.mcpServers,
-        _meta: this.sessionMeta(opts),
-      }),
+      this.connection.agent.request(
+        acp.methods.agent.session.new,
+        {
+          cwd: opts.cwd,
+          mcpServers: opts.mcpServers,
+          ...this.sessionRequestFields(opts),
+        },
+        this.handshakeRequestOptions(),
+      ),
     );
     await this.adoptSession(response.sessionId, response.modes ?? null, response.configOptions ?? [], false);
   }
@@ -1074,16 +1259,27 @@ export class AcpBridge implements ConnectionRoute {
     this.pendingSessionId = acpSessionId;
     await this.conn.whenClosed(acpSessionId);
     try {
-      const response = await this.connection.agent.request(acp.methods.agent.session.resume, {
-        sessionId: acpSessionId,
-        cwd: opts.cwd,
-        mcpServers: opts.mcpServers,
-        _meta: this.sessionMeta(opts),
-      });
+      const response = await this.connection.agent.request(
+        acp.methods.agent.session.resume,
+        {
+          sessionId: acpSessionId,
+          cwd: opts.cwd,
+          mcpServers: opts.mcpServers,
+          ...this.sessionRequestFields(opts),
+        },
+        this.handshakeRequestOptions(),
+      );
       await this.adoptSession(acpSessionId, response?.modes ?? null, response?.configOptions ?? [], true);
     } catch (error) {
-      if (this.closed) throw error;
-      console.warn(`session/resume failed for ${acpSessionId}, trying session/load`, error);
+      if (this.handshakeAbandoned() || !this.conn.alive) throw error;
+      /* `-32002` with the id is the agent *saying* it does not hold this
+         session — a different thing from a refusal it could not explain.
+         The door is still tried: `session/load` is the older one to the same
+         store, and an agent that lost the resume index may still have the
+         rollout (`loadSession` reports it if not). */
+      if (isSessionNotFound(error, acpSessionId)) {
+        console.warn(`session/resume: the agent reports session ${acpSessionId} not found, trying session/load`);
+      } else console.warn(`session/resume failed for ${acpSessionId}, trying session/load`, error);
       await this.loadSession(opts);
     }
   }
@@ -1115,24 +1311,43 @@ export class AcpBridge implements ConnectionRoute {
     await this.conn.whenClosed(acpSessionId);
     this.historyReplay = true;
     try {
-      const response = await this.connection.agent.request(acp.methods.agent.session.load, {
-        sessionId: acpSessionId,
-        cwd: opts.cwd,
-        mcpServers: opts.mcpServers,
-        _meta: this.sessionMeta(opts),
-      });
+      const response = await this.connection.agent.request(
+        acp.methods.agent.session.load,
+        {
+          sessionId: acpSessionId,
+          cwd: opts.cwd,
+          mcpServers: opts.mcpServers,
+          ...this.sessionRequestFields(opts),
+        },
+        this.handshakeRequestOptions(),
+      );
       await this.adoptSession(acpSessionId, response?.modes ?? null, response?.configOptions ?? [], true);
     } catch (error) {
       // A deliberate close (respawn, retire) is not a load failure: the bridge
       // was shut on purpose, the fallback would be a `session/new` fired at a
       // dead connection, and the warn would make every normal respawn read
       // like a thread that lost its history. Only a real failure starts fresh.
-      if (this.closed) throw error;
-      // Agent can't load this session — continue with a fresh one (empty
-      // context), and say so: a thread that quietly forgot its conversation
-      // looks exactly like a thread that never had one.
-      console.warn(`session/load failed for ${acpSessionId}, starting fresh`, error);
-      this.host.onHistoryLost({ acpSessionId, error: this.host.enrichError(toWireError(error)) });
+      // The same for the handshake clock firing (the request was cancelled by
+      // this side, `-32800`) and for a process that is gone: those are
+      // transport failures, and a fresh session at a dead connection is not a
+      // fallback, it is the same failure said twice.
+      if (this.handshakeAbandoned() || !this.conn.alive) throw error;
+      /* Two refusals the agent can give, told apart on the way out. `-32002`
+         naming this id (`RequestError.sessionNotFound`) is the agent saying
+         it does not hold the session — the rollout is gone from its store, or
+         it is a different agent's store — and the fresh session is the
+         deliberate answer to that. Anything else is a load that failed for a
+         reason it did not state (restarted mid-write, not yet flushed), and
+         the fresh session is a best effort, said as such. Either way the id
+         stays the thread's record (see above). */
+      const notFound = isSessionNotFound(error, acpSessionId);
+      if (notFound) console.warn(`session/load: the agent reports session ${acpSessionId} not found, starting fresh`);
+      else console.warn(`session/load failed for ${acpSessionId}, starting fresh`, error);
+      this.host.onHistoryLost({
+        acpSessionId,
+        error: this.host.enrichError(toWireError(error)),
+        reason: notFound ? "not_found" : "failed",
+      });
       await this.newSession(opts);
     } finally {
       this.historyReplay = false;
@@ -1409,13 +1624,18 @@ export class AcpBridge implements ConnectionRoute {
     /* A subagent's session (RFD) is any id that is not this process's own.
        The id is forwarded, not resolved: which child it is, and under which
        step, is the transcript's business. Strictly "not ours" rather than "one
-       we have seen spawned" so an update that outran its `subagent_spawned`
+       we have seen spawned" so an update that outran its `subagent_update`
        still lands on the right side of the line — the reducer files it as an
        orphan rather than mixing it into the parent. During the handshake
        `acpSessionId` is still null and every update is the thread's own. */
     const own = this.acpSessionId === null || notification.sessionId === this.acpSessionId;
     const update = notification.update;
-    if (own && update.sessionUpdate === "subagent_spawned") {
+    if (own && update.sessionUpdate === "subagent_update") {
+      this.children.add(update.sessionId);
+    } else if (own && update.sessionUpdate === "subagent_spawned") {
+      /* The draft pair is translated before it reaches here (`acp-connection`),
+         so this is only a frame that came some other way; kept so no child is
+         ever disowned by the shape its announcement wore. */
       const child = (update as { subagentSessionId?: unknown }).subagentSessionId;
       if (typeof child === "string") this.children.add(child);
     }
@@ -1831,7 +2051,7 @@ export class AcpBridge implements ConnectionRoute {
            path, or `[attached: shot.png]`), for the reason mentions.ts states:
            the text is what every runtime reads without being taught anything. */
         prompt: [{ type: "text", text: outgoing }, ...blocks, ...mentionLinks(this.cwd, text + attach.textSuffix)],
-      })
+      }, { cancellationSignal: this.lifetime.signal, stopWaitingOnCancel: true })
       .then(
         once(async (response: acp.PromptResponse) =>
           await this.settleTurn(
@@ -2146,13 +2366,6 @@ export class AcpBridge implements ConnectionRoute {
     return Boolean(meta?.[PAUSE_CAPABILITY]);
   }
 
-  /** What the runtime advertised under `_meta.jetbrains.air.capabilities`. */
-  private get airCapabilities(): readonly unknown[] {
-    const meta = this.agentCapabilities._meta as { jetbrains?: { air?: { capabilities?: unknown } } } | null | undefined;
-    const caps = meta?.jetbrains?.air?.capabilities;
-    return Array.isArray(caps) ? caps : [];
-  }
-
   /** Whether the runtime takes a compaction *request* — not whether it
       compacts, which any runtime may do on its own and report. */
   get canCompact(): boolean {
@@ -2198,6 +2411,11 @@ export class AcpBridge implements ConnectionRoute {
       sessionId,
       cwd: this.cwd,
       mcpServers: this.mcpServers,
+      /* The same `systemPrompt` the source session was given, as the spec asks
+         (only ever present when the runtime advertised it); the `_meta` doors
+         are not repeated here — the fork is loaded by a fresh bridge, whose
+         `session/load` carries them. */
+      ...this.sessionSystemPrompt(),
       /* Omitted when the caller asked for the tip: the extension is what names
          a *where*, and a fork with no where is the spec's own fork-at-tip. */
       ...(messageId === undefined ? {} : { _meta: { jetbrains: { air: { fork: { version: 1, messageId } } } } }),
@@ -2581,6 +2799,15 @@ export class AcpBridge implements ConnectionRoute {
     }
     this.releaseIdle();
     this.conn.detach(this, this.acpSessionId ?? this.pendingSessionId, reason);
+    /* After the detach, so a process of our own has already rejected its
+       pending requests with the connection's reason (what `onPromptRejected`
+       reads) and the abort finds nothing left to reject. On a shared process
+       it is what releases them: the handshake request a close interrupted,
+       and the prompt the agent still owes — `outstanding` was drained into
+       `held` above, so the rejection lands on a `once` already spent, and
+       the SDK sends `$/cancel_request` and drops the eventual answer. */
+    this.handshakeAbort?.abort(reason);
+    this.lifetime.abort(reason);
   }
 
   // ---- helpers ----
@@ -2746,6 +2973,39 @@ export function toWireError(error: unknown): WireError {
   }
   if (error instanceof Error) return { code: -32603, message: error.message };
   return { code: -32603, message: String(error) };
+}
+
+/** JSON-RPC "Resource not found" — what `RequestError.sessionNotFound` builds. */
+export const SESSION_NOT_FOUND_CODE = -32002;
+
+/**
+ * Did the agent answer "I do not hold this session"?
+ *
+ * ACP spells it as `-32002` with `data.sessionId` naming the id
+ * (`RequestError.sessionNotFound`), and that is the one refusal of a
+ * `session/resume` or `session/load` the bridge can act on *deliberately*:
+ * the store has no rollout for the id, so the load-or-fresh fallback is the
+ * answer rather than a best effort. Read off the shape, not the class — a
+ * `RequestError` from the SDK, or any `{code, data}` of the same shape (an
+ * adapter's own error type, a record read back from the journal). `-32002` is
+ * also the generic "resource not found" (`RequestError.resourceNotFound`,
+ * whose `data` names a `uri`), so a `-32002` whose `data` names anything
+ * other than a session — a file, a rollout path — is some other resource and
+ * is not this session's loss; one naming a *different* session id likewise.
+ * A bare `-32002`, or one whose `data` names nothing at all, counts when no id
+ * is asked for and when the agent omitted it (older adapters build the error
+ * by hand) — and is logged, so an adapter that omits the id is visible.
+ */
+export function isSessionNotFound(error: unknown, sessionId?: string): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { code, data } = error as { code?: unknown; data?: unknown };
+  if (code !== SESSION_NOT_FOUND_CODE) return false;
+  const fields = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : undefined;
+  const named = fields?.sessionId;
+  if (typeof named === "string") return sessionId === undefined || named === sessionId;
+  if (fields && Object.keys(fields).length > 0) return false;
+  if (sessionId !== undefined) console.warn(`-32002 with no data.sessionId read as session ${sessionId} not found`);
+  return true;
 }
 
 /**

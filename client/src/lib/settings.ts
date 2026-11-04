@@ -317,7 +317,27 @@ export interface AgentStatus {
   /** True logged in, false known logged out, null could not tell — drawn as
       "not checked", never as logged out. */
   authenticated?: boolean | null
+  /** The agent's own answer to ACP `auth/status`, where its `initialize`
+      advertised the door (feature `agentAuthStatus`). Absent or null: no
+      such door, or no answer — `authenticated` is then the CLI's reading. */
+  auth?: AgentAuthReading | null
   checkedAt: number
+}
+
+/** ACP's `AuthState`; every value the schema reserves reads `unknown`. */
+export type AuthStateReading = "authenticated" | "unauthenticated" | "not_required" | "unknown"
+
+/** `auth/status`'s answer, display fields only — an account's fields are
+    never an identifier, so nothing here is keyed on them. */
+export interface AgentAuthReading {
+  state: AuthStateReading
+  accounts: {
+    label: string
+    active: boolean | null
+    name: string | null
+    email: string | null
+    organization: string | null
+  }[]
 }
 
 /** `terminal`: a PTY the person answers (a URL to open, a code to paste).

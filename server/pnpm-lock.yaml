@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@agentclientprotocol/sdk':
-        specifier: 1.8.0
-        version: 1.8.0(zod@4.6.5)
+        specifier: 2.4.0
+        version: 2.4.0(zod@4.6.5)
       '@ai-sdk/google':
         specifier: 4.0.87
         version: 4.0.87(zod@4.6.5)
@@ -78,10 +78,14 @@ importers:
 
 packages:
 
-  '@agentclientprotocol/sdk@1.8.0':
-    resolution: {integrity: sha512-fbP7qHZsFyTJVT0/RPrcWJ8An26qLXHEuGCHHEKDyxD1xpXV+Ejyh2LAE6vBAFePkpVjZeeohnbgvuEhZ7wLMg==}
+  '@agentclientprotocol/sdk@2.4.0':
+    resolution: {integrity: sha512-7qJ8nnyj7WesC5ve185ioTpB2/svQoeGV4HA4nLEhgDUrcmBe54/08VcXc/oL4p14tDbxxECZzdYmUYQ+4l+Wg==}
     peerDependencies:
-      zod: ^3.25.0 || ^4.0.0
+      '@modelcontextprotocol/server': ^2.4.0
+      zod: ^3.25.76 || ^4.0.0
+    peerDependenciesMeta:
+      '@modelcontextprotocol/server':
+        optional: true
 
   '@ai-sdk/gateway@4.0.89':
     resolution: {integrity: sha512-n0Q88UUASYQBGK3Ogs9pCe8h3ZXeTHFSuGOLBJAyH73MVGNKUv9w8EJX2f340WUF3eDWWOV305gO7YBpSCPblA==}
@@ -1960,7 +1964,7 @@ packages:
 
 snapshots:
 
-  '@agentclientprotocol/sdk@1.8.0(zod@4.6.5)':
+  '@agentclientprotocol/sdk@2.4.0(zod@4.6.5)':
     dependencies:
       zod: 4.6.5
 

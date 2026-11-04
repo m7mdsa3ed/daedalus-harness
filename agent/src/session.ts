@@ -88,6 +88,12 @@ export class Session {
       at a tree it controls. */
   instructionsHome: string;
   personaText: string | null;
+  /** The client's own system prompt in `override` mode (ACP `systemPrompt`):
+      it stands where the runtime's built-in instructions would — the core
+      block and the model guidance — and nothing else moves. `null` is the
+      ordinary turn, on the runtime's own instructions. Spawn-time, like the
+      persona: read on new/load/resume, never from a prompt. */
+  systemPromptOverride: string | null;
   title: string | null;
   /** Last request's total token reading — what compaction thresholds against. */
   lastTokens: number;
@@ -123,6 +129,7 @@ export class Session {
     this.projectInstructions = env.projectInstructions;
     this.instructionsHome = homedir();
     this.personaText = env.personaFile ? readOptional(env.personaFile) : null;
+    this.systemPromptOverride = null;
     this.title = null;
     this.lastTokens = 0;
     this.readFiles = new Map();

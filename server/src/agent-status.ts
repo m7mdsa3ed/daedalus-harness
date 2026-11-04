@@ -62,7 +62,76 @@ export interface AgentStatus {
   /** Measured, never assumed: true logged in, false known logged out, null
       could not tell (drawn as "not checked", never as logged out). */
   authenticated: boolean | null;
+  /** The agent's own answer to ACP `auth/status`, where `initialize`
+      advertised `agentCapabilities.auth.status` (feature `agentAuthStatus`).
+      Absent/null: the agent has no such door, or it did not answer — the
+      CLI reading behind `authenticated` is then all there is. */
+  auth?: AgentAuthReading | null;
   checkedAt: number;
+}
+
+/** ACP's `AuthState`, with every value the schema reserves for the future
+    read as `unknown`, as it says clients MUST. */
+export type AuthStateReading = "authenticated" | "unauthenticated" | "not_required" | "unknown";
+
+/** `AuthStatusResponse`, display fields only — the schema says an account's
+    fields are never an identifier, so nothing here is keyed on them. */
+export interface AgentAuthReading {
+  state: AuthStateReading;
+  accounts: {
+    label: string;
+    active: boolean | null;
+    name: string | null;
+    email: string | null;
+    organization: string | null;
+  }[];
+}
+
+const AUTH_STATES: ReadonlySet<string> = new Set(["authenticated", "unauthenticated", "not_required"]);
+
+/** Whether an `initialize` answer says `auth/status` may be asked: the
+    capability object's presence, `null`/omitted being "not advertised". */
+export function advertisesAuthStatus(init: Pick<acp.InitializeResponse, "agentCapabilities"> | null | undefined): boolean {
+  const cap = init?.agentCapabilities?.auth?.status;
+  return cap !== null && cap !== undefined;
+}
+
+/** The protocol's answer, read defensively: a response without a string
+    `state` is no reading at all (null), an unrecognised state is `unknown`. */
+export function readAuthStatus(response: unknown): AgentAuthReading | null {
+  const r = response as { state?: unknown; accounts?: unknown } | null;
+  if (!r || typeof r.state !== "string") return null;
+  const state = (AUTH_STATES.has(r.state) ? r.state : "unknown") as AuthStateReading;
+  const accounts = Array.isArray(r.accounts)
+    ? r.accounts.flatMap((a: unknown) => {
+        const acct = a as { label?: unknown; active?: unknown; name?: unknown; email?: unknown; organization?: unknown } | null;
+        if (!acct || typeof acct.label !== "string") return [];
+        const str = (v: unknown) => (typeof v === "string" ? v : null);
+        return [{
+          label: acct.label,
+          active: typeof acct.active === "boolean" ? acct.active : null,
+          name: str(acct.name),
+          email: str(acct.email),
+          organization: str(acct.organization),
+        }];
+      })
+    : [];
+  return { state, accounts };
+}
+
+/** What a reading says for the boolean the client already draws:
+    `not_required` can start sessions, so it reads as logged in; `unknown`
+    says nothing and leaves the fallback readings their say. */
+export function authenticatedFrom(reading: AgentAuthReading | null): boolean | null {
+  switch (reading?.state) {
+    case "authenticated":
+    case "not_required":
+      return true;
+    case "unauthenticated":
+      return false;
+    default:
+      return null;
+  }
 }
 
 /** An ACP auth method the harness can run. `terminal`: the agent's own
@@ -360,6 +429,7 @@ async function measure(agent: AgentDef, refresh = false): Promise<AgentStatus> {
     latest: await latestFor(agent, refresh),
     login: [],
     authenticated: null,
+    auth: null,
     checkedAt: Date.now(),
   };
   /* A binary that is not there has nothing to say; spawning it would only
@@ -387,10 +457,22 @@ async function measure(agent: AgentDef, refresh = false): Promise<AgentStatus> {
             heard?.();
           }),
       },
-      async (_conn, init) => {
-        /* Only an agent that says it pushes its identity is waited for. */
+      async (conn, init, signal) => {
+        /* The protocol's own door first (v1.29 `auth/status`, advertised as
+           `agentCapabilities.auth.status`): one request, answered in the
+           agent's words. Asked before the push is waited on, because an agent
+           with this door is the one whose push is the older dialect. A
+           refusal is no reading, never a failed probe. */
+        let auth: AgentAuthReading | null = null;
+        if (advertisesAuthStatus(init)) {
+          auth = await conn
+            .request(acp.methods.agent.auth.status, {}, { cancellationSignal: signal, stopWaitingOnCancel: true })
+            .then(readAuthStatus, () => null);
+        }
+        /* Only an agent that says it pushes its identity is waited for — and
+           not when the protocol already answered. */
         const pushes = Boolean((init.agentCapabilities?._meta as Record<string, unknown> | undefined)?.authStatus);
-        if (pushes && pushed === null) {
+        if (pushes && pushed === null && authenticatedFrom(auth) === null) {
           await new Promise<void>((done) => {
             heard = done;
             setTimeout(done, AUTH_STATUS_WAIT_MS).unref();
@@ -403,10 +485,17 @@ async function measure(agent: AgentDef, refresh = false): Promise<AgentStatus> {
             ? { name: init.agentInfo.name, title: init.agentInfo.title ?? null, version: init.agentInfo.version ?? null }
             : null,
           login: loginMethods(init.authMethods),
+          auth,
         };
       },
     );
-    return { ...base, ...answered, authenticated: pushed ?? (await quotaAuthenticated(agent, profile, refresh)) };
+    /* Three readings, in order of how much they are the agent's own: the
+       protocol answer, the adapter's push, the CLI the quota probe asks. */
+    return {
+      ...base,
+      ...answered,
+      authenticated: authenticatedFrom(answered.auth) ?? pushed ?? (await quotaAuthenticated(agent, profile, refresh)),
+    };
   } catch (err) {
     return { ...base, error: err instanceof Error ? err.message : String(err) };
   }

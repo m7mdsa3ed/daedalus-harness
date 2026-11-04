@@ -284,9 +284,12 @@ export const agents = pgTable("agents", {
   quotaProbe: jsonb("quota_probe").$type<QuotaProbe>(),
   /** Which door this runtime opens for a thread's spawn instructions (rules + trailers; the name is historical, from personas — `personas.ts`):
       `"acp-meta"` = the ACP `_meta` block on session/new and session/load,
+      `"air-meta"` = AIR's `_meta.jetbrains.air.customInstructions`,
       `"env"` = a key in its own config template, filled from `{personaPrompt}`
-      or `{personaFile}`. Null = no known door, and a persona is not applied. */
-  personaVia: text("persona_via").$type<"acp-meta" | "air-meta" | "env">(),
+      or `{personaFile}`, `"acp-system-prompt"` = ACP's own `systemPrompt` on the
+      session requests when the runtime advertises it, else the old door the row
+      implies (`AgentDef.personaVia`). Null = no known door, and a persona is not applied. */
+  personaVia: text("persona_via").$type<"acp-meta" | "air-meta" | "env" | "acp-system-prompt">(),
   /** Whether threads may share one process of this runtime, and the door each
       thread's env goes through when they do (`AgentDef.sharedProcess`).
       `"acp-meta"` = the ACP `_meta` on session/new|resume|load. Null = one

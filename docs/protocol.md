@@ -367,16 +367,28 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 ## The SDK seam
 
 - **The ACP SDK is named in one file per half**: `server/src/acp.ts` and `agent/src/acp.ts`
-  are barrels over `@agentclientprotocol/sdk`, and the client reaches the same vocabulary
-  through the `@daedalus/acp` tsconfig path onto the server's. Everything else imports
-  `acp` from there — type-only in ~40 files, at runtime in exactly five: `acp-bridge.ts`
+  are barrels over **`@agentclientprotocol/sdk/unstable`** (SDK 2.4.0, which speaks ACP v1 on
+  the wire — `protocolVersion` 1 — with the v1.29 schema), and the client reaches the same
+  vocabulary through the `@daedalus/acp` tsconfig path onto the server's. **The `/unstable`
+  entry is forced, not preferred**: it is the one whose `ClientCapabilities` types
+  `subagents`, `plan`, `elicitation`, `session`, `auth` and `_meta` (so the `CLIENT_CAPABILITIES`
+  literal is written plain, no cast, and survives the SDK's own parser), whose
+  `SessionUpdate` union carries `subagent_update`, and which exports the unstable requests
+  the harness now makes — `session/resume`, `session/fork`, `session/archive`/`unarchive`,
+  `auth/status`, `SystemPrompt`, `SessionInfo.archived`. Everything else imports `acp` from
+  the barrel — type-only in ~40 files, at runtime in exactly five: `acp-bridge.ts`
   (`acp.client()`, `ndJsonStream`, `methods`, `RequestError`, `PROTOCOL_VERSION`),
   `probe.ts` and `session-list.ts` (`acp.client().connectWith`), `agent/src/app.ts`
-  (`acp.agent()`) and `agent/src/index.ts` (`ndJsonStream`). The version is **pinned
-  exactly** in all three manifests, because the behaviour below is version-sensitive and the
-  three installs are separate. `test:acp-units` asserts the runtime surface and the
-  method-name table, so an SDK release that moves a symbol fails there rather than in a
-  spawn.
+  (`acp.agent()`) and `agent/src/index.ts` (`ndJsonStream`). **The server's barrel also
+  reads the SDK's published schema as data** (`readSdkSessionUpdateTags`, over
+  `@agentclientprotocol/sdk/schema/v1/schema.unstable.json`, resolved by `createRequire`
+  there and nowhere else — the client imports the barrel type-only, so the `node:module`
+  import is erased for the browser): the set of `sessionUpdate` tags the union carries, the
+  one the reroute below is derived from. The version is **pinned exactly** in all three
+  manifests, because the behaviour below is version-sensitive and the three installs are
+  separate. `test:acp-units` asserts the runtime surface, the method-name table and the tag
+  set (19 tags in 2.4.0, `subagent_update` in, the draft pair and `_daedalus/*` out), so an
+  SDK release that moves a symbol or a tag fails there rather than in a spawn.
 - **A revive resumes when the journal is whole, and loads when it is not.** ACP
   `session/resume` (stable 2026-04) reattaches a session **without replaying it**, which is
   the whole cost a revive used to pay twice: the agent narrated the conversation and the
@@ -433,19 +445,65 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   never as a replacement.
 - **The transport is the bridge's constructor argument, not the process.** `AcpBridge`
   takes an `acp.Stream`; `agentStream(proc)` is the ndJSON-over-stdio factory the one
-  caller (`SessionManager.spawnAgent`) and the probe build, and it is where the inbound
-  frame rewrite for the subagent RFD lives. A socket to a remote or sandboxed agent is a
-  second factory beside it, with the protocol handling untouched. The caller keeps the
+  caller (`SessionManager.spawnAgent`) and the probe build, and it is where the one inbound
+  frame rewrite (`rewriteInbound`, below) is applied. A socket to a remote or sandboxed
+  agent is a second factory beside it, with the protocol handling untouched. The caller keeps the
   process — stderr, exit, kill — and the bridge keeps only the conversation.
-- **One fact, two workarounds, both of which any replacement must carry**: the SDK's
-  generated schema is a *closed* union. On the client side `acp.client()` validates every
-  `session/update` in a router that runs before any handler, so `agentStream` re-addresses
-  the RFD's `subagent_spawned`/`subagent_state_update` (and our own
-  `_daedalus/subagent_usage`) to `_daedalus/subagent_update` on the way in — see
-  "Subagents". On the agent side the same schema *strips* capability keys it has not heard
-  of, `subagents` above all, so `agent/src/app.ts` registers `initialize` with an identity
-  parser. They are the same knowledge in two places because the two halves share types and
-  nothing else; both go away the day the SDK's union carries the RFD.
+- **One fact, one derived workaround, which any replacement must carry**: the SDK's
+  generated `SessionUpdate` schema is a *closed* union, and `acp.client()` validates every
+  `session/update` against it in a router that runs before any handler and before the `"*"`
+  fallback — an unknown tag is dropped, with a logged "Invalid params". The harness still
+  needs foreign tags: the draft subagent pair older adapters send, the AIR `async_task_*`
+  lifecycle, and its own `_daedalus/*` records. So `agentStream` applies one pure rewrite to
+  every inbound frame (`rewriteInbound`, `acp-bridge.ts`): a `session/update` whose tag is
+  **not in `SDK_SESSION_UPDATE_TAGS`** — the set read off the SDK's own schema at module load
+  by the barrel, never a hand-kept list — is re-addressed to the one generic method
+  `SESSION_UPDATE_EXT_METHOD = "_daedalus/session_update_ext"`, where the SDK has nothing to
+  say about it and `AcpConnection` listens with `parseSessionNotification` (the structural
+  check `{sessionId, update.sessionUpdate}`, throwing invalid params the way the SDK would).
+  A tag the union carries — `subagent_update` included — passes through the typed handler
+  untouched. **An SDK release that learns a tag moves it to the typed path by itself; one
+  that drops a tag moves it to the extension path; neither is a code change**, and the
+  barrel throws at load if the schema no longer has the shape, because a silently empty set
+  would reroute every update and blind the typed path. The types follow the same cut:
+  `SessionNotification` is `acp.SessionNotification | ExtensionSessionNotification`, the
+  latter's `update` being `Exclude<SessionUpdate, acp.SessionUpdate>` — the genuinely foreign
+  variants, no cast. **The agent-side workaround is gone**: `/unstable`'s
+  `ClientCapabilities` types `subagents` and `plan`, so `agent/src/app.ts` registers
+  `initialize` on the SDK's own parser (which adds `terminal: false`/`auth` defaults and keeps
+  every key we send — `test:handshake` checks per key), and the identity parser that used to
+  stop the schema stripping `subagents` is deleted.
+- **A request raced against a clock carries a cancellation it rejects on.** The SDK's
+  `cancellationSignal` alone sends the agent `$/cancel_request` and *keeps waiting*; paired
+  with `stopWaitingOnCancel: true` (SDK 2.4.0) the abort rejects the request at once as
+  `-32800` with the reason as `data`, and still tells the agent. Every handshake request —
+  `session/new`, `session/resume`, `session/load` — carries the handshake's own controller
+  (`handshakeRequestOptions`), aborted when the inactivity clock fires (the budget itself is
+  unchanged: re-armed on `initialize` and every frame, "silent for the whole span") and by
+  `close()`; the clock latches `handshakeGaveUp` so a `catch` that runs after the controller
+  is nulled still reads "abandoned". A second, life-of-bridge controller rides every
+  `session/prompt` and is aborted after `conn.detach` in `close()` — on a process of our own
+  the connection's reason has already rejected it, on a shared process this is what releases
+  the slot. `session/cancel` is untouched: it is the protocol's own notification and the
+  prompt it interrupts answers normally. `AcpConnection.initialize` carries a connection-owned
+  signal aborted on kill, exit, error and the non-shared detach; the probe's
+  `withAgentConnection` has a `giveUp` controller (deadline, `opts.signal`, the process
+  dying) on its `initialize`, `session/new` and `set_config_option` sweep, and hands it to
+  `fn` as a third argument. **Which failure takes the fallback is decided, not inferred**:
+  `loadSession`/`resumeSession` rethrow when the failure is this side's
+  (`handshakeAbandoned()`) or the process is dead (`!conn.alive`) — a transport failure takes
+  no load-or-fresh fallback and reports no `historyLost` — and otherwise read the refusal
+  through `isSessionNotFound(error, sessionId)`: `-32002` whose `data.sessionId` names this
+  id (or names nothing, logged — older adapters build the error by hand; `data` naming
+  anything else, a `uri` or another id, is some other resource's loss). A `-32002` load
+  reports `onHistoryLost({reason: "not_found"})` and anything else `reason: "failed"`
+  (`HistoryLost.reason`, additive; the client still draws one headline). The connection's
+  `session/close` swallows only `isSessionNotFound` and warns on anything else; the SDK's
+  `treatSessionNotFoundAsSuccess` is not re-exported by `/unstable`, so the code check is
+  used. The agent answers in kind: an unknown session id on prompt, load, resume, fork or
+  delete is `RequestError.sessionNotFound(id)` (-32002, `data.sessionId`), and a request's
+  `signal` is chained into the turn through `session.cancel()` — the one door, so pause, hold
+  and a booked compaction clear exactly as on `session/cancel`.
 
 ## The client mints session ids; threads start as drafts
 
@@ -574,7 +632,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   session in that cwd, and the listing, which opens none, materializes nothing. The dialog
   defaults its scan to the agent's **virtual Default profile**: a listing is about the
   machine's own login, and codex filters its thread list by the spawned profile's model
-  provider, so a gateway profile can answer with none of the CLI's work.
+  provider, so a gateway profile can answer with none of the CLI's work. **Archived sessions
+  are a filter, and trashing is archiving** (feature `sessionArchive`, ACP v1.29):
+  `POST /api/sessions/importable` takes `archived` (`exclude` by default, `include`, `only` —
+  `archiveFilterOf`), forwarded to the runtime only when it advertises
+  `sessionCapabilities.archive` (the spec says an agent MUST `-32602` an unsupported value;
+  `only` on a runtime without it answers an empty list), `SessionListing.archive` says
+  whether it could filter and each row carries `SessionInfo.archived` (the dialog's "Include
+  archived sessions" switch and its Archived badge). `SessionManager.softDelete` then tells
+  the runtime `session/archive` for the thread's session and `restore` `session/unarchive`
+  (`server/src/session-archive.ts`): best effort, in the background, batched into one
+  `withAgentConnection` per (profile, agent, project) for a whole trashed tree — never on the
+  thread's own wire, which `retire` is closing at that moment, and a retired thread has none —
+  pre-filtered on the last measured `initialize` so a runtime measured without the door costs
+  no spawn, `-32002` read as success, anything else one warning. The id and the history stay,
+  which is what a soft delete needs: a restore revives through `session/load` on the same id.
 - **The import dialog is also the recovery surface, which is what its filters are for.** The
   agent's own store outlives the harness's rows, so a thread deleted here is still in the runtime and comes back through
   this dialog. A machine-wide listing runs to hundreds of rows, so finding the window that
@@ -674,6 +746,20 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   and pushed by the server (`onElicitationRequest`) when no peer is attached. A URL flow that
   completes is accepted **server-side** on `elicitation/complete`: the answer is already in,
   and waiting for a browser meant an agent with no peer attached blocked forever.
+- **The claims are one typed literal, and what the agent claims back is measured per
+  runtime.** `CLIENT_CAPABILITIES` is a plain `acp.ClientCapabilities` on `/unstable` —
+  `subagents: {}` and `plan: {}` written directly, no cast — and the agent's `initialize`
+  answer is read for `sessionCapabilities.resume` (the revive path), **`.systemPrompt`** (the
+  `"acp-system-prompt"` rules door — presence is the whole test, `null`/omitted is "not
+  advertised"), **`.archive`** (`session/archive` on trash), `.list` (the import dialog),
+  `agentCapabilities.auth.status` (the `auth/status` reading on Settings › Agents, which
+  outranks the adapter's `_auth/status_update` push and the CLI quota probe) and
+  `_meta.jetbrains.air.capabilities`. Every `AcpConnection` — a thread's, a shared one, a
+  prewarmed one, an adopted one — and the probe's one-shot client record that answer in
+  `server/src/agent-capabilities.ts` (in memory, keyed by agent id, lost on restart by
+  design), because a spawn's **env** is fixed before any handshake can answer: the last
+  measured answer is the only honest reading a spawn can take, and "never measured" reads as
+  "not advertised", the conservative half.
 
 ## AIR: the dialect we are spoken to in
 
@@ -774,22 +860,41 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   those flags — every thread exited 1 — so the sidecar is gone. 2.x attaches to a shared
   background service (`opencode service`), and a per-thread `OPENCODE_CONFIG_CONTENT` still
   reaches the session (checked against 2.0.29: the env's model is the session's). Not
-  covered: children after a revive (`session/load` replays the parent alone). Two things on the server make the RFD path possible. The SDK's `SessionUpdate`
-  union is **closed** and `acp.client()` validates every `session/update` against it in a
-  router that runs *before any handler* — so `agentStream` re-addresses the two RFD
-  variants to `_daedalus/subagent_update` on the way in and the bridge listens on both
-  names (`protocol.ts` declares `SubagentSpawned`/`SubagentStateUpdate` and the widened
-  `SessionUpdate` both ends use). **The RFD has since moved on and the SDK with it**: from
-  SDK 1.6 the union carries one upsert, `subagent_update {sessionId (child), title?,
-  description?, capabilities?, state?}` on the parent's session, with `state` a snapshot
-  (`running`, `idle` + `stopReason`, `requires_action`, `unknown`), and the draft pair is
-  gone from it. The adapters (claude-agent-acp 0.89, codex-acp 2.2) still send the draft —
-  so the reroute stays — and a runtime that switches is **translated into the draft pair
-  in the same rewrite** (`server/src/subagent-update.ts`, per-process state because an
-  upsert omits what it does not change): first sight or a rename or a wake-up is a
-  `subagent_spawned`, `idle` is a `subagent_state_update` (`cancelled` → cancelled,
-  `error`/`refusal` → failed, else completed). Nothing downstream learns a second shape.
-  The RFD's `session_message(_chunk)` (messages between sessions) passes through unread.
+  covered: children after a revive (`session/load` replays the parent alone). **The
+  harness's canonical subagent shape is the RFD's one upsert, `subagent_update`** — the
+  shape the SDK's `SessionUpdate` union carries, so it arrives on the typed path and passes
+  through untouched: `{sessionId (child), title?, description?, capabilities?, state?, cwd?,
+  additionalDirectories?}` on the parent's session, an omitted field unchanged, `null`
+  clearing one, `state` a whole snapshot (`running`, `idle` + `stopReason`,
+  `requires_action`, `unknown`, or an `_`-prefixed extension). **The draft pair is the
+  translated legacy**: everything that still speaks `subagent_spawned`/`subagent_state_update`
+  — older adapters, and OpenCode 2's child extension — is translated INTO `subagent_update`
+  on the way in (`server/src/subagent-update.ts`, `translateDraftNotification` on the
+  connection's extension-method handler, `translateOpencodeChildUpdate` in `rewriteInbound`),
+  stateless because a draft spawn restates everything: a spawn is a running snapshot with
+  `title`/`description`/`capabilities` (`cancel` → `{cancel: {}}`) and the brief on
+  `_meta.daedalus.prompt`, an ending is `idle` + `end_turn`/`error`/`cancelled`, and the
+  draft's `disconnected` — a child lost, not finished, which the RFD has no stop reason for —
+  is the reserved extension state `_daedalus/disconnected` (`DISCONNECTED_STATE`,
+  `protocol.ts` `SubagentDisconnectedState`). The pair stays declared in `protocol.ts`
+  because **old journals hold it and still replay** — an old reader is never deleted — and
+  the workflow engine's own mirror still writes it straight into the journal; the client
+  reads both into one tree (`subagentPatchOf`/`upsertSubagent` in `store/session-update.ts`,
+  `subagents.check.mjs` reduces every scenario in both shapes and asserts identical items).
+  On the client `running`/`requires_action` → running, `idle` → by `stopReason` (`end_turn`
+  → completed, `max_tokens`/`max_turn_requests`/`error`/`refusal` → failed, `cancelled` →
+  cancelled, omitted or unknown → the row keeps its state), the idle snapshot's `usage` is
+  added once on the running→idle settle, and a bare ending for a child never announced is
+  dropped. **`cwd`/`additionalDirectories` are placement, carried as a patch** (feature
+  `subagentCwd`): the `SubagentItem` keeps them, and the row's caption and the `/graph`
+  node's hint say `in <dir>` relative to the project (`lib/thread/subagent-cwd.ts`). The
+  Daedalus agent emits `subagent_update` itself (`runSubagent` in `agent/src/turn.ts`: spawn
+  running with title, brief, `cwd` and `_meta.daedalus`; `idle` + `end_turn`/`error` (with
+  `error {code, message}`)/`cancelled`; a `send_message` resume restates the spawn), and
+  deliberately leaves `state.usage` empty — its `_daedalus/subagent_usage` is the one
+  usage record, so nothing double-counts. `children` on the bridge (which frames the route
+  owns) is learned from `subagent_update.sessionId`. The RFD's `session_message(_chunk)`
+  (messages between sessions) passes through unread.
   And the `update` event gains an optional `sessionId`,
   set **only** when the update is a child's, so every event journaled before subagents
   existed keeps its exact shape. On the client, ownership is resolved in one place —
@@ -802,9 +907,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   with native subagent sessions **withholds the Task/Agent row itself** (its "control"
   updates return null) while every child update keeps `parentToolUseId`; meta-first there
   filed the whole child under a head that never arrives and it drew flat. Codex does the
-  same with `spawnAgent`. `owner` lands as `parentId` on every item; `subagent_spawned` becomes a
-  `SubagentItem` (`subagent:<sessionId>`), and Claude's spawn `prompt` (the full brief) is
-  kept on it. **One subagent is one step, whatever announced it**: a session whose launch
+  same with `spawnAgent`. `owner` lands as `parentId` on every item; the first `subagent_update` for a child becomes a
+  `SubagentItem` (`subagent:<sessionId>`), later ones patch it, and the spawn's brief
+  (`_meta.daedalus.prompt`, or the draft's `prompt`) is kept on it. **One subagent is one step, whatever announced it**: a session whose launch
   call also arrived — ours (`_meta.daedalus.parentToolUseId` on the spawn) or OpenCode's
   `task` (its output names the child session) — is folded with it at view time
   (`sessionLaunches` → `SubagentGroup.launch`: the call gives brief, report and agent type,
@@ -1066,8 +1171,9 @@ columns (`tool_use`, `called`), read back whole.
 
 One wire event, **`sessionUpdate: "_daedalus/model_call"`** with the record under **`call`**
 (`ModelCallUpdate`), a journaled `update` on the session it belongs to — a subagent's on the
-child's session id. It is listed in `SUBAGENT_UPDATE_KINDS` (`acp-bridge.ts`), the door for
-every name the SDK's closed union would otherwise reject as "Invalid params". A record the
+child's session id. Its tag is outside the SDK's union, so `rewriteInbound` re-addresses it
+to `SESSION_UPDATE_EXT_METHOD` like every name the closed union would otherwise reject as
+"Invalid params" (see "The SDK seam"). A record the
 runtime sent itself and one the server built take the same path, so the bridge, the journal
 and the client cannot tell who built it — decision 1 of the plan: **`source` and `missing` are
 drawn, never branched on.** The feature gate is `FEATURES` `modelCalls` (`compat.ts`, no API

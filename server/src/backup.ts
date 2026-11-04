@@ -135,7 +135,7 @@ const AgentRow = z.object({
   /* Carried for the third time and the same reason: a restored row keeps its
      `seededVersion`, so nothing would ever backfill the door a persona reaches
      this agent through, and every thread's persona would silently do nothing. */
-  personaVia: z.enum(["acp-meta", "air-meta", "env"]).nullish(),
+  personaVia: z.enum(["acp-meta", "air-meta", "env", "acp-system-prompt"]).nullish(),
   sharedProcess: z.enum(["acp-meta"]).nullish(),
   /* Carried for the same reason as the three above: a restored row keeps its
      `seededVersion`, so nothing would backfill the built-in server its runtime

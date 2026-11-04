@@ -73,12 +73,25 @@ question. Knowing the layers is most of knowing where to put an instruction.
    read-only *policy* over a tool set with no shell in it — "use Bash ONLY for
    ls, git status, cat" — and the model that followed it called a tool that was
    never built and got a `NoSuchToolError` for its trouble.
-5. **Persona** — the client's instructions: AIR's
-   `_meta.jetbrains.air.customInstructions` on `session/new`/`load`/`resume`
-   (the harness's rules and trailers), else the contents of
-   `DAEDALUS_AGENT_PERSONA_FILE`. This is the intended door for your own
-   instructions, and it comes *after* the project's own files: the repo's rules
-   are the ground, this is the choice made for this thread on top of them.
+5. **Persona** — the client's instructions, through the first door a request
+   carries: ACP's own `systemPrompt {mode: "append", content}` on
+   `session/new`/`load`/`resume`/`fork` (advertised as
+   `sessionCapabilities.systemPrompt: {mode: {override: {}}}`), else AIR's
+   `_meta.jetbrains.air.customInstructions` on the same requests (the harness's
+   rules and trailers), else the contents of `DAEDALUS_AGENT_PERSONA_FILE`
+   (`sessionInstructions` in `src/app.ts`). All three land in the one slot, so
+   the assembled prompt is byte-identical whichever door carried the text. This
+   is the intended door for your own instructions, and it comes *after* the
+   project's own files: the repo's rules are the ground, this is the choice made
+   for this thread on top of them. A `systemPrompt` in **`override`** mode is
+   different in kind: its text stands where layer 1 was and layer 3 is dropped
+   (`Session.systemPromptOverride`, read by `systemSections`), while tool
+   guidance, plan mode, the project's files, skills, MCP notes and the situation
+   line stay — the client cannot know which tools this turn built. A mode the
+   runtime did not advertise, or a non-text content block, is `-32602` instead
+   of a session, and a fork validates it the same way (a fork opens no live
+   session here, so the prompt applies on the `load`/`resume` that follows). A
+   subagent's brief is never overridden.
 6. **Project instructions** — every `AGENTS.md`, `CLAUDE.md` and
    `CLAUDE.local.md` found from the cwd up to the repo root, plus
    `~/.claude/CLAUDE.md`. See below.
@@ -143,11 +156,15 @@ included for subagents as well as root turns — same engine, same calibration.
 ## Lever 1 — rules (the main one)
 
 In the harness, **Settings › Rules** (global and per project) is this lever.
-The server joins the rules with the thread's trailers and sends them as AIR's
+The server joins the rules with the thread's trailers and sends them through the
+door the agent row names: this runtime's row is `"air-meta"`, AIR's
 `customInstructions` in the `_meta` of every `session/new`, `session/load` and
-`session/resume` — the same key claude-agent-acp reads — and the agent
-advertises `customInstructions` at `initialize` to say it will. A rules change
-lands on the thread's next respawn, against the existing conversation.
+`session/resume`, and the agent advertises `customInstructions` at `initialize`
+to say it will; it also advertises `sessionCapabilities.systemPrompt`, so a row
+moved to `"acp-system-prompt"` would send ACP's `systemPrompt {mode: "append"}`
+instead and land the same text in the same slot (`systemPrompt` outranks
+`customInstructions` when a request carries both). A rules change lands on the
+thread's next respawn, against the existing conversation.
 
 Standalone (or from any ACP client that does not send the key), the same lever
 is the env var pointed at any markdown file — the request's key outranks it:

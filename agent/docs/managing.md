@@ -70,7 +70,10 @@ back to the agent, which is a different session state, so that one respawns.
 **A persona is the supported way to change what it is told.** It is the only
 prompt lever with a UI, it is per thread, and it survives the respawn it costs
 (the new process ends in `session/load`, so the instructions land on the
-conversation you already have). See [prompting.md](./prompting.md).
+conversation you already have). It reaches the agent through whichever door the
+row names — ACP's own `systemPrompt` (the runtime advertises
+`sessionCapabilities.systemPrompt`) or AIR's `customInstructions`, the same text
+in the same slot either way. See [prompting.md](./prompting.md).
 
 **Model prompts are the lever for engine-specific guidance.** The model a
 thread runs on is a fact about the runtime, and different engines benefit from
@@ -150,7 +153,10 @@ A subagent's spend is part of the turn's answer: every child folds its total
 into the same `usage` the turn ends with. Each Task child also reports settled
 usage on the parent as `_daedalus/subagent_usage`, keyed by child session id,
 for its own card's cost figure; this is attribution, not spend to add again.
-The context-window gauge is the parent's alone.
+The child itself is announced and closed with the RFD's `subagent_update` on the
+parent's session (running with title, brief and `cwd`; `idle` with a
+`stopReason`), which carries no `usage` of its own precisely so the harness
+counts it once. The context-window gauge is the parent's alone.
 
 ## What a turn reports about each model call
 
