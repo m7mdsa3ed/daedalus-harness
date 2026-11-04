@@ -47,7 +47,7 @@ export function MapSketch({ locations, routes }: { locations: MapLocation[]; rou
   })
   const pos = new globalThis.Map(locations.map((l) => [l.label, at(l)]))
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} aria-hidden preserveAspectRatio="xMidYMid slice" className="block h-20 w-full bg-muted/40 text-muted-foreground">
+    <svg viewBox={`0 0 ${W} ${H}`} aria-hidden preserveAspectRatio="xMidYMid slice" className="block h-20 w-full bg-wash text-muted-foreground">
       <defs>
         <pattern id="map-dots" width="4" height="4" patternUnits="userSpaceOnUse">
           <circle cx="1" cy="1" r="0.25" fill="currentColor" />
@@ -76,13 +76,13 @@ export function MapSketch({ locations, routes }: { locations: MapLocation[]; rou
 export function PlaceList({ locations, onFocus }: { locations: MapLocation[]; onFocus?: (index: number) => void }) {
   if (locations.length === 0) return <div className={cn(META, PAD)}>No locations to plot.</div>
   return (
-    <ul className={cn("grid grid-cols-1 divide-y divide-border/70 @panel-sm:grid-cols-2 @panel-sm:divide-y-0", PAD_ROW)}>
+    <ul className={cn("grid grid-cols-1 divide-y divide-rule @panel-sm:grid-cols-2 @panel-sm:divide-y-0", PAD_ROW)}>
       {locations.map((location, index) => (
-        <li key={`${location.label}-${index}`} className="min-w-0 @panel-sm:[&:nth-child(n+3)]:border-t @panel-sm:[&:nth-child(n+3)]:border-border/70">
+        <li key={`${location.label}-${index}`} className="min-w-0 @panel-sm:[&:nth-child(n+3)]:border-t @panel-sm:[&:nth-child(n+3)]:border-rule">
           <button
             type="button"
             onClick={() => onFocus?.(index)}
-            className="flex w-full min-w-0 items-start gap-2 rounded-md py-1.5 text-start outline-none hover:bg-muted/60 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="flex w-full min-w-0 items-start gap-2 rounded-md py-1.5 text-start outline-none hover:bg-wash-strong focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
             <span className="mt-1 size-2 shrink-0 rounded-full" style={{ backgroundColor: chartColor(index) }} />
             <span className="min-w-0 flex-1">
@@ -123,7 +123,7 @@ export function MapView(props: { locations: MapLocation[]; title?: string; route
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="group block w-full border-b border-border/70 text-start outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset"
+            className="group block w-full border-b border-rule text-start outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset"
           >
             <MapSketch locations={props.locations} routes={routes} />
             <span className={cn("flex items-center gap-2.5", PAD)}>

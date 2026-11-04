@@ -15,7 +15,7 @@ export const Keys = defineComponent({
   }),
   component: ({ props }) => (
     <Box>
-      <div className="w-full divide-y divide-border/70">
+      <div className="w-full divide-y divide-rule">
         {props.items.map((item, index) => (
           <div key={index} className={`flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 ${PAD_ROW}`}>
             <span className="min-w-0 flex-1 basis-40 text-[length:calc(var(--text-sm,0.875rem)-0.0625rem)] leading-snug break-words text-foreground">{item.action}</span>

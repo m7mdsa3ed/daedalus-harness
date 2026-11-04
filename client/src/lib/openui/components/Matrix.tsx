@@ -86,7 +86,7 @@ export const Matrix = defineComponent({
       <Box>
         {props.title && <BoxHeader title={props.title} />}
         {stacked && (
-          <ul className="w-full min-w-0 list-none divide-y divide-border/70 @panel-sm:hidden">
+          <ul className="w-full min-w-0 list-none divide-y divide-rule @panel-sm:hidden">
             {rows.map((row, rowIndex) => (
               <li key={rowIndex} className={cn("min-w-0 space-y-1", PAD)}>
                 <p className={cn(BODY, "font-medium")}>

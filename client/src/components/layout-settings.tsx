@@ -88,14 +88,12 @@ import { cn } from "@/lib/utils"
 import {
   EARLIER_PAGES,
   HISTORY_WINDOWS,
-  GROUP_STYLES,
   SUBAGENT_PEEKS,
   TOOL_LAYOUTS,
   resetLayoutOptions,
   setLayoutOption,
   useLayoutOptions,
   LAYOUT_DEFAULTS,
-  type GroupStyle,
   type SubagentPeek,
   type ToolLayout,
   type ToolVariant,
@@ -172,15 +170,6 @@ const TOOL_LAYOUT_COPY: Record<ToolLayout, { label: string; description: string 
   timeline: { label: "Timeline", description: "Flowing steps" },
   rail: { label: "Accent rail", description: "Indented sequence" },
   branch: { label: "Branch", description: "Git graph, parallel calls fork" },
-}
-
-const GROUP_STYLE_COPY: Record<GroupStyle, { label: string; hint: string }> = {
-  wash: { label: "Wash", hint: "A marked stretch" },
-  card: { label: "Card", hint: "A boxed set" },
-  columns: { label: "Columns", hint: "Side by side" },
-  bracket: { label: "Bracket", hint: "A rule down the side" },
-  ledger: { label: "Ledger", hint: "Ruled lines, no tint" },
-  tiles: { label: "Tiles", hint: "A card per call" },
 }
 
 const TOOL_VARIANT_COPY: Record<ToolVariant, string> = {
@@ -419,22 +408,6 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
             title: "Group parallel calls",
             description:
               "The calls the agent made in one response, run side by side, fold into a marked group of their own inside the run — mixed kinds grouped by kind inside it. Off, they are plain steps of the run and nothing marks them.",
-            children: [
-              {
-                key: "groupStyle",
-                icon: Columns2,
-                title: "Style",
-                description: (options) => GROUP_STYLE_COPY[options.groupStyle].hint + ".",
-                tiles: true,
-                options: () =>
-                  GROUP_STYLES.map((style) => ({
-                    value: style,
-                    label: GROUP_STYLE_COPY[style].label,
-                    hint: GROUP_STYLE_COPY[style].hint,
-                    preview: () => <GroupStylePreview style={style} />,
-                  })),
-              },
-            ],
           },
         ],
       },
@@ -819,60 +792,6 @@ function ToolLayoutPreview({ layout, variant }: { layout: ToolLayout; variant: T
           ))}
         </span>
       )}
-    </span>
-  )
-}
-
-/** What a style does to a group of calls, drawn in the same 12-high tile as the
-    tool layouts so the two pickers read alike. Not a diagram of the chrome at
-    full size — the question it answers is *how are these three calls arranged*,
-    which is the one thing the three styles disagree about. */
-function GroupStylePreview({ style }: { style: GroupStyle }) {
-  const call = "h-1 rounded-full bg-muted-foreground/45"
-  const head = "h-1 w-2/3 rounded-full bg-muted-foreground/25"
-  const box: Record<GroupStyle, string> = {
-    wash: "bg-primary/[0.06] p-1 ring-1 ring-foreground/10",
-    columns: "bg-primary/[0.06] p-1 ring-1 ring-foreground/10",
-    card: "border bg-muted/50 p-1",
-    bracket: "relative p-1 pl-2 before:absolute before:inset-y-1 before:left-0.5 before:w-0.5 before:rounded-full before:bg-foreground/20",
-    ledger: "rounded-none border-y border-foreground/15 p-1",
-    tiles: "p-1",
-  }
-  const stacked = (
-    <span className={cn("flex flex-col gap-0.5", style === "wash" && "border-l border-foreground/15 pl-1")}>
-      <span className={head} />
-      <span className={cn(head, "w-1/2")} />
-    </span>
-  )
-  const cell = (
-    <span className="flex flex-col gap-0.5">
-      <span className={call} />
-      <span className={cn(call, "w-2/3")} />
-    </span>
-  )
-  return (
-    <span aria-hidden className={cn("flex h-12 flex-col justify-center overflow-hidden rounded-md", box[style])}>
-      <span className="flex flex-col gap-1">
-        <span className={cn("h-1 rounded-full bg-muted-foreground/25", style === "card" ? "w-1/2" : "w-2/3")} />
-        {style === "columns" ? (
-          <span className="grid grid-cols-2 gap-1">
-            {cell}
-            {cell}
-          </span>
-        ) : style === "tiles" ? (
-          <span className="flex flex-col gap-0.5">
-            <span className="rounded-sm border bg-muted/40 px-0.5 py-px"><span className={cn(call, "block")} /></span>
-            <span className="rounded-sm border bg-muted/40 px-0.5 py-px"><span className={cn(call, "block w-2/3")} /></span>
-          </span>
-        ) : style === "ledger" ? (
-          <span className="flex flex-col divide-y divide-foreground/15">
-            <span className="pb-0.5"><span className={cn(call, "block")} /></span>
-            <span className="pt-0.5"><span className={cn(call, "block w-2/3")} /></span>
-          </span>
-        ) : (
-          stacked
-        )}
-      </span>
     </span>
   )
 }

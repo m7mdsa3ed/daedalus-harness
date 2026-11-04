@@ -93,7 +93,7 @@ function FindingsView({ items: raw, title }: { items?: Partial<Item>[]; title?: 
     <Box>
       <BoxHeader title={title || "Findings"} meta={summary} />
       {rows.length > 0 && (
-        <div aria-hidden className="flex h-1 w-full gap-px bg-border/40">
+        <div aria-hidden className="flex h-1 w-full gap-px bg-wash-strong">
           {counts.map(({ severity, count }) => (
             <span
               key={severity}
@@ -110,7 +110,7 @@ function FindingsView({ items: raw, title }: { items?: Partial<Item>[]; title?: 
             aria-orientation="vertical"
             aria-label="Findings"
             onKeyDown={onKey}
-            className="min-w-0 list-none divide-y divide-border/50 @panel-sm:max-h-[32rem] @panel-sm:overflow-y-auto @panel-sm:border-e @panel-sm:border-border/70"
+            className="min-w-0 list-none divide-y divide-rule @panel-sm:max-h-[32rem] @panel-sm:overflow-y-auto @panel-sm:border-e @panel-sm:border-rule"
           >
             {rows.map((row, index) => {
               const selected = index === at
@@ -126,8 +126,8 @@ function FindingsView({ items: raw, title }: { items?: Partial<Item>[]; title?: 
                     onClick={() => setPicked(row.key)}
                     className={cn(
                       "relative flex w-full min-w-0 items-start gap-2.5 px-3.5 py-2.5 text-start transition-colors outline-none @panel-sm:px-4",
-                      "hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                      selected && "bg-muted/60 hover:bg-muted/60"
+                      "hover:bg-wash focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                      selected && "bg-wash-strong hover:bg-wash-strong"
                     )}
                   >
                     <span
@@ -143,7 +143,7 @@ function FindingsView({ items: raw, title }: { items?: Partial<Item>[]; title?: 
                     </span>
                   </button>
                   {selected && (
-                    <div id={`${id}-inline-${row.key}`} role="tabpanel" aria-labelledby={`${id}-tab-${row.key}`} className="border-t border-border/50 bg-muted/20 @panel-sm:hidden">
+                    <div id={`${id}-inline-${row.key}`} role="tabpanel" aria-labelledby={`${id}-tab-${row.key}`} className="border-t border-rule bg-wash @panel-sm:hidden">
                       <Detail item={row.item} position={index + 1} total={rows.length} onStep={(d) => go(at + d)} compact />
                     </div>
                   )}

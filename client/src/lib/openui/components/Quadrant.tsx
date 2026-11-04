@@ -34,7 +34,7 @@ export const Quadrant = defineComponent({
         <div className={cn("space-y-2.5", PAD)}>
           <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-1">
             <span className={cn(LABEL, "rotate-180 self-center text-center [writing-mode:vertical-rl]")}>{props.yLabel}</span>
-            <div aria-hidden="true" className="relative aspect-square max-h-96 w-full overflow-hidden rounded-md border border-border/70 bg-muted/20">
+            <div aria-hidden="true" className="relative aspect-square max-h-96 w-full overflow-hidden rounded-md border border-rule bg-wash">
               <div className="absolute inset-y-0 left-1/2 border-l border-dashed border-border" />
               <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-border" />
               {[0, 1, 2, 3].map((slot) =>

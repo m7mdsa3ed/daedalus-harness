@@ -101,7 +101,7 @@ export const Row = defineComponent({
 const SPAN = "@panel-sm:col-span-full"
 
 const TINT = {
-  neutral: "bg-muted/50",
+  neutral: "bg-wash-strong",
   info: "bg-primary/[0.07]",
   success: "bg-success/10",
   warn: "bg-warning/10",
@@ -139,7 +139,7 @@ export const Panel = defineComponent({
         <div className="flex w-full min-w-0 flex-1 flex-col gap-3 [&>div]:p-0">{renderNode(props.children)}</div>
       </SurfaceContext.Provider>
       {props.footer && (
-        <div className={cn(META, "border-t border-foreground/10 pt-3")}>
+        <div className={cn(META, "border-t border-rule pt-3")}>
           <RichText text={props.footer} />
         </div>
       )}

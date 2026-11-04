@@ -130,6 +130,9 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-border: var(--border);
+  --color-rule: var(--rule);
+  --color-wash: var(--wash);
+  --color-wash-strong: var(--wash-strong);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-chart-1: var(--chart-1);
@@ -561,10 +564,25 @@
      step above: there --card is already off the page and the separation is
      real. */
   --composer: var(--app-ground);
+  /* The generated-view kit's hairline and washes (`lib/openui/kit.tsx`). They
+     were `border/70` and `muted/40` alphas, tuned on dark, where --border is
+     10% white and --muted a real step off the card; on light they landed on a
+     white card as a 0.945 line and a 0.988 ground — a divider, an empty disc
+     and a header band nobody could see. Derived from the palette's own tokens
+     (a step of --foreground into --border and --muted), so a studio theme moves
+     them with its border and muted. */
+  --rule: color-mix(in oklab, var(--border) 90%, var(--foreground));
+  --wash: color-mix(in oklab, var(--muted) 97%, var(--foreground));
+  --wash-strong: color-mix(in oklab, var(--muted) 94%, var(--foreground));
 }
 
 .dark {
   --surface: var(--background);
+  /* The kit's hairline and washes, dark's half: the alphas the classes carried
+     before, now a token so light can say its own. */
+  --rule: var(--border);
+  --wash: color-mix(in oklab, var(--muted) 40%, transparent);
+  --wash-strong: color-mix(in oklab, var(--muted) 60%, transparent);
   /* Darker than the composer here too, and that means the other direction:
      `--composer` is the *lighter* of the two tones in every dark palette, so a
      step back from it is a step toward the background. (Toward the foreground —
@@ -699,6 +717,58 @@
        theme's tracking — see --app-tracking in :root. */
     letter-spacing: var(--app-tracking, 0em);
     @apply text-foreground;
+  }
+
+  /* ── The installed app is not a web page ──
+     Every scroller in the app is its own box (the transcript, a list, a
+     panel), and the document itself never has anything to scroll — so a
+     drag that reaches it is a drag that ran out of list, and what a browser
+     does with that is wrong here: Android Chrome turns it into pull-to-refresh
+     and reloads the app under a running turn, iOS rubber-bands the whole shell
+     and shows the canvas behind it. `none` on both the root and the body (iOS
+     reads it off whichever is the scrolling box) ends the chain at the last
+     real scroller. The tab strips keep their own `contain` on the x axis. */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+
+  /* A tap on a control is a tap, not half of a double-tap zoom: `manipulation`
+     keeps pinch and pan and drops the 300ms the browser waited to tell them
+     apart. On the controls alone — the transcript keeps the stock gesture, so
+     a double-tap on prose still zooms for someone who needs it. */
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  [role="menuitemcheckbox"],
+  [role="menuitemradio"],
+  [role="option"],
+  [role="switch"],
+  [role="checkbox"],
+  summary,
+  label,
+  a {
+    touch-action: manipulation;
+  }
+
+  /* Holding a tab, a sidebar row or a menu row is how a touch opens its
+     context menu; the browser's own answer to the same hold — iOS's callout
+     sheet, a selection handle over the label — lands on top of it. Chrome
+     controls read, they are not copied from, so the hold is ours. Links are
+     left out: a long press on one in a transcript is "copy" and "open", which
+     is what the reader wanted. */
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  [role="menuitemcheckbox"],
+  [role="menuitemradio"],
+  [role="option"],
+  [data-sidebar="menu-item"],
+  .dv-tab {
+    -webkit-touch-callout: none;
+    user-select: none;
   }
 
   /* Fixed pseudo-element to hold the background color behind glass surfaces.

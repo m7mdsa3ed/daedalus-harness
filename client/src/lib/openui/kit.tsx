@@ -47,7 +47,7 @@ export const LIST_ROW = "min-w-0 py-3 first:pt-0 last:pb-0"
 export const FLOW = "flex w-full min-w-0 flex-col gap-3 @panel-sm:gap-4"
 
 /** The well a frame inside a frame becomes — the settings kit's `INSET`. */
-export const INSET = "rounded-inner border border-border/70 bg-muted/40"
+export const INSET = "rounded-inner border border-rule bg-wash"
 
 export type Surface = "page" | "frame" | "cell"
 export const SurfaceContext = createContext<Surface>("page")
@@ -86,7 +86,7 @@ export function Box({ className, children, style }: { className?: string; childr
 /** A frame's top band: a name and what qualifies it, over a hairline. */
 export function BoxHeader({ title, meta }: { title: ReactNode; meta?: ReactNode }) {
   return (
-    <header className={cn("min-w-0 space-y-0.5 border-b bg-muted/30", PAD_ROW)}>
+    <header className={cn("min-w-0 space-y-0.5 border-b bg-wash", PAD_ROW)}>
       <div className={cn(TITLE, "[&_a]:font-semibold")}>{title}</div>
       {meta && <div className={cn(META, "text-pretty")}>{meta}</div>}
     </header>
@@ -96,7 +96,7 @@ export function BoxHeader({ title, meta }: { title: ReactNode; meta?: ReactNode 
 /** A rule that separates two runs of content without framing them — the line
     under a heading, or between two groups of a list that is not a frame. */
 export function Rule({ className }: { className?: string }) {
-  return <hr className={cn("w-full min-w-0 border-0 border-t border-border/70", className)} />
+  return <hr className={cn("w-full min-w-0 border-0 border-t border-rule", className)} />
 }
 
 /** The five tones every component that has a state spells the same way. */
@@ -125,7 +125,7 @@ export const TONE_BAR = {
 /** A chip's ground: the tone as a faint wash with a matching hairline, so a
     status reads at a glance without a saturated fill. */
 export const TONE_CHIP = {
-  neutral: "border-border/70 bg-muted/40",
+  neutral: "border-rule bg-wash",
   info: "border-primary/25 bg-primary/8",
   success: "border-success/30 bg-success/10",
   warn: "border-warning/35 bg-warning/10",
@@ -190,7 +190,7 @@ export function TallyBar({ parts, total: of }: { parts: { tone: keyof typeof TON
   const total = of ?? parts.reduce((sum, part) => sum + part.count, 0)
   if (total === 0) return null
   return (
-    <div aria-hidden className="flex h-1 w-full min-w-0 overflow-hidden bg-muted/60">
+    <div aria-hidden className="flex h-1 w-full min-w-0 overflow-hidden bg-wash-strong">
       {parts.map((part, index) =>
         part.count > 0 ? (
           <span
@@ -225,7 +225,7 @@ export interface StatusRow {
 export function StatusRows({ items }: { items: StatusRow[] }) {
   if (items.length === 0) return null
   return (
-    <ul className="w-full min-w-0 list-none divide-y divide-border/70">
+    <ul className="w-full min-w-0 list-none divide-y divide-rule">
       {items.map((item, index) => (
         <li key={index} className={cn("flex min-w-0 items-start gap-3", PAD_ROW)}>
           <span aria-hidden className={cn("mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border", TONE_CHIP[item.tone])}>
@@ -334,7 +334,7 @@ export function readStateCell(raw: string | undefined): { state?: string; note: 
     `BoxHeader` does. */
 export function CodeBand({ start, end }: { start?: ReactNode; end?: ReactNode }) {
   return (
-    <div className={cn("flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border/70 bg-muted/40 py-1", PAD_ROW)}>
+    <div className={cn("flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-rule bg-wash py-1", PAD_ROW)}>
       <span className={cn(LABEL, "min-w-0 flex-1 basis-32 font-mono")}>{start}</span>
       {end}
     </div>
@@ -391,7 +391,7 @@ export function CodeWell({
           </code>
         </pre>
         <div className="absolute end-1 top-1 z-10 opacity-0 transition-opacity group-focus-within/code:opacity-100 group-hover/code:opacity-100 pointer-coarse:opacity-100">
-          <CodeBlockCopyButton value={copied} className="bg-background/80 ring-1 ring-foreground/10 backdrop-blur-sm" />
+          <CodeBlockCopyButton value={copied} className="bg-background/80 ring-1 ring-rule backdrop-blur-sm" />
         </div>
       </div>
     </div>

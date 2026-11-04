@@ -460,6 +460,18 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - **A workflow step inherits its parent's persona; an ask does not** — the asked pair works
   from the brief alone. Codex reads the env door on `session/new` only, so a revived Codex
   thread keeps the persona it started with, as it does rules.
+- **The built-ins are roles, because they are also the classifier's labels**
+  (`server/src/persona-seeds.ts`, `seedPersonas` at boot after the legacy-prompt migration).
+  `persona-classify.ts` asks the decision model to label a first message with `name — description`
+  and nothing else, so a persona earns a seed only if a first message can reveal it: a bug report
+  is the Debugger's, "review this" the Reviewer's, "should we use X or Y" the Architect's, and each
+  `description` is written as that criterion — what the message looks like, then what the role
+  does. The first set (Think more, Think less, Lazy, Quick fix, General chat, Plan first, Review,
+  Teach) were working-style dials no first message distinguishes, so the classifier tied and
+  `judgeChoice` refused; they are slash commands now and seed 3 retires the seeded rows
+  (`RETIRED_PERSONAS`), moving a thread's or project's reference to the nearest role or to none.
+  The seed follows the agents' rules — `since`/`introduced`, never a user's row, a deleted row stays
+  deleted — and a row the user re-made under a built-in id (`seeded_version` 0) is never retired.
 
 ## Saved prompts (gone)
 

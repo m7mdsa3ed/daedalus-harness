@@ -23,7 +23,7 @@ export const Quote = defineComponent({
     const source = props.source?.trim()
     return (
       <Box>
-        <figure className={cn("m-0 min-w-0 bg-muted/40 whitespace-pre-line", PAD)}>
+        <figure className={cn("m-0 min-w-0 bg-wash whitespace-pre-line", PAD)}>
           <blockquote className={cn(BODY, "m-0 text-pretty italic text-muted-foreground")}>{text}</blockquote>
           {source && (
             <figcaption className={cn(META, "mt-1.5 font-medium")}>

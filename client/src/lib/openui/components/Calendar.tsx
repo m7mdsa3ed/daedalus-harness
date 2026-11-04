@@ -55,7 +55,7 @@ export const Calendar = defineComponent({
             })}
           </div>
           {marks.length > 0 && (
-            <ul className="min-w-0 space-y-1.5 border-t border-border/70 pt-3">
+            <ul className="min-w-0 space-y-1.5 border-t border-rule pt-3">
               {[...marks].sort((a, b) => a.day - b.day).map((event, index) => (
                 <li key={index} className="flex min-w-0 gap-3">
                   <span className="w-6 shrink-0 text-end text-[length:calc(var(--text-sm,0.875rem)-0.0625rem)] font-semibold text-primary tabular-nums">{Math.round(event.day)}</span>

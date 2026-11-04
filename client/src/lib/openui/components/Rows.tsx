@@ -34,12 +34,12 @@ export const Rows = defineComponent({
     ),
   }),
   component: ({ props }) => (
-    <div className="w-full divide-y divide-border/70 rounded-lg border border-border/70">
+    <div className="w-full divide-y divide-rule rounded-lg border border-rule">
       {props.items.map((item, index) => {
         const url = linkTarget(item.href)
         const facts = [item.meta, url?.host].filter(Boolean).join(" · ")
         return (
-          <div key={index} className={cn("min-w-0 space-y-1 px-3.5 py-3 transition-colors duration-150 @panel-sm:px-4", url && "hover:bg-muted/30")}>
+          <div key={index} className={cn("min-w-0 space-y-1 px-3.5 py-3 transition-colors duration-150 @panel-sm:px-4", url && "hover:bg-wash")}>
             {/* The name starts every row at the same margin and the state sits
                 at the end of it: a chip in front sized each title differently
                 (`urgent` is wider than `high`), so a column of rows read as a

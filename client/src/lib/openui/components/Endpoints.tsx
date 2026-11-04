@@ -23,7 +23,7 @@ export const Endpoints = defineComponent({
   }),
   component: ({ props }) => (
     <Box>
-      <ul className="w-full divide-y divide-border/70">
+      <ul className="w-full divide-y divide-rule">
         {(props.items ?? []).filter((item) => item?.path).map((item, index) => {
           const method = (item.method ?? "").toUpperCase()
           return (

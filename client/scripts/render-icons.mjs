@@ -95,3 +95,82 @@ const tmpFiles = await Promise.all(
 execFileSync("magick", [...tmpFiles, ICO_OUT])
 await rm(tmpDir, { recursive: true, force: true })
 console.log("wrote", ICO_OUT)
+
+// ── iOS launch images ──
+// An installed iOS app opens on a flat frame of `background_color` until the
+// page paints; `apple-touch-startup-image` is the one way to put the mark on
+// it, and iOS wants one PNG per device size and orientation, matched by a
+// media query, with no scaling. Light and dark each, because the boot splash
+// in index.html is one colour per scheme and the launch frame should be the
+// same colour, not a white flash before a dark app. The list is the logical
+// size and scale of each device class; the raster is the product.
+//
+// vite.config.ts injects the <link> tags from the JSON written here, so
+// index.html carries none of the 70-odd lines, and the images stay out of the
+// service worker's precache (`globIgnores`) — iOS fetches them once when the
+// app is added to the home screen and keeps them itself.
+import { BOOT_COLORS } from "../src/lib/boot-colors.ts"
+
+const SPLASH_DIR = "splash"
+const DEVICES = [
+  // [logical width, logical height, scale], portrait
+  [440, 956, 3],  // iPhone 16 Pro Max
+  [430, 932, 3],  // iPhone 14 Pro Max, 15 Plus/Pro Max, 16 Plus
+  [402, 874, 3],  // iPhone 16 Pro
+  [393, 852, 3],  // iPhone 14 Pro, 15, 15 Pro, 16
+  [428, 926, 3],  // iPhone 12/13 Pro Max, 14 Plus
+  [390, 844, 3],  // iPhone 12, 13, 14
+  [375, 812, 3],  // iPhone X, XS, 11 Pro, 12/13 mini
+  [414, 896, 3],  // iPhone XS Max, 11 Pro Max
+  [414, 896, 2],  // iPhone XR, 11
+  [414, 736, 3],  // iPhone 6/7/8 Plus
+  [375, 667, 2],  // iPhone 6/7/8, SE 2/3
+  [1032, 1376, 2], // iPad Pro 13" (M4)
+  [1024, 1366, 2], // iPad Pro 12.9"
+  [834, 1194, 2],  // iPad Pro 11"
+  [820, 1180, 2],  // iPad Air 10.9", iPad 10th gen
+  [810, 1080, 2],  // iPad 10.2"
+  [768, 1024, 2],  // iPad 9.7", iPad mini 5
+  [744, 1133, 2],  // iPad mini 6
+]
+const SCHEMES = [
+  ["light", BOOT_COLORS.light, "#0f172a"],
+  ["dark", BOOT_COLORS.dark, "#f8fafc"],
+]
+// The same three paths as /logo.svg and the inlined boot splash, drawn at the
+// boot splash's own weight; the ring is a fifth of the short side, which puts
+// it at about the size the HTML splash then animates over it.
+const markSvg = (w, h, bg, fg) => {
+  const size = Math.round(Math.min(w, h) * 0.2)
+  const x = (w - size) / 2
+  const y = (h - size) / 2
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+  <rect width="${w}" height="${h}" fill="${bg}"/>
+  <g transform="translate(${x} ${y}) scale(${size / 64})" fill="none" stroke="${fg}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M38 8H46A10 10 0 0 1 56 18V46A10 10 0 0 1 46 56H18A10 10 0 0 1 8 46V18A10 10 0 0 1 18 8H26"/>
+    <path d="M28 45H25A6 6 0 0 1 19 39V25A6 6 0 0 1 25 19H39A6 6 0 0 1 45 25V39A6 6 0 0 1 39 45H36"/>
+    <path d="M32 31V33"/>
+  </g>
+</svg>`
+}
+
+const links = []
+for (const [lw, lh, scale] of DEVICES) {
+  for (const orientation of ["portrait", "landscape"]) {
+    const [w, h] = orientation === "portrait" ? [lw * scale, lh * scale] : [lh * scale, lw * scale]
+    for (const [scheme, bg, fg] of SCHEMES) {
+      const name = `${SPLASH_DIR}/${lw}x${lh}-${scale}x-${orientation}-${scheme}.png`
+      const buf = await sharp(Buffer.from(markSvg(w, h, bg, fg))).png({ palette: true }).toBuffer()
+      await writeFile(pub(name), buf)
+      links.push({
+        href: `/${name}`,
+        media:
+          `screen and (device-width: ${lw}px) and (device-height: ${lh}px) ` +
+          `and (-webkit-device-pixel-ratio: ${scale}) and (orientation: ${orientation}) ` +
+          `and (prefers-color-scheme: ${scheme})`,
+      })
+    }
+  }
+}
+await writeFile(here("src/lib/splash-images.json"), JSON.stringify(links, null, 2) + "\n")
+console.log("wrote", links.length, "launch images")

@@ -329,20 +329,17 @@ export const ToolRun = React.memo(function ToolRun({
     })
     return (id: string) => places.get(id)
   }, [batchOf, displayItems])
-  /* How this group is bracketed (`GROUP_STYLES`), and whether it is alive —
-     said by the frame's colour on one weight, never by a heavier box. A plain
-     run has no frame, so the treatment is only read for a batch. */
-  const treatment = React.useMemo(
-    () => groupTreatment(view.groupStyle, active),
-    [view.groupStyle, active]
-  )
+  /* How this group is bracketed, and whether it is alive — said by the
+     frame's colour on one weight, never by a heavier box. A plain run has no
+     frame, so the treatment is only read for a batch. */
+  const treatment = React.useMemo(() => groupTreatment(active), [active])
   return (
     <StepDirContext.Provider value={dir}>
     <StepMarkerContext.Provider value={placeInBatch}>
-    {/* How a batch is bracketed is a reading preference, not a constant
-        (`GROUP_STYLES`): a marked wash, a card, or the calls side by side. The
-        chrome for each lives in `group-style.tsx`, so this row asks for a
-        treatment and cannot drift from what the settings page promises. */}
+    {/* A batch is bracketed as a ledger — rules above, below and between its
+        calls, the calls on the run's rail like any other step. The chrome
+        lives in `group-style.tsx`, so this row asks for a treatment rather
+        than spelling it. */}
     <div dir={dir} className={cn(parallel && treatment.frame)}>
       <button
         type="button"
@@ -436,16 +433,9 @@ export const ToolRun = React.memo(function ToolRun({
             className="-mx-2 overflow-hidden px-2"
           >
             {/* The rail's spacing lives inside the clip, so it collapses with it.
-                A `columns` batch is a grid, not a rail: it keeps the clip's own
-                spacing and takes no indent, because the trunk would point at
-                nothing across a gutter and `ps-7` would leave one empty column
-                of nothing on the left. */}
-            <div
-              className={cn(
-                branch ? "space-y-0.5 pt-0.5" : treatment.grid ? "space-y-0.5 pt-0.5" : RUN_RAIL_CLASS,
-                parallel && treatment.list
-              )}
-            >
+                A batch keeps the rail and its indent — its ledger rules are
+                drawn between the rows on it. */}
+            <div className={cn(branch ? "space-y-0.5 pt-0.5" : RUN_RAIL_CLASS, parallel && treatment.list)}>
             {hidden > 0 && (
               <div className={branch ? undefined : RAIL_THROUGH} style={branch ? { paddingInlineStart: gutter } : undefined}>
                 <EarlierSteps count={hidden} onClick={() => setOpen(true)} />
@@ -461,15 +451,12 @@ export const ToolRun = React.memo(function ToolRun({
                   ...(branch ? { paddingInlineStart: gutter } : { "--rail-i": railSlot(item.id) }),
                 } as React.CSSProperties}
                 className={cn(
-                  (branch || treatment.grid) && !already.has(item.id) && "harness-item-in",
-                  branch ? "relative flow-root" : treatment.grid ? "relative" : RAIL_ELBOW,
+                  branch && !already.has(item.id) && "harness-item-in",
+                  branch ? "relative flow-root" : RAIL_ELBOW,
                   /* A call draws a mark in the column the rail aims at; a thought
                      does when drawn as a step, and a notice is a plain rule. */
-                  !branch && !treatment.grid && railPlain(item.kind, item.kind === "thought" && view.thoughtStep),
-                  !branch && !treatment.grid && index < showing.length - 1 && RAIL_TAIL,
-                  /* Side by side, a call is a cell of its own — no elbow, no
-                     trunk, no rail slot: the grid places it. */
-                  treatment.grid && treatment.cell
+                  !branch && railPlain(item.kind, item.kind === "thought" && view.thoughtStep),
+                  !branch && index < showing.length - 1 && RAIL_TAIL
                 )}
               >
                 {graph && (

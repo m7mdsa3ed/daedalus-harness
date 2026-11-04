@@ -102,7 +102,7 @@ function CardGridView({ items, origin, carousel }: { items: GridItem[]; origin?:
         <Item
           variant="outline"
           size="xs"
-          className="flex-nowrap rounded-md text-start hover:bg-muted/60"
+          className="flex-nowrap rounded-md text-start hover:bg-wash-strong"
           render={<button type="button" onClick={() => setPhotos(true)} />}
         >
           <ItemMedia variant="icon">
@@ -143,7 +143,7 @@ function CardGridView({ items, origin, carousel }: { items: GridItem[]; origin?:
       {pick && (
         <div ref={panel} className="scroll-mb-4">
           <Box>
-            <div className={cn("flex items-center gap-2.5 border-b border-border/70", WELL_PAD)}>
+            <div className={cn("flex items-center gap-2.5 border-b border-rule", WELL_PAD)}>
               <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
                 <MapPin aria-hidden className="size-3.5" />
               </span>
@@ -195,7 +195,7 @@ function GridCard({
   // The card is its own container: stacked (photo on top) while narrow, photo on the side once it has room.
   return (
     <Box className={cn("@container flex h-full flex-col @min-[26rem]:flex-row", selected && "ring-2 ring-primary")}>
-      <div className="relative h-32 w-full shrink-0 overflow-hidden border-b border-border/70 bg-muted @min-[26rem]:h-auto @min-[26rem]:w-32 @min-[26rem]:self-stretch @min-[26rem]:border-e @min-[26rem]:border-b-0">
+      <div className="relative h-32 w-full shrink-0 overflow-hidden border-b border-rule bg-muted @min-[26rem]:h-auto @min-[26rem]:w-32 @min-[26rem]:self-stretch @min-[26rem]:border-e @min-[26rem]:border-b-0">
         {photo ? (
           <img
             src={photo.url}
@@ -237,7 +237,7 @@ function GridCard({
         </div>
         {text && <p className={cn(BODY, "line-clamp-2 text-pretty")}>{text}</p>}
         {item.facts && item.facts.length > 0 && (
-          <dl className="divide-y divide-border/70 border-y border-border/70">
+          <dl className="divide-y divide-rule border-y border-rule">
             {item.facts.slice(0, 4).map((fact, i) => (
               <div key={i} className="flex min-w-0 items-baseline justify-between gap-3 py-1">
                 <dt className="min-w-0 text-[0.75rem] text-muted-foreground">{fact.label}</dt>

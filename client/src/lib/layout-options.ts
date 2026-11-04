@@ -92,34 +92,6 @@ export function isToolLayout(value: unknown): value is ToolLayout {
   return TOOL_LAYOUTS.some((layout) => layout === value)
 }
 
-/* ── How a parallel group is drawn ──
-   `toolLayout` decides how a *step* is drawn; this decides how the calls one
-   response sent together are bracketed, which is a different question and was
-   the one with an answer hard-coded into the row. Three, and they are genuinely
-   different readings rather than three shades of one:
-     `wash`    — the group is a marked stretch: a tinted, ringed box bleeding
-                 past its rows, the calls on their rail under one counting line.
-     `card`    — the group is a card: a titled box, its calls a plain list under
-                 a hairline. For a reader who wants the set to look like a thing
-                 rather than a highlighted passage.
-     `columns` — the group is a grid: the calls stand side by side, because they
-                 *ran* side by side. The one shape that says what "parallel"
-                 meant, and the one that folds two calls into half the height.
-     `bracket` — no box: a thin rule down the start edge spans the header and its
-                 calls. The quietest way to say "these belong together".
-     `ledger`  — hairlines above and below, one between every call, no tint: the
-                 group read as a table of calls.
-     `tiles`   — every call a small card of its own under the header, so each can
-                 be told apart at a glance.
-   The chrome for each lives in `thread-items/group-style.tsx`, so the row reads
-   a treatment instead of spelling `bg-… ring-…` inline. */
-export const GROUP_STYLES = ["wash", "card", "columns", "bracket", "ledger", "tiles"] as const
-export type GroupStyle = (typeof GROUP_STYLES)[number]
-
-export function isGroupStyle(value: unknown): value is GroupStyle {
-  return GROUP_STYLES.some((style) => style === value)
-}
-
 /** The sidebar's arrangement, and how its list is read. Each tuple's first
     entry is its default; `CHOICES` is what stored values are checked against. */
 export const SIDEBAR_VARIANTS = ["sidebar", "inset"] as const
@@ -181,10 +153,6 @@ export interface LayoutOptions {
    *  folded by kind inside it (`groupToolRuns`). Off, the calls are plain rows
    *  of the run and nothing marks them. */
   parallelGroups: boolean
-  /** How a group of parallel calls is bracketed (`GROUP_STYLES`): a marked
-   *  wash, a card with a hairline list, or the calls side by side in columns.
-   *  Off `parallelGroups`, there is no group to draw and this says nothing. */
-  groupStyle: GroupStyle
   /** Fold a run of consecutive `!` commands into one line you can open. */
   groupShellCommands: boolean
   /** Open every `!` command's output by default. Off, the row folds like a
@@ -354,7 +322,6 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   groupTools: false,
   openRunningGroup: true,
   parallelGroups: true,
-  groupStyle: "wash",
   groupShellCommands: false,
   expandShellCommands: false,
   showShellCommands: true,
@@ -479,8 +446,6 @@ function pick(raw: unknown): Partial<LayoutOptions> {
       }
     } else if (key === "toolVariant") {
       if (isToolVariant(value)) out[key] = value
-    } else if (key === "groupStyle") {
-      if (isGroupStyle(value)) out[key] = value
     } else if (key === "streamSpeed") {
       if (isStreamSpeed(value)) out[key] = value
     } else if (key === "batchBurst") {

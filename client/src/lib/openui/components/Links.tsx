@@ -43,7 +43,7 @@ export const Links = defineComponent({
     items: z.array(z.object({ label: z.string(), href: z.string(), meta: z.string().optional() })),
   }),
   component: ({ props }) => (
-    <div className="w-full divide-y divide-border/70">
+    <div className="w-full divide-y divide-rule">
       {props.items.map((item, index) => {
         const url = linkTarget(item.href)
         const line = [item.meta, url?.host ?? item.href].filter(Boolean).join(" · ")
@@ -72,7 +72,7 @@ export const Links = defineComponent({
             target="_blank"
             rel="noreferrer noopener"
             title={url.href}
-            className={cn(LIST_ROW, "flex w-full items-start gap-3 hover:bg-muted/60")}
+            className={cn(LIST_ROW, "flex w-full items-start gap-3 hover:bg-wash-strong")}
           >
             {body}
           </a>

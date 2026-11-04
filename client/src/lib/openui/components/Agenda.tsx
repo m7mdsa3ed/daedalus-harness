@@ -15,7 +15,7 @@ export const Agenda = defineComponent({
   }),
   component: ({ props }) => (
     <Box>
-      <ul className="w-full divide-y divide-border/70">
+      <ul className="w-full divide-y divide-rule">
         {(props.items ?? []).filter((item) => item?.title).map((item, index) => (
           <li key={index} className={cn("grid min-w-0 gap-x-4 gap-y-0.5 @panel-sm:grid-cols-[7rem_1fr]", PAD_ROW)}>
             <span className="text-[length:calc(var(--text-sm,0.875rem)-0.0625rem)] font-medium text-primary tabular-nums">{item.time}</span>

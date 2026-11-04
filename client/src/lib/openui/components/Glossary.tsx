@@ -13,7 +13,7 @@ export const Glossary = defineComponent({
   props: z.object({ items: z.array(z.object({ term: z.string(), definition: z.string() })) }),
   component: ({ props }) => (
     <Box>
-      <dl className="w-full divide-y divide-border/70">
+      <dl className="w-full divide-y divide-rule">
         {(props.items ?? []).filter((item) => item?.term).map((item, index) => (
           <div key={index} className={cn("min-w-0 space-y-0.5", PAD_ROW)}>
             <dt className="text-[length:var(--text-sm,0.875rem)] font-semibold break-words text-foreground"><RichText text={item.term} /></dt>

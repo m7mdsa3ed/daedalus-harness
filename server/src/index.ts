@@ -14,6 +14,7 @@ import { retitleBuiltinMcp } from "./library.js";
 import { seedModelPrompts, writeModelPromptsLibrary } from "./model-prompts.js";
 import { seedDefaultModelRoles } from "./model-roles.js";
 import { seedAgents } from "./registry.js";
+import { seedPersonas } from "./persona-seeds.js";
 import { ensureDefaultBoard } from "./boards.js";
 import { SessionManager } from "./sessions.js";
 import { adoptAgents } from "./adopt-boot.js";
@@ -78,6 +79,13 @@ configureOtlp({ port: config.port });
 await seedAgents();
 // Legacy saved prompts and personas become slash commands, once.
 await migrateLegacyPrompts();
+/* The built-in personas — roles a first message reveals, which is what the
+   classifier picks from — and, once, the retirement of the first working-style
+   set. Same rules as the agents: never a user's row. See persona-seeds.ts. */
+{
+  const { added, retired } = await seedPersonas();
+  if (added || retired) mark(`personas: ${added} added, ${retired} retired`);
+}
 /* The published time-of-day rate cards onto models saved before `peak`
    existed, once, and only where the user has written no schedule of their own.
    See peak-schedules.ts for which families bill by the clock. */

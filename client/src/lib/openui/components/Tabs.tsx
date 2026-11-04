@@ -20,7 +20,7 @@ export const Tabs = defineComponent({
           which clipped every label against it. */}
       <TabsList
         variant="line"
-        className="h-8 w-full max-w-full min-w-0 justify-start gap-4 overflow-x-auto border-b border-border/70 scrollbar-none"
+        className="h-8 w-full max-w-full min-w-0 justify-start gap-4 overflow-x-auto border-b border-rule scrollbar-none"
       >
         {props.tabs.map((tab, index) => (
           <TabsTrigger key={index} value={index} className="min-w-0 flex-none px-0 text-[length:calc(var(--text-sm,0.875rem)-0.0625rem)]">

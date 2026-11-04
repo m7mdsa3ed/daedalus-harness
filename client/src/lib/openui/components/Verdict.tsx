@@ -16,7 +16,7 @@ import { BODY, Box, META, PAD, TONES } from "@/lib/openui/kit"
 import { RichText } from "@/lib/openui/rich-text"
 
 const VERDICT = {
-  neutral: { Icon: Circle, ink: "text-muted-foreground", wash: "bg-muted/40" },
+  neutral: { Icon: Circle, ink: "text-muted-foreground", wash: "bg-wash" },
   info: { Icon: Info, ink: "text-primary", wash: "bg-primary/6" },
   success: { Icon: CircleCheck, ink: "text-success", wash: "bg-success/8" },
   warn: { Icon: CircleAlert, ink: "text-warning", wash: "bg-warning/8" },

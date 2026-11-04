@@ -514,18 +514,17 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   runtime, an older journal — falls back to timing: starting within `batchBurst` of the batch's
   first call, or before its latest call has ended. A step with neither (a notice, a `session/load`
   replay, whose stamps are the reload's) never joins, so no evidence marks nothing. The batch is
-  drawn as a group of its own (`ToolRun`'s `parallel`), **and how it is bracketed is a reading
-  preference, not a constant** (`groupStyle`, `GROUP_STYLES`): `wash` — a marked stretch on a
-  `primary` wash, its calls on the run's rail; `card` — a boxed set on the app's inset ground, its
-  calls a hairline list; `columns` — the same calls laid out side by side in a grid, because they
-  *ran* side by side, which is the only one of the three that says what "parallel" meant. **The
-  chrome for each is one module** (`thread-items/group-style.tsx`): the row asks for a treatment
-  (`frame`, `list`, `cell`, `grid`) instead of spelling `bg-… ring-…` inline, so a style and the
-  settings page that offers it cannot drift apart, and adding a fourth is that file plus a
-  `GROUP_STYLES` value. **All three sit flush on the transcript's column**, the same edge a step
-  row's hover ground, a todo card, the thinking panel and the gap rule are on — and `px-1` is not
-  a free number, because the header and every call row inside a frame carry StepRow's
-  `-mx-1 px-1`, which holds *their* content on the column while their hover ground bleeds 4px.
+  drawn as a group of its own (`ToolRun`'s `parallel`), **bracketed as a ledger and nothing
+  else**: a hairline above and below the group, one between every call, no tint, and the calls on
+  the run's rail — the same trunk, elbow and indent a plain run's steps have — because a batch is
+  still steps of the run. Six treatments (`wash`, `card`, `columns`, `bracket`, `ledger`, `tiles`)
+  were a reading preference once (`groupStyle`); the picker and the other five are gone, and a
+  stored `groupStyle` is ignored. **The chrome is one module** (`thread-items/group-style.tsx`):
+  the row asks for a treatment (`frame`, `list`) instead of spelling `border-… divide-…` inline.
+  **It sits flush on the transcript's column**, the same edge a step row's hover ground, a todo
+  card, the thinking panel and the gap rule are on — and `px-1` is not a free number, because the
+  header and every call row inside the frame carry StepRow's `-mx-1 px-1`, which holds *their*
+  content on the column while their hover ground bleeds 4px.
   The frame supplies exactly that 4px. It used to bleed instead (`-mx-2 px-2`, which put the frame
   8px outside the column while technically holding its content still), and in one turn that read
   as three different columns — thinking panel at +4, todo card and step rows at 0, batch at −8 —

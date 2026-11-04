@@ -100,7 +100,7 @@ export const Table = defineComponent({
             with nothing in that row is left out rather than drawn as a label
             with a blank beside it. */}
         {stacked && (
-          <ul className="w-full min-w-0 list-none divide-y divide-border/70 @panel-sm:hidden">
+          <ul className="w-full min-w-0 list-none divide-y divide-rule @panel-sm:hidden">
             {props.rows.map((row, rowIndex) => {
               const facts = props.columns
                 .map((column, index) => ({ column, value: (row[index] ?? "").trim(), index }))
@@ -141,7 +141,7 @@ export const Table = defineComponent({
           <UiTable>
             {props.header !== false && (
               <TableHeader>
-                <TableRow className="bg-muted/30 hover:bg-muted/30">
+                <TableRow className="bg-wash hover:bg-wash">
                   {props.columns.map((column, index) => (
                     <TableHead
                       key={index}
@@ -155,7 +155,7 @@ export const Table = defineComponent({
             )}
             <TableBody>
               {props.rows.map((row, rowIndex) => (
-                <TableRow key={rowIndex} className="hover:bg-muted/30">
+                <TableRow key={rowIndex} className="hover:bg-wash">
                   {props.columns.map((_, cellIndex) => (
                     <TableCell
                       key={cellIndex}

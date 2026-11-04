@@ -7,6 +7,10 @@ import { BOOT_COLORS } from "./src/lib/boot-colors";
 // The app's one version lives in the root manifest — the harness is one
 // product deployed together, and /api/meta reads the same file.
 import rootPkg from "../package.json" with { type: "json" };
+// The iOS launch images and the media query each one answers to, written by
+// scripts/render-icons.mjs (`pnpm icons`) — injected into <head> below rather
+// than kept in index.html, where 72 <link> lines would bury the splash.
+import splashImages from "./src/lib/splash-images.json" with { type: "json" };
 
 // `pnpm dev:tunnel` sets this. Behind a Cloudflare quick tunnel the page is
 // https on port 443, but Vite's HMR client derives its socket from the dev
@@ -35,6 +39,15 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    {
+      name: "daedalus:ios-launch-images",
+      transformIndexHtml: () =>
+        splashImages.map((img) => ({
+          tag: "link",
+          attrs: { rel: "apple-touch-startup-image", href: img.href, media: img.media },
+          injectTo: "head" as const,
+        })),
+    },
     VitePWA({
       strategies: "injectManifest",
       srcDir: "src",
@@ -72,6 +85,9 @@ export default defineConfig({
            failed build. The threshold below stays as the backstop for anything
            the app itself grows. */
         globIgnores: [
+          /* iOS reads a launch image once, at "Add to Home Screen", and keeps
+             it; 72 PNGs no page ever requests have no place in a precache. */
+          "**/splash/**",
           "**/assets/editor.api-*.js",
           "**/assets/vs-*.js",
           "**/assets/vs-*.css",

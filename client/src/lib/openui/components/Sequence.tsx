@@ -79,7 +79,7 @@ export const Sequence = defineComponent({
               <div
                 className={cn(
                   META,
-                  "flex min-w-0 items-start justify-center gap-1.5 rounded-md border border-border/70 bg-muted px-2 py-1 text-center text-foreground",
+                  "flex min-w-0 items-start justify-center gap-1.5 rounded-md border border-rule bg-muted px-2 py-1 text-center text-foreground",
                   lo === hi ? "w-fit max-w-full" : "w-full"
                 )}
               >
@@ -115,7 +115,7 @@ export const Sequence = defineComponent({
             <div aria-label="Actors" className="grid pb-1" style={columns}>
               {actors.map((actor, i) => (
                 <div key={i} className="flex min-w-0 justify-center" style={{ gridColumn: `${2 * i + 1} / span 2` }}>
-                  <span className={cn(META, "min-w-0 rounded-md border border-border/70 bg-muted/40 px-2 py-0.5 text-center font-medium text-foreground [overflow-wrap:anywhere]")}>
+                  <span className={cn(META, "min-w-0 rounded-md border border-rule bg-wash px-2 py-0.5 text-center font-medium text-foreground [overflow-wrap:anywhere]")}>
                     {actor}
                   </span>
                 </div>

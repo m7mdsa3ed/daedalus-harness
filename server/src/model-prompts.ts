@@ -83,7 +83,7 @@ export const modelPrompts = {
 
 /* ── The built-ins ──
  *
- * Seeded exactly the way `SEED_PERSONAS` is (personas.ts, `seedPersonas`), with
+ * Seeded exactly the way `SEED_PERSONAS` is (persona-seeds.ts, `seedPersonas`), with
  * the same two versions and for the same reason: `since` is how far this install
  * has been carried, `introduced` is the release that first offered the row, and
  * only the pair tells "never offered here" apart from "deleted on purpose".
@@ -228,7 +228,7 @@ const SEED_MODEL_PROMPTS: SeedModelPrompt[] = [
 /**
  * Insert the built-in model prompts this install has never been offered.
  *
- * `seedPersonas`' rules, verbatim and for the same reasons: only rows newer than
+ * `seedPersonas`' rules (persona-seeds.ts), verbatim and for the same reasons: only rows newer than
  * the highest `since` present are considered, an absent row whose `introduced`
  * this install is already past was deleted on purpose and stays deleted, and an
  * existing row is never overwritten — the match, the text and the enabled flag

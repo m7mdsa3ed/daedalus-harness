@@ -17,7 +17,7 @@ export const KeyValue = defineComponent({
   }),
   component: ({ props }) => (
     <Box>
-      <dl className="w-full divide-y divide-border/70">
+      <dl className="w-full divide-y divide-rule">
         {props.items.map((item, index) => (
           <div key={index} className={cn("flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5", PAD_ROW)}>
             <dt className="min-w-0 text-[length:calc(var(--text-sm,0.875rem)-0.0625rem)] break-words text-muted-foreground">{item.key}</dt>

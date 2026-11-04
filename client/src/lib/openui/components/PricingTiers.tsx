@@ -38,7 +38,7 @@ export const PricingTiers = defineComponent({
               {tier.period && <span className="ms-1 text-[length:calc(var(--text-sm,0.875rem)-0.0625rem)] font-normal tracking-normal text-muted-foreground">{tier.period}</span>}
             </p>
             {tier.text && <p className={cn(META, "text-pretty")}><RichText text={tier.text} /></p>}
-            <ul className="min-w-0 space-y-2 border-t border-border/70 pt-3">
+            <ul className="min-w-0 space-y-2 border-t border-rule pt-3">
               {(tier.features ?? []).filter(Boolean).map((feature, i) => (
                 <li key={i} className="flex min-w-0 gap-2">
                   <Check aria-hidden className="mt-[0.3em] size-3.5 shrink-0 text-success" strokeWidth={3} />

@@ -52,7 +52,7 @@ export function GeneratedImage({ src, alt, caption }: { src: string; alt: string
             type="button"
             onClick={() => setShown(true)}
             className={cn(
-              "flex w-full flex-col items-start gap-0.5 text-start outline-none hover:bg-muted/60 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset",
+              "flex w-full flex-col items-start gap-0.5 text-start outline-none hover:bg-wash-strong focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset",
               PAD
             )}
           >
@@ -61,7 +61,7 @@ export function GeneratedImage({ src, alt, caption }: { src: string; alt: string
           </button>
         )}
         {caption && (
-          <figcaption className={cn(META, "border-t border-border/70 text-pretty", PAD_ROW)}>{caption}</figcaption>
+          <figcaption className={cn(META, "border-t border-rule text-pretty", PAD_ROW)}>{caption}</figcaption>
         )}
       </figure>
     </Box>
