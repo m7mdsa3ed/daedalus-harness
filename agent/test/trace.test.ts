@@ -234,7 +234,7 @@ const endEvent = (callId: string, input: number, output: number, ttft?: number):
     const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
     const response = await ctx.request("session/prompt", { sessionId, prompt: promptOf("delegate") });
     assert.equal(response.stopReason, "end_turn");
-    const childId = (harness.updatesOf("subagent_spawned")[0]?.update as { subagentSessionId?: string }).subagentSessionId;
+    const childId = (harness.updatesOf("subagent_update")[0]?.update as { sessionId?: string }).sessionId;
     assert.ok(childId);
 
     const calls = harness.updatesOf("_daedalus/model_call");

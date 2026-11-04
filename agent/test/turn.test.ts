@@ -205,6 +205,42 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
   console.log("turn: pause/resume ok");
 }
 
+// --- the request's own signal is a cancel: an aborted prompt request ends the turn as cancelled ---
+{
+  /* The SDK aborts a handler's `signal` for a `$/cancel_request` and for a
+     closed connection; the turn chains it into its own abort, so a client that
+     drops mid-turn ends the stream exactly as `session/cancel` does. The
+     cooperative cancel here is the one observable form of both. */
+  const agent = buildAgentApp({
+    env: testEnv(),
+    makeModel: scriptedModel([
+      toolCallScript("bash", { command: "sleep 5" }),
+      textScript("never reached "),
+      textScript("second turn "),
+    ]),
+  });
+  const { app: client } = makeClient();
+  await connectPair(agent, client, async (ctx) => {
+    await initialize(ctx);
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
+    const controller = new AbortController();
+    const turn = ctx.request(
+      "session/prompt",
+      { sessionId, prompt: promptOf("run it") },
+      { cancellationSignal: controller.signal },
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    controller.abort();
+    const response = await turn;
+    assert.equal(response.stopReason, "cancelled", "an aborted request signal ends the turn as a cancel");
+    // The signal belonged to that request alone: the next turn runs untouched.
+    const next = await ctx.request("session/prompt", { sessionId, prompt: promptOf("again") });
+    assert.equal(next.stopReason, "end_turn");
+  });
+  console.log("turn: request signal abort ok");
+}
+
 // --- pause then cancel: the held turn ends as cancelled, and the pause goes with it ---
 {
   const agent = buildAgentApp({

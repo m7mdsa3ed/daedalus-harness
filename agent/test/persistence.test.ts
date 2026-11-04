@@ -324,4 +324,114 @@ let sessionId = "";
   console.log("persistence: text across an interleaved tool call ok");
 }
 
+// --- session/archive: a flag on the index row, read by session/list, across processes ---
+{
+  const home = mkdtempSync(join(tmpdir(), "daedalus-agent-home-"));
+  const archiveEnv = testEnv({ home });
+  let kept = "";
+  let shelved = "";
+  {
+    const agent = buildAgentApp({
+      env: archiveEnv,
+      makeModel: scriptedModel([textScript("One. "), textScript("Two. "), textScript("Back. ")]),
+    });
+    const { app: client } = makeClient();
+    await connectPair(agent, client, async (ctx) => {
+      await initialize(ctx);
+      kept = (await ctx.request("session/new", { cwd, mcpServers: [] })).sessionId;
+      shelved = (await ctx.request("session/new", { cwd, mcpServers: [] })).sessionId;
+      await ctx.request("session/prompt", { sessionId: kept, prompt: promptOf("one") });
+      await ctx.request("session/prompt", { sessionId: shelved, prompt: promptOf("two") });
+
+      const ids = (r: { sessions: { sessionId: string }[] }) => r.sessions.map((s) => s.sessionId).sort();
+      assert.deepEqual(ids(await ctx.request("session/list", { cwd })), [kept, shelved].sort());
+
+      // Archiving a live session closes it here first, as the spec asks…
+      await ctx.request("session/archive", { sessionId: shelved });
+      await assert.rejects(
+        ctx.request("session/prompt", { sessionId: shelved, prompt: promptOf("still here?") }),
+        "an archived session is no longer live",
+      );
+      // …and a second archive is a success, not a complaint.
+      await ctx.request("session/archive", { sessionId: shelved });
+
+      // The default listing excludes it; `include` says which is which; `only` is the shelf.
+      assert.deepEqual(ids(await ctx.request("session/list", { cwd })), [kept]);
+      assert.deepEqual(ids(await ctx.request("session/list", { cwd, archived: "exclude" })), [kept]);
+      const both = await ctx.request("session/list", { cwd, archived: "include" });
+      assert.deepEqual(ids(both), [kept, shelved].sort());
+      assert.equal(both.sessions.find((s) => s.sessionId === shelved)?.archived, true);
+      assert.equal(both.sessions.find((s) => s.sessionId === kept)?.archived, false);
+      assert.deepEqual(ids(await ctx.request("session/list", { cwd, archived: "only" })), [shelved]);
+
+      // The log is untouched: an archived session still loads and keeps talking.
+      await ctx.request("session/load", { sessionId: shelved, cwd, mcpServers: [] });
+      await ctx.request("session/prompt", { sessionId: shelved, prompt: promptOf("back") });
+      // Loading did not unarchive it — that is its own door.
+      assert.deepEqual(ids(await ctx.request("session/list", { cwd })), [kept]);
+    });
+  }
+  // A restart reads the flag back off index.json.
+  {
+    const store = new SessionStore(home);
+    assert.equal(store.index.get(shelved)?.archived, true, "archived survives a restart");
+    assert.deepEqual(store.list(cwd, null).sessions.map((s) => s.sessionId), [kept]);
+    assert.deepEqual(store.list(cwd, null, "only").sessions.map((s) => s.sessionId), [shelved]);
+    assert.equal(store.setArchived("no-such-session", true), false, "an unknown id is the caller's -32002");
+  }
+  {
+    const agent = buildAgentApp({ env: archiveEnv, makeModel: scriptedModel([]) });
+    const { app: client } = makeClient();
+    await connectPair(agent, client, async (ctx) => {
+      await initialize(ctx);
+      // Unarchive flips the flag and loads nothing; twice is fine.
+      await ctx.request("session/unarchive", { sessionId: shelved });
+      await ctx.request("session/unarchive", { sessionId: shelved });
+      const listed = await ctx.request("session/list", { cwd });
+      assert.deepEqual(listed.sessions.map((s) => s.sessionId).sort(), [kept, shelved].sort());
+      assert.ok(listed.sessions.every((s) => s.archived === false));
+      await assert.rejects(
+        ctx.request("session/prompt", { sessionId: shelved, prompt: promptOf("live?") }),
+        "unarchive does not load the session",
+      );
+    });
+  }
+  console.log("persistence: session/archive ok");
+}
+
+// --- index.json has many writers: a flush merges, so one process's flag
+// survives another's recency bump, and the reverse ---
+{
+  const home = mkdtempSync(join(tmpdir(), "daedalus-agent-home-"));
+  const a = new SessionStore(home); // a live thread's process, index loaded at its start
+  a.create("s1", cwd);
+  a.create("s2", cwd);
+  const b = new SessionStore(home); // the one-shot `session/archive` process
+  assert.equal(b.setArchived("s1", true), true);
+  assert.equal(new SessionStore(home).index.get("s1")?.archived, true);
+  // A never saw the flag; its own writes must not take it back.
+  a.retitle("s2", "two");
+  a.touch("s1");
+  a.flushIndex();
+  const c = new SessionStore(home);
+  assert.equal(c.index.get("s1")?.archived, true, "another process's flush keeps the archive flag");
+  assert.equal(c.index.get("s2")?.title, "two", "and lands its own change");
+  assert.deepEqual(c.list(cwd, null).sessions.map((s) => s.sessionId), ["s2"]);
+  // The reverse: B's flag flip keeps what A wrote meanwhile.
+  a.create("s3", cwd);
+  b.setArchived("s1", false);
+  const d = new SessionStore(home);
+  assert.equal(d.index.get("s1")?.archived, undefined, "unarchived by the process that said so");
+  assert.ok(d.index.has("s3"), "a row another process created survives the one-shot's flush");
+  // A row the process itself flips wins over the file, as it must.
+  a.setArchived("s2", true);
+  assert.equal(new SessionStore(home).index.get("s2")?.archived, true);
+  // A deletion is carried too.
+  assert.equal(a.delete("s3"), true);
+  b.touch("s1");
+  b.flushIndex();
+  assert.equal(new SessionStore(home).index.has("s3"), false, "a deleted row does not come back on another's flush");
+  console.log("persistence: index merge across processes ok");
+}
+
 console.log("persistence.test.ts passed");

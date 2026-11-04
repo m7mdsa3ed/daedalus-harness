@@ -34,6 +34,55 @@ const cwd = mkdtempSync(join(tmpdir(), "daedalus-agent-cwd-"));
     assert.equal(init.agentCapabilities?.mcpCapabilities?.http, true, "advertises http MCP");
     assert.equal(init.agentCapabilities?.mcpCapabilities?.sse, true, "advertises sse MCP");
     assert.equal(init.agentCapabilities?.promptCapabilities?.embeddedContext, true);
+    /* The two v1.29 doors, as the schema spells them: `systemPrompt` with
+       `mode.override` (a bare `{}` would be append-only), and `archive`. */
+    assert.deepEqual(
+      init.agentCapabilities?.sessionCapabilities?.systemPrompt,
+      { mode: { override: {} } },
+      "advertises systemPrompt in append and override modes",
+    );
+    assert.deepEqual(init.agentCapabilities?.sessionCapabilities?.archive, {}, "advertises session/archive");
+
+    /* An unknown session id is the protocol's own -32002, naming the id, on
+       every door that takes one — never a generic invalid-params. (`session/
+       delete` answers the same on the wire, but the SDK's client resolves a
+       -32002 on close/delete as success — `treatSessionNotFoundAsSuccess` — so
+       its wire shape is asserted over raw NDJSON in the binary section below.) */
+    for (const [method, params] of [
+      ["session/prompt", { sessionId: "no-such-session", prompt: promptOf("hi") }],
+      ["session/load", { sessionId: "no-such-session", cwd, mcpServers: [] }],
+      ["session/fork", { sessionId: "no-such-session", cwd }],
+      ["session/archive", { sessionId: "no-such-session" }],
+      ["session/unarchive", { sessionId: "no-such-session" }],
+    ] as const) {
+      await assert.rejects(ctx.request(method, params as never), (err: unknown) => {
+        const e = err as { code?: number; data?: { sessionId?: string } };
+        assert.equal(e.code, -32002, `${method} on an unknown id is -32002`);
+        assert.equal(e.data?.sessionId, "no-such-session", `${method} names the id in data.sessionId`);
+        return true;
+      });
+    }
+
+    /* A `systemPrompt` this runtime cannot apply is an error instead of a
+       session — the spec forbids reading an unknown mode as `append`, and a
+       block kind a system prompt cannot hold is the same refusal. */
+    for (const systemPrompt of [
+      { mode: "_vendor/whisper", content: [{ type: "text", text: "x" }] },
+      { mode: "append", content: [{ type: "image", data: "", mimeType: "image/png" }] },
+    ]) {
+      await assert.rejects(
+        ctx.request("session/new", { cwd, mcpServers: [], systemPrompt } as never),
+        (err: unknown) => {
+          assert.equal((err as { code?: number }).code, -32602, "an unsupported systemPrompt is invalid params");
+          return true;
+        },
+      );
+    }
+    const listedUnknown = ctx.request("session/list", { archived: "_vendor/soon" } as never);
+    await assert.rejects(listedUnknown, (err: unknown) => {
+      assert.equal((err as { code?: number }).code, -32602, "an unknown archived filter is -32602");
+      return true;
+    });
 
     const created = await ctx.request("session/new", { cwd, mcpServers: [] });
     assert.ok(created.sessionId);
@@ -94,6 +143,38 @@ const cwd = mkdtempSync(join(tmpdir(), "daedalus-agent-cwd-"));
   console.log("handshake: in-process ok");
 }
 
+// --- the capability literal round-trips the SDK's own initialize parser ---
+{
+  /* app.ts registers `initialize` on the SDK's parser (the plain `.onRequest`
+     overload), so the whole literal the harness sends has to come out the other
+     side — `subagents` and `plan` (the RFD opt-ins) and `_meta` included. An
+     agent built on the same overload records exactly what that parser hands a
+     handler; the daedalus agent's own read of the result is what
+     subagents.test.ts ("RFD negotiated") exercises. */
+  let seen: unknown = "never called";
+  const probe = acp
+    .agent({ name: "caps-probe" })
+    .onRequest("initialize", ({ params }) => {
+      seen = params.clientCapabilities;
+      return {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {},
+      } satisfies acp.InitializeResponse;
+    });
+  const { app: client } = makeClient();
+  await connectPair(probe, client, async (ctx) => {
+    await initialize(ctx);
+  });
+  /* The parser fills the spec's defaults (`terminal: false`, `auth`) beside
+     what was sent; what matters is that nothing sent was stripped. */
+  const parsed = seen as Record<string, unknown>;
+  for (const [key, value] of Object.entries(FULL_CAPS)) {
+    assert.deepEqual(parsed[key], value, `clientCapabilities.${key} survives the SDK's initialize parser`);
+  }
+  assert.ok("subagents" in parsed && "plan" in parsed && "_meta" in parsed);
+  console.log("handshake: capability literal round-trips ok");
+}
+
 // --- session/close parks the thread here but keeps it; session/delete erases it ---
 {
   const env = testEnv();
@@ -120,7 +201,10 @@ const cwd = mkdtempSync(join(tmpdir(), "daedalus-agent-cwd-"));
     await ctx.request("session/delete", { sessionId });
     const listed = (await ctx.request("session/list", { cwd })) as { sessions: { sessionId: string }[] };
     assert.ok(!listed.sessions.some((s) => s.sessionId === sessionId), "the listing no longer shows it");
-    await assert.rejects(ctx.request("session/delete", { sessionId }), "deleting nothing again is an error");
+    /* The agent answers -32002 for a second delete (the wire shape is pinned in
+       the binary section); the SDK's client treats that as the idempotent
+       success the protocol lets a close/delete be, so this resolves. */
+    await ctx.request("session/delete", { sessionId });
     await assert.rejects(ctx.request("session/load", { sessionId, cwd, mcpServers: [] }));
   });
   console.log("handshake: close and delete ok");
@@ -166,6 +250,19 @@ const cwd = mkdtempSync(join(tmpdir(), "daedalus-agent-cwd-"));
     result: acp.NewSessionResponse;
   };
   assert.ok(created.result.sessionId);
+
+  // On the wire, a request for a session this agent never held is -32002 with data.sessionId.
+  const missing = (await request("session/delete", { sessionId: "no-such-session" })) as {
+    error?: { code: number; data?: { sessionId?: string } };
+  };
+  assert.equal(missing.error?.code, -32002, "session/delete of an unknown id is -32002 on the wire");
+  assert.equal(missing.error?.data?.sessionId, "no-such-session");
+  const missingPrompt = (await request("session/prompt", {
+    sessionId: "no-such-session",
+    prompt: [{ type: "text", text: "hi" }],
+  })) as { error?: { code: number; data?: { sessionId?: string } } };
+  assert.equal(missingPrompt.error?.code, -32002, "session/prompt of an unknown id is -32002 on the wire");
+  assert.equal(missingPrompt.error?.data?.sessionId, "no-such-session");
   child.kill();
   console.log("handshake: binary ok");
 }

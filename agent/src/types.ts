@@ -1,25 +1,12 @@
 import type * as acp from "./acp.js";
 import type { ModelCall } from "./trace.js";
 
-/* The ACP Subagent Sessions RFD's two update kinds are not in the SDK's
-   generated SessionUpdate union yet. Outbound notifications are not
+/* The Subagent Sessions RFD's own `subagent_update` is in the SDK's
+   SessionUpdate union (the `/unstable` entry), so the spawn, the state changes
+   and the ending travel as `acp.SessionUpdate`. What ACP has no field for —
+   the child's settled usage per attempt, one record per model call — rides
+   the harness's own `_daedalus/*` kinds. Outbound notifications are not
    schema-validated, so they travel as plain objects cast at the send site. */
-export interface SubagentSpawned {
-  sessionUpdate: "subagent_spawned";
-  subagentSessionId: string;
-  name: string;
-  task?: string;
-  capabilities?: Record<string, unknown>;
-  _meta?: Record<string, unknown>;
-}
-
-export interface SubagentStateUpdate {
-  sessionUpdate: "subagent_state_update";
-  subagentSessionId: string;
-  state: "completed" | "failed" | "cancelled" | "disconnected";
-  _meta?: Record<string, unknown>;
-}
-
 export interface SubagentUsage {
   sessionUpdate: "_daedalus/subagent_usage";
   subagentSessionId: string;
@@ -43,13 +30,11 @@ export interface SessionInfoUpdate {
 
 export type AnySessionUpdate =
   | acp.SessionUpdate
-  | SubagentSpawned
-  | SubagentStateUpdate
   | SubagentUsage
   | ModelCallUpdate
   | SessionInfoUpdate;
 
-/** The `session/update` params shape, widened to carry the RFD kinds. */
+/** The `session/update` params shape, widened to carry the harness's own kinds. */
 export interface UpdateParams {
   sessionId: string;
   update: AnySessionUpdate;
