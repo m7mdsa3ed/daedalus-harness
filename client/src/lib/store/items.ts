@@ -126,13 +126,15 @@ export interface ToolItem {
 
 /**
  * A subagent's session, announced by the agent (the ACP subagent RFD's
- * `subagent_spawned`), or a child session a runtime names in `_meta` before
- * any tool call has claimed it. The row a child's work groups under when no
- * tool call launched it — Codex's children have no Task; the spawn IS the
- * announcement. Upserted by `subagent:<subagentSessionId>`, so the first
- * update fixes its place and the terminal `subagent_state_update` patches it
- * where it sits. `parentId` is set when the spawn arrived on another child's
- * session — that is how the RFD nests.
+ * `subagent_update`, the canonical shape; the superseded draft pair
+ * `subagent_spawned`/`subagent_state_update` is read the same way for old
+ * journals), or a child session a runtime names in `_meta` before any tool
+ * call has claimed it. The row a child's work groups under when no tool call
+ * launched it — Codex's children have no Task; the announcement IS the row.
+ * Upserted by `subagent:<sessionId>`, so the first update fixes its place and
+ * every later one (the `idle` snapshot that ends it) patches it where it sits.
+ * `parentId` is set when the announcement arrived on another child's session —
+ * that is how the RFD nests.
  */
 export interface SubagentItem {
   kind: "subagent"
@@ -142,12 +144,19 @@ export interface SubagentItem {
   name: string
   /** What was delegated, in the agent's words — descriptive, not a prompt. */
   task: string
-  /** `running` until the parent reports otherwise. */
+  /** `running` until the parent's snapshot says otherwise: `idle` by its stop
+      reason, or the harness's `_daedalus/disconnected` for a child lost. */
   state: "running" | SubagentState
   /** The model the child runs on and the helper role that named it, when the
       runtime says (`_meta.daedalus` on the spawn — ACP's names neither). */
   model?: string
   role?: string
+  /** Where the runtime placed the child, absolute (`subagent_update.cwd`,
+      feature `subagentCwd`). Absent: never said, or cleared — the child works
+      in its parent's directory. Drawn relative to the project when under it. */
+  cwd?: string
+  /** The child's extra workspace roots, the same way; absent is "none said". */
+  additionalDirectories?: string[]
   capabilities: { cancel?: boolean; close?: boolean }
   /** Set when this session is a harness workflow step — the server stamps the
       spawn's `_meta.daedalus.workflow`, read by `lib/tools.workflowInfoOf`.

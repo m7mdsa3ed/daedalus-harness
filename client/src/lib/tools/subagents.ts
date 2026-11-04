@@ -348,13 +348,14 @@ export function parentToolIdOf(meta: unknown): string | undefined {
 }
 
 /** The model a spawn says its child runs on, and the helper role that picked
-    it — our runtime's `_meta.daedalus.{model,role}` on `subagent_spawned`. */
+    it — our runtime's `_meta.daedalus.{model,role}` on `subagent_update`. */
 export function spawnModelOf(meta: unknown): { model?: string; role?: string } {
   const daedalus = vendorMeta(meta, "daedalus")
   return { model: str(daedalus?.model) ?? undefined, role: str(daedalus?.role) ?? undefined }
 }
 
-/** The item id of a subagent session — the RFD's `subagentSessionId`, or the
+/** The item id of a subagent session — the RFD's `sessionId` (the draft pair's
+    `subagentSessionId`), or the
     child session OpenCode names in `_meta`. One scheme for both so a `task`
     tool that later reports its child session id can be matched to it. */
 export const subagentItemId = (sessionId: string): string => `subagent:${sessionId}`

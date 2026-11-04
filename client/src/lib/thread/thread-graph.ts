@@ -14,6 +14,7 @@ import { childKindOf, type SessionMeta } from "../settings"
 import type { ThreadItem } from "../store"
 import { buildRows, subagentLabel, type Row, type SubagentGroup } from "../transcript-rows"
 import type { AgentState } from "./statuses"
+import { relativeCwd } from "./subagent-cwd"
 
 export type GraphScope = "active" | "all"
 
@@ -81,7 +82,9 @@ export function threadGraph({
   threads: Record<string, GraphThread | undefined>
   /** `agentState` per session id; a session missing from it reads idle. */
   states: ReadonlyMap<string, AgentState>
-  projects: { id: string; name: string }[]
+  /** `cwd` is what a worker's own directory is said against; a project
+      without one (an older list) gets the absolute path. */
+  projects: { id: string; name: string; cwd?: string }[]
   scope: GraphScope
 }): ThreadGraph {
   const live = sessions.filter((s) => !s.draft && !s.deletedAt)
@@ -197,6 +200,15 @@ export function threadGraph({
     const id = addWorker(group, parent, open)
     walk(group.children, id, open)
   }
+  /* Where the runtime placed a child (`subagent_update.cwd`), against the
+     project of the thread it is drawn under — the same words its row says. */
+  const placeOf = (group: SubagentGroup, open: string): string | null => {
+    const cwd = group.head.kind === "subagent" ? group.head.cwd : undefined
+    if (!cwd) return null
+    const projectId = byId.get(open)?.projectId
+    const root = projectId ? projects.find((p) => p.id === projectId)?.cwd : undefined
+    return `in ${clip(relativeCwd(cwd, root), 40)}`
+  }
   const addWorker = (group: SubagentGroup, parent: string, open: string): string => {
     const id = `sa:${group.id}`
     const { task, name } = subagentLabel(group.head)
@@ -204,7 +216,11 @@ export function threadGraph({
     nodes.set(id, {
       id,
       label: clip(task || name || "Agent"),
-      hint: [name && name !== task ? clip(name, 30) : null, tone === "running" ? "running" : tone === "failed" ? "failed" : "done"]
+      hint: [
+        name && name !== task ? clip(name, 30) : null,
+        placeOf(group, open),
+        tone === "running" ? "running" : tone === "failed" ? "failed" : "done",
+      ]
         .filter(Boolean)
         .join(" · "),
       tone,

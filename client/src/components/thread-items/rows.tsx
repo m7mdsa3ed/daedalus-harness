@@ -40,6 +40,8 @@ import { api, loadSettings } from "@/lib/settings"
 import { reportError } from "@/lib/errors"
 import { useServer } from "@/lib/server-context"
 import { useThreadId } from "@/lib/thread-id-context"
+import { useProjects } from "@/lib/queries/catalog"
+import { relativeCwd } from "@/lib/thread/subagent-cwd"
 import {
   CHIP,
   DetailSection,
@@ -137,7 +139,7 @@ import { StepTokens, TokenSummary, useStepTokens } from "@/components/token-usag
 import { Logo } from "@/components/ui/logo"
 import { cn, stagger } from "@/lib/utils"
 import { toolVariantOf, useLayoutOptionsContext } from "@/lib/layout-options"
-import type { SubagentItem, TextItem, ThreadItem, ToolItem } from "@/lib/store"
+import { useSessionMeta, type SubagentItem, type TextItem, type ThreadItem, type ToolItem } from "@/lib/store"
 import type { StepLead, SubagentCall } from "@/lib/tools"
 import { threadPath } from "@/lib/router"
 import { Link } from "react-router"
@@ -791,11 +793,16 @@ export const SubagentStep = React.memo(function SubagentStep({
      and left the name nothing. The caption truncates; the figures stay. */
   const who =
     [captionOf === target ? undefined : captionOf, runsOn.model].filter(Boolean).join(" · ") || undefined
+  /* Where the runtime placed the child (`subagent_update.cwd`), said against
+     the thread's project so the news is `src/api` rather than the project's
+     own prefix again; absent, the child works where its parent does and the
+     caption says nothing. */
+  const where = useSubagentPlace(session?.cwd)
   const steps = collectTools(children)
   const prose = summarise(steps)
     .map(({ verb, noun, count }) => `${verb} ${count} ${pluralNoun(noun, count)}`)
     .join(", ")
-  const caption = [who, prose].filter(Boolean).join(" · ") || undefined
+  const caption = [who, where, prose].filter(Boolean).join(" · ") || undefined
   const stepThread = useStepThread(group)
   const hasBody = subagentHasBody(group, stepThread)
   const tokens = view.showTokens ? stepUsage(group) : undefined
@@ -881,8 +888,20 @@ export const SubagentStep = React.memo(function SubagentStep({
 })
 SubagentStep.displayName = "SubagentStep"
 
-/** Stop on a running child's row. The child's own `subagent_state_update` is
-    what redraws the row, so success leaves the button disabled until it goes. */
+/** `in <dir>` for a child placed somewhere, relative to the thread's project
+    when under it. The project is read off the routed thread's row; a row with
+    no thread around it (a popout, a preview) falls back to the absolute path. */
+function useSubagentPlace(cwd: string | undefined): string | undefined {
+  const threadId = useThreadId()
+  const meta = useSessionMeta(threadId ?? "")
+  const root = useProjects().find((project) => project.id === meta?.projectId)?.cwd
+  if (!cwd) return undefined
+  return `in ${relativeCwd(cwd, root)}`
+}
+
+/** Stop on a running child's row. The child's own `subagent_update` (its
+    `idle` snapshot) is what redraws the row, so success leaves the button
+    disabled until it goes. */
 function SubagentStop({ childId }: { childId: string }) {
   const settings = useServer()
   const threadId = useThreadId()

@@ -39,6 +39,8 @@ import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { Button } from "@/components/ui/busy-button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Switch } from "@/components/ui/switch"
+import { StatusBadge } from "@/components/settings/primitives"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { PickerSkeleton } from "@/components/ui/skeletons"
 import { Empty } from "@/components/empty"
@@ -71,6 +73,7 @@ import { threadPath } from "@/lib/router"
 import { profileSupports, type Project } from "@/lib/settings"
 import type { Actions } from "@/lib/actions"
 import { useAgents, useInvalidateCatalog, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useFeature } from "@/lib/queries/surfaces"
 import {
   defaultToolPicks,
   emptyDefaults,
@@ -161,6 +164,13 @@ export function ImportThreadsDialog({
   const [sessions, setSessions] = React.useState<ImportableSession[] | null>(null)
   const [unsupported, setUnsupported] = React.useState(false)
   const [truncated, setTruncated] = React.useState(false)
+  /* Archived sessions are left out of a listing unless asked for; the switch
+     is how you ask, and it survives a rescan like the filters do. Whether the
+     runtime could actually tell them apart is the listing's own answer
+     (`archive`), said in words rather than drawn as an empty switch. */
+  const sessionArchive = useFeature("sessionArchive")
+  const [includeArchived, setIncludeArchived] = React.useState(false)
+  const [archiveAware, setArchiveAware] = React.useState<boolean | null>(null)
   const [scanning, setScanning] = React.useState(false)
   const [importing, setImporting] = React.useState(false)
   const [filter, setFilter] = React.useState("")
@@ -224,6 +234,7 @@ export function ImportThreadsDialog({
     setSessions(null)
     setUnsupported(false)
     setTruncated(false)
+    setArchiveAware(null)
     setPicked(new Set())
     setCollapsed(new Set())
     setRestored(new Set())
@@ -243,15 +254,21 @@ export function ImportThreadsDialog({
      anyway. */
   const scanProject = projects.find((p) => p.id === projectId) ?? projects[0] ?? null
 
-  const scan = async () => {
+  const scan = async (archived = includeArchived) => {
     if (!profileId || !agentId || !scanProject) return
     setScanning(true)
     reset()
     try {
-      const listing = await listImportable({ profileId, agentId, projectId: scanProject.id })
+      const listing = await listImportable({
+        profileId,
+        agentId,
+        projectId: scanProject.id,
+        ...(sessionArchive && archived ? { archived: "include" } : {}),
+      })
       setSessions(listing.sessions)
       setUnsupported(!listing.supported)
       setTruncated(listing.truncated)
+      setArchiveAware(listing.archive ?? null)
     } catch (err) {
       setScanError(captureError(err, "Couldn't list this agent's past sessions"))
     } finally {
@@ -540,6 +557,23 @@ export function ImportThreadsDialog({
               {sessions ? "Scan again" : "Scan"}
             </Button>
           </div>
+          {sessionArchive && (
+            <label className="flex cursor-pointer items-center gap-2.5 px-1 text-sm text-muted-foreground">
+              <Switch
+                size="sm"
+                checked={includeArchived}
+                disabled={scanning}
+                onCheckedChange={(next) => {
+                  setIncludeArchived(next)
+                  /* A list on screen was read without (or with) them; re-ask
+                     rather than leave a switch that says one thing over a
+                     list that shows another. */
+                  if (sessions || scanError) void scan(next)
+                }}
+              />
+              Include archived sessions
+            </label>
+          )}
 
           {total > 0 && (
             <>
@@ -587,6 +621,9 @@ export function ImportThreadsDialog({
                 <span className="tabular-nums">
                   {shown === total ? `${total} sessions` : `${shown} of ${total} shown`}
                 </span>
+                {includeArchived && archiveAware === false && (
+                  <span>{agentName(agentId)} can't tell archived sessions apart, so none are marked.</span>
+                )}
                 {visibleNew.length > 0 && (
                   <>
                     <span className="tabular-nums">{visibleNew.length} can be imported</span>
@@ -904,6 +941,9 @@ function Row({
       >
         {session.title?.trim() || <span className="text-muted-foreground">Untitled</span>}
       </button>
+      {session.archived === true && (
+        <StatusBadge dot={false}>Archived</StatusBadge>
+      )}
       {!Number.isNaN(at) && (
         <span
           className="shrink-0 text-xs text-muted-foreground tabular-nums"

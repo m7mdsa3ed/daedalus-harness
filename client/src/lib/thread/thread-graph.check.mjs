@@ -125,4 +125,21 @@ const edge = (g, from, to) => g.edges.find((e) => e.from === from && e.to === to
   assert.ok(!ids(g).some((id) => id.startsWith("sa:")))
 }
 
+// A placed worker says where, against its thread's project; outside it, the whole path.
+{
+  const items = [agent("in", { cwd: "/repo/src/api/" }), agent("out", { cwd: "/tmp/scratch" }), agent("root", { cwd: "/repo" })]
+  const g = threadGraph({
+    sessions: [session("a")],
+    threads: { a: { items, turnActive: true, background: false } },
+    states: new Map([["a", "running"]]),
+    projects: [{ id: "p1", name: "Harness", cwd: "/repo" }],
+    scope: "active",
+  })
+  assert.equal(g.nodes.find((n) => n.id === "sa:subagent:in").hint, "worker · in src/api · running")
+  assert.equal(g.nodes.find((n) => n.id === "sa:subagent:out").hint, "worker · in /tmp/scratch · running")
+  assert.equal(g.nodes.find((n) => n.id === "sa:subagent:root").hint, "worker · in . · running")
+  const bare = graph([session("a")], { a: "running" }, { threads: { a: { items: [agent("x")], turnActive: true, background: false } } })
+  assert.equal(bare.nodes.find((n) => n.id === "sa:subagent:x").hint, "worker · running", "no cwd, no place")
+}
+
 console.log("thread-graph.check: ok")

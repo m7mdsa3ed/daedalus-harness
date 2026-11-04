@@ -40,7 +40,8 @@ import { ErrorNote } from "@/components/error-note"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { clearAgentOptions, dropAgentOptionsFor } from "@/lib/agent-options"
 import { inlineFromQuery, reportError } from "@/lib/errors"
-import { api, profileSupports, type AgentDef, type AgentStatus } from "@/lib/settings"
+import { api, profileSupports, type AgentAuthReading, type AgentDef, type AgentStatus } from "@/lib/settings"
+import { useFeature } from "@/lib/queries/surfaces"
 import { useAgentsStatus, useInvalidateProfileCatalog, useAgents, useProfiles } from "@/lib/queries/catalog"
 import { toast } from "@/lib/toast"
 import { writeClipboard } from "@/lib/clipboard"
@@ -403,6 +404,9 @@ function StatusBadges({
   busy: boolean
   showVersion?: boolean
 }) {
+  /* The agent's own `auth/status` answer, where the server reads it. Drawn
+     beside the measured badge and never compared against a version. */
+  const authStatus = useFeature("agentAuthStatus")
   if (busy) return <StatusBadge tone="info">Running…</StatusBadge>
   if (!status) {
     return pending ? <StatusBadge>Checking…</StatusBadge> : null
@@ -425,10 +429,43 @@ function StatusBadges({
           <StatusBadge tone="ok">Installed</StatusBadge>
         )}
       </span>
-      {status.authenticated === false && <StatusBadge tone="warn">Not logged in</StatusBadge>}
+      {authStatus && status.auth ? (
+        <AuthBadge auth={status.auth} />
+      ) : (
+        status.authenticated === false && <StatusBadge tone="warn">Not logged in</StatusBadge>
+      )}
       {outdated(status) && <StatusBadge tone="info" dot={false}>v{status.latest} available</StatusBadge>}
       {status.protocolVersion !== null && <StatusBadge dot={false}>ACP v{status.protocolVersion}</StatusBadge>}
     </>
+  )
+}
+
+/* ACP's `AuthState` as a badge: what the agent itself says about its login,
+   beside the measured one. `not_required` can start sessions, so it is not a
+   warning; `unknown` is the schema's "something newer than this client reads"
+   and is said as such rather than as logged out. The accounts ride the title
+   — display fields the schema says are never an identifier. */
+const AUTH_BADGE: Record<AgentAuthReading["state"], { tone: "ok" | "warn" | "neutral"; label: string }> = {
+  authenticated: { tone: "ok", label: "Logged in" },
+  unauthenticated: { tone: "warn", label: "Not logged in" },
+  not_required: { tone: "neutral", label: "No login needed" },
+  unknown: { tone: "neutral", label: "Login state unknown" },
+}
+
+/** One account, in words: its label, then whoever it names. */
+function accountLine(account: AgentAuthReading["accounts"][number]): string {
+  const who = [account.name, account.email, account.organization].filter(Boolean).join(", ")
+  return `${account.label}${who ? ` — ${who}` : ""}${account.active ? " (active)" : ""}`
+}
+
+function AuthBadge({ auth }: { auth: AgentAuthReading }) {
+  const { tone, label } = AUTH_BADGE[auth.state]
+  const accounts = auth.accounts.map(accountLine)
+  const title = ["The agent's own answer to ACP auth/status", ...accounts].join("\n")
+  return (
+    <span title={title}>
+      <StatusBadge tone={tone}>{label}</StatusBadge>
+    </span>
   )
 }
 
@@ -497,6 +534,7 @@ function AgentDetail({
   status: AgentStatus | undefined
   uses: number
 }) {
+  const authStatus = useFeature("agentAuthStatus")
   return (
     <div className="grid gap-x-8 gap-y-3 py-1 text-sm @panel-md:grid-cols-[auto_minmax(0,1fr)]">
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5">
@@ -509,6 +547,18 @@ function AgentDetail({
             <dt className="text-muted-foreground">Found at</dt>
             <dd className="truncate font-mono" title={status.path}>
               {status.path}
+            </dd>
+          </>
+        )}
+        {authStatus && status?.auth && status.auth.accounts.length > 0 && (
+          <>
+            <dt className="text-muted-foreground">{status.auth.accounts.length === 1 ? "Account" : "Accounts"}</dt>
+            <dd className="min-w-0 space-y-0.5">
+              {status.auth.accounts.map((account, i) => (
+                <div key={i} className="truncate" title={accountLine(account)}>
+                  {accountLine(account)}
+                </div>
+              ))}
             </dd>
           </>
         )}
