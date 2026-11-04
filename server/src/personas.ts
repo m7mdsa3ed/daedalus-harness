@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.js";
 import { OPENUI_FRAME_HEAD, OPENUI_FRAME_TAIL, OPENUI_GROUP_ORDER, OPENUI_GROUPS } from "./openui-prompt.js";
-import { usesPersonaFile, type AgentDef } from "./registry.js";
+import { personaMayUseEnv, usesPersonaFile, type AgentDef } from "./registry.js";
 import { globalRules, projectRules, type Rule } from "./rules.js";
 import type { TaskBrief } from "./task-threads.js";
 
@@ -12,11 +12,16 @@ import type { TaskBrief } from "./task-threads.js";
  * the thread's trailers below — one text, through whichever door the runtime
  * opens (`AgentDef.personaVia`, `{personaPrompt}`, `{personaFile}`).
  *
- *   - claude-agent-acp and the daedalus agent read AIR's
+ *   - claude-agent-acp and codex-acp take ACP's own `systemPrompt {mode:
+ *     "append", content}` on every `session/new`, load, resume and fork when
+ *     they advertise `sessionCapabilities.systemPrompt` (`"acp-system-prompt"`,
+ *     `AcpBridge.personaRequestFields`); an adapter that does not falls back to
+ *     the door below it.
+ *   - the daedalus agent (and claude-agent-acp as the fallback) reads AIR's
  *     `_meta.jetbrains.air.customInstructions` on every `session/new`, load and
  *     resume, appended to the runtime's own prompt rather than replacing it.
- *   - codex reads `developer_instructions` out of its config, through the
- *     `CODEX_CONFIG` env template.
+ *   - codex (as the fallback) reads `developer_instructions` out of its config,
+ *     through the `CODEX_CONFIG` env template.
  *   - opencode reads `instructions`, a list of *file paths*, out of
  *     `OPENCODE_CONFIG_CONTENT` — hence `writePersonaPrompt` below.
  */
@@ -71,9 +76,10 @@ export async function resolvePersonaSpawn(
   // taken away does not leave the old text on disk for the next spawn to point
   // at — see `writePersonaPrompt`.
   if (agent && usesPersonaFile(agent)) {
-    // Only an `"env"` door reads the file; for a `_meta` door this clears the
-    // copy an earlier spawn left (a row seeded before seed 29 still names it).
-    const file = writePersonaPrompt(sessionId, agent.personaVia === "env" ? spawn : undefined);
+    // Only a door that may reach the env reads the file (`"env"`, or
+    // `"acp-system-prompt"` falling back to it); for a `_meta` door this clears
+    // the copy an earlier spawn left (a row seeded before seed 29 still names it).
+    const file = writePersonaPrompt(sessionId, personaMayUseEnv(agent) ? spawn : undefined);
     if (spawn && file) spawn.file = file;
   }
   return spawn;

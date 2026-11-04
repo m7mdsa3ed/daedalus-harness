@@ -21,7 +21,7 @@ async function test(name: string, fn: () => Promise<void>) {
   }
 }
 
-async function resetAgents(rows: { id: string; env: Record<string, string>; seededVersion: number }[]) {
+async function resetAgents(rows: { id: string; env: Record<string, string>; seededVersion: number; personaVia?: "acp-meta" | "air-meta" | "env" | "acp-system-prompt" }[]) {
   await db.delete(agentsTable);
   for (const row of rows) await db.insert(agentsTable).values({ name: row.id, command: row.id, args: [], spawnCategories: null, ...row });
 }
@@ -97,6 +97,53 @@ await test("a behaviour switch writes its env only where it was turned", async (
   const spawn = resolveSpawn(off!, profile, project, "m", undefined, undefined, undefined, [], []);
   assert.equal(spawn.env.DAEDALUS_AGENT_HOLD_ON_ERROR, "0", "off writes the off spelling");
   assert.equal(spawn.env.DAEDALUS_AGENT_TITLES, undefined, "an untouched switch writes nothing");
+});
+
+// Seed 40: ACP's own `systemPrompt` as the spawn-instruction door for the two
+// runtimes whose adapters advertise it, with the old door kept as the fallback
+// — `"air-meta"` is what the bridge falls back to on its own, and codex's
+// `{personaPrompt}` key stays in the template so an adapter that does not
+// advertise the capability still gets its `developer_instructions`.
+await test("seed 40 seeds claude-code and codex on acp-system-prompt, and only those two", async () => {
+  await resetAgents([]);
+  await seedAgents();
+  assert.equal((await getAgent("claude-code"))!.personaVia, "acp-system-prompt");
+  assert.equal((await getAgent("codex"))!.personaVia, "acp-system-prompt");
+  assert.equal((await getAgent("opencode"))!.personaVia, "env", "opencode has no adapter advertising it");
+  assert.equal((await getAgent("daedalus"))!.personaVia, "air-meta", "the daedalus agent keeps AIR's key");
+  // The env fallback is declared by the template, not by the door's name.
+  assert.match((await getAgent("codex"))!.env.CODEX_CONFIG ?? "", /"developer_instructions":"\{personaPrompt\}"/);
+  assert.ok(
+    !Object.values((await getAgent("claude-code"))!.env).some((v) => v.includes("{personaPrompt}") || v.includes("{personaFile}")),
+    "claude-code's env names no persona placeholder, so its fallback is air-meta",
+  );
+});
+
+await test("seed 40 moves the seeded doors forward and leaves any other door alone", async () => {
+  await resetAgents([
+    { id: "claude-code", seededVersion: 39, env: { MY_OWN: "keep" }, personaVia: "air-meta" },
+    { id: "codex", seededVersion: 39, env: {}, personaVia: "env" },
+  ]);
+  await seedAgents();
+  assert.equal((await getAgent("claude-code"))!.personaVia, "acp-system-prompt", "air-meta was the seeded default");
+  assert.equal((await getAgent("claude-code"))!.env.MY_OWN, "keep", "env is the user's");
+  assert.equal((await getAgent("codex"))!.personaVia, "acp-system-prompt", "env was the seeded default");
+
+  await resetAgents([
+    { id: "claude-code", seededVersion: 27, env: {}, personaVia: "acp-meta" },
+    { id: "codex", seededVersion: 27, env: {} },
+  ]);
+  await seedAgents();
+  assert.equal((await getAgent("claude-code"))!.personaVia, "acp-system-prompt", "the pre-28 default moves too");
+  assert.equal((await getAgent("codex"))!.personaVia, "acp-system-prompt", "a row with no door gets the new one");
+
+  await resetAgents([
+    { id: "claude-code", seededVersion: 39, env: {}, personaVia: "env" },
+    { id: "codex", seededVersion: 39, env: {}, personaVia: "air-meta" },
+  ]);
+  await seedAgents();
+  assert.equal((await getAgent("claude-code"))!.personaVia, "env", "a door that was never the seed's stays");
+  assert.equal((await getAgent("codex"))!.personaVia, "air-meta", "a door that was never the seed's stays");
 });
 
 console.log(`agent-seeds: ${passed} passed, ${failures.length} failed`);
