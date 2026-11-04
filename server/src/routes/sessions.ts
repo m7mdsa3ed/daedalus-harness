@@ -14,7 +14,7 @@ import { classifyGate, classifyPersona, personaLane } from "../persona-classify.
 import { readPersonaDecision } from "../side-models.js";
 import { getProject } from "../projects.js";
 import { getTask } from "../tasks-board.js";
-import { listAgentSessions } from "../session-list.js";
+import { archiveFilterOf, listAgentSessions } from "../session-list.js";
 import { listCalls } from "../model-calls/index.js";
 import { threadCwd, type SessionManager } from "../sessions.js";
 import * as git from "../git.js";
@@ -385,7 +385,11 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
    * the cwd it ran in so the client can group by project.
    */
   app.post("/api/sessions/importable", async (c) => {
-    const { profileId, agentId: askedAgent, projectId } = await c.req.json();
+    const { profileId, agentId: askedAgent, projectId, archived: askedArchived } = await c.req.json();
+    /* Archived sessions are left out unless asked for — `archived` in the
+       body or the query (`include` / `only`, or `true` for include). Sent to
+       the runtime only where it advertises the capability (`session-list.ts`). */
+    const archived = archiveFilterOf(askedArchived ?? c.req.query("archived"));
     const profile = await getProfile(profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     const agentId = resolveProfileAgent(profile, askedAgent);
@@ -394,7 +398,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     }
     const project = await getProject(projectId);
     if (!project) return c.json({ error: "unknown project" }, 404);
-    return c.json(await listAgentSessions(profile, agentId, project));
+    return c.json(await listAgentSessions(profile, agentId, project, { archived }));
   });
 
   /**

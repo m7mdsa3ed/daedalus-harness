@@ -2,6 +2,7 @@ import { inArray } from "drizzle-orm";
 import * as acp from "./acp.js";
 import { db, sessions as sessionsTable } from "./db/index.js";
 import { withAgentConnection } from "./probe.js";
+import { archiveAdvertised } from "./session-archive.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 
@@ -36,6 +37,10 @@ export interface ImportableSession {
   cwd: string;
   title: string | null;
   updatedAt: string | null;
+  /** Whether the runtime has archived it (v1.29 `SessionInfo.archived`),
+      said only by a runtime that advertises `sessionCapabilities.archive`;
+      null where it does not report one. */
+  archived: boolean | null;
   /** Already a thread here, so the UI offers Open (or says Trash) rather than
       importing it a second time. */
   existing?: { sessionId: string; deleted: boolean };
@@ -46,9 +51,24 @@ export interface SessionListing {
       binary, or an agent that never implemented `session/list`. That is an
       answer, not a failure: the dialog says so in words. */
   supported: boolean;
+  /** Whether the runtime can tell archived sessions apart
+      (`sessionCapabilities.archive`): with it, `archived` filtered the list
+      and every row says its state; without it the filter was not sent. */
+  archive: boolean;
   sessions: ImportableSession[];
   /** The page budget ran out before the agent did. */
   truncated: boolean;
+}
+
+/** ACP's `SessionArchiveFilter`, the three values the schema names. */
+export type ArchiveFilter = "exclude" | "include" | "only";
+
+/** A request's `archived` as a filter: the schema's words, `true` for
+    `include` (the natural query-string spelling), anything else the default. */
+export function archiveFilterOf(value: unknown): ArchiveFilter {
+  if (value === "include" || value === "only") return value;
+  if (value === true || value === "true" || value === "1") return "include";
+  return "exclude";
 }
 
 /** Two tabs scanning the same pair at once spawn one agent, not two. There is
@@ -59,11 +79,12 @@ export function listAgentSessions(
   profile: Profile,
   agentId: string,
   project: Project,
+  { archived = "exclude" }: { archived?: ArchiveFilter } = {},
 ): Promise<SessionListing> {
-  const key = `${profile.id}:${agentId}`;
+  const key = `${profile.id}:${agentId}:${archived}`;
   const running = inflight.get(key);
   if (running) return running;
-  const run = runListing(profile, agentId, project).finally(() => inflight.delete(key));
+  const run = runListing(profile, agentId, project, archived).finally(() => inflight.delete(key));
   inflight.set(key, run);
   return run;
 }
@@ -72,6 +93,7 @@ async function runListing(
   profile: Profile,
   agentId: string,
   project: Project,
+  archived: ArchiveFilter,
 ): Promise<SessionListing> {
   const listing = await withAgentConnection(
     profile,
@@ -84,8 +106,15 @@ async function runListing(
       // The capability is the agent saying whether the question can be asked at
       // all. Absent means no, and no is a sentence the UI prints.
       if (!init.agentCapabilities?.sessionCapabilities?.list) {
-        return { supported: false, sessions: [], truncated: false };
+        return { supported: false, archive: false, sessions: [], truncated: false };
       }
+      /* The filter goes out only to a runtime that advertised the archive
+         capability — the schema says an agent MUST answer -32602 to a value
+         it does not support, so sending it blind would fail the whole list.
+         Without the capability the default (`exclude`) is what the agent
+         does anyway, and `only` has nothing to answer. */
+      const archive = archiveAdvertised(init.agentCapabilities);
+      if (!archive && archived === "only") return { supported: true, archive, sessions: [], truncated: false };
       const found: acp.SessionInfo[] = [];
       let cursor: string | null = null;
       let truncated = false;
@@ -96,7 +125,7 @@ async function runListing(
            has never heard of is offered too (with a project to create). */
         const response: acp.ListSessionsResponse = await agent.request(
           acp.methods.agent.session.list,
-          { cursor },
+          { cursor, ...(archive ? { archived } : {}) },
         );
         found.push(...response.sessions);
         bytes += JSON.stringify(response.sessions).length;
@@ -115,14 +144,14 @@ async function runListing(
         .slice(0, MAX_LIST_SESSIONS)
         .map(toImportable)
         .sort((a, b) => (Date.parse(b.updatedAt ?? "") || 0) - (Date.parse(a.updatedAt ?? "") || 0));
-      return { supported: true, sessions, truncated: truncated || found.length > MAX_LIST_SESSIONS };
+      return { supported: true, archive, sessions, truncated: truncated || found.length > MAX_LIST_SESSIONS };
     },
   ).catch((error: unknown) => {
     /* An agent that advertised the capability and then refused the method is
        saying the same thing the missing capability says. Anything else is a
        real failure and belongs to the caller. */
     if (error instanceof acp.RequestError && error.code === -32601) {
-      return { supported: false, sessions: [], truncated: false };
+      return { supported: false, archive: false, sessions: [], truncated: false };
     }
     throw error;
   });
@@ -136,6 +165,7 @@ function toImportable(info: acp.SessionInfo): ImportableSession {
     cwd: info.cwd,
     title: info.title ?? null,
     updatedAt: info.updatedAt ?? null,
+    archived: info.archived ?? null,
   };
 }
 

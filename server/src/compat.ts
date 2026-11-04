@@ -67,6 +67,22 @@ export const FEATURES = [
   /** `GET /api/decision/persona/prompt`: the body the persona classifier sends
       its decision model, for Settings › AI to show. */
   "personaPrompt",
+  /** `AgentStatus.auth`: the agent's own answer to ACP `auth/status` (an
+      `AuthState` and the accounts it holds, display only), read by the status
+      probe when `initialize` advertises `agentCapabilities.auth.status`. The
+      CLI reading stays the fallback and `authenticated` is still said. */
+  "agentAuthStatus",
+  /** `POST /api/sessions/importable` takes `archived` (`exclude` by default,
+      `include` or `only`) and each row says `archived` where the runtime
+      advertises `sessionCapabilities.archive`; `SessionListing.archive` says
+      whether it did. Trashing a thread sends the runtime `session/archive`
+      for its session, best effort, and restoring sends `session/unarchive`. */
+  "sessionArchive",
+  /** `subagent_update.cwd` and `.additionalDirectories` on the wire: where the
+      runtime placed a child (the RFD's own keys; the draft `SubagentSpawned`
+      type declares the same two for old journals and the older-adapter
+      translation). Absent means the child inherits its parent's. */
+  "subagentCwd",
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
