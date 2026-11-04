@@ -8,7 +8,9 @@ const LAUNCH = "toolu_launch", SEND1 = "toolu_send1", SEND2 = "toolu_send2", AGE
 // What the patched replay seeds: the pre-restart child, finished, under its launch id.
 const session = { nativeSubagentsByTaskId: new Map([[AGENT, { sessionId: "root:replay-subagent:" + LAUNCH, parentSessionId: "root", parentToolUseId: LAUNCH, name: "frontend", task: "t", announced: true, terminalState: "disconnected" }]]) };
 const published = [];
-const rt = new NativeSubagentRuntime(true, "root", session, async (n) => published.push(n), { log() {}, error() {} });
+// 0.100: the first argument is the form ("air" | "rfd" | undefined = off), not an enabled flag.
+// "air" is the form this harness is on (CLIENT_CAPABILITIES declares _meta.jetbrains.air).
+const rt = new NativeSubagentRuntime("air", "root", session, async (n) => published.push(n), { log() {}, error() {} });
 const deliver = async (n) => published.push(n);
 // The SDK's resume: task_started under the SendMessage id.
 await rt.taskStarted({ taskId: AGENT, toolUseId: SEND1, subagentType: "general-purpose", description: "Frontend" }, deliver);
