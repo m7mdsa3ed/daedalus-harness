@@ -1,3 +1,4 @@
+import { recordAgentCapabilities } from "./agent-capabilities.js";
 import { eq } from "drizzle-orm";
 import * as acp from "./acp.js";
 import { createHash } from "node:crypto";
@@ -254,7 +255,15 @@ export async function withAgentConnection<T>(
         notification, an elicitation. */
     handlers?: (app: ReturnType<typeof acp.client>) => void;
   },
-  fn: (agent: acp.ClientContext, init: acp.InitializeResponse) => Promise<T>,
+  fn: (
+    agent: acp.ClientContext,
+    init: acp.InitializeResponse,
+    /** Aborted when the probe gives up — the deadline, `opts.signal`, the
+        process dying. Hand it to every request made inside (`cancellationSignal`
+        with `stopWaitingOnCancel`), so the request rejects with the race rather
+        than staying pending on a connection about to be closed. */
+    signal: AbortSignal,
+  ) => Promise<T>,
 ): Promise<T> {
   if (opts.materialize) await prepareWorkspace(agentId, project, opts.materialize.allowlist);
   const spec = await resolveAgentSpawn(profile, agentId, project);
@@ -282,20 +291,30 @@ export async function withAgentConnection<T>(
   });
   died.catch(() => {});
 
-  /* A cooperative `cancellationSignal` would not help here: it still waits for
-     the peer's eventual response, and a wedged agent has none to give. */
+  /* The race decides the wait; the controller releases the request on the
+     losing side. A cooperative `cancellationSignal` alone would still wait for
+     the peer's eventual response, which a wedged agent has none to give — so
+     every request here goes out with `stopWaitingOnCancel`, which rejects at
+     once and lets the SDK drop whatever the agent answers later. */
+  const giveUp = new AbortController();
+  const fail = (error: Error): Error => {
+    giveUp.abort(error);
+    return error;
+  };
+  died.catch((error: unknown) => giveUp.abort(error));
   let expire: ReturnType<typeof setTimeout>;
   const deadline = new Promise<never>((_, reject) => {
-    expire = setTimeout(() => reject(new Error("the agent did not answer in time")), opts.timeoutMs ?? PROBE_TIMEOUT_MS);
+    expire = setTimeout(() => reject(fail(new Error("the agent did not answer in time"))), opts.timeoutMs ?? PROBE_TIMEOUT_MS);
     expire.unref();
   });
   deadline.catch(() => {});
 
   const aborted = new Promise<never>((_, reject) => {
-    if (opts.signal?.aborted) reject(new Error("cancelled"));
-    opts.signal?.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+    if (opts.signal?.aborted) reject(fail(new Error("cancelled")));
+    opts.signal?.addEventListener("abort", () => reject(fail(new Error("cancelled"))), { once: true });
   });
   aborted.catch(() => {});
+  const requestOptions: acp.SendRequestOptions = { cancellationSignal: giveUp.signal, stopWaitingOnCancel: true };
 
   const app = acp.client({ name: opts.name });
   if (opts.onUpdate)
@@ -305,16 +324,24 @@ export async function withAgentConnection<T>(
   try {
     return await Promise.race([
       app.connectWith(agentStream(proc), async (agent) => {
-        const init = await agent.request(acp.methods.agent.initialize, {
-          protocolVersion: acp.PROTOCOL_VERSION,
-          /* The same claims a thread's process makes, so the probe is
-             answered in the shape a live thread will be: an AIR client gets
-             concrete model/effort rows and a `recommendedValue`, anything else
-             Claude Code's `default` rows. Nothing here serves a prompt, so the
-             claims about output and plans cost nothing. */
-          clientCapabilities: CLIENT_CAPABILITIES,
-        });
-        return fn(agent, init);
+        const init = await agent.request(
+          acp.methods.agent.initialize,
+          {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            /* The same claims a thread's process makes, so the probe is
+               answered in the shape a live thread will be: an AIR client gets
+               concrete model/effort rows and a `recommendedValue`, anything else
+               Claude Code's `default` rows. Nothing here serves a prompt, so the
+               claims about output and plans cost nothing. */
+            clientCapabilities: CLIENT_CAPABILITIES,
+          },
+          requestOptions,
+        );
+        /* Measured here too: the draft's probe is usually the first handshake
+           a runtime gives after boot, and the thread's spawn reads it
+           (`personaGoesInEnv`). */
+        recordAgentCapabilities(agentId, init.agentCapabilities);
+        return fn(agent, init, giveUp.signal);
       }),
       died,
       deadline,
@@ -360,12 +387,16 @@ async function runProbe(
     agentId,
     project,
     { name: "daedalus-probe", materialize: { allowlist }, onUpdate: (n) => watcher.onUpdate(n) },
-    async (agent, init) => {
-      const created = await agent.request(acp.methods.agent.session.new, {
-        cwd: project.cwd,
-        mcpServers: [],
-      });
-      return await sweep(agent, agentId, init, created, watcher);
+    async (agent, init, signal) => {
+      const created = await agent.request(
+        acp.methods.agent.session.new,
+        {
+          cwd: project.cwd,
+          mcpServers: [],
+        },
+        { cancellationSignal: signal, stopWaitingOnCancel: true },
+      );
+      return await sweep(agent, agentId, init, created, watcher, signal);
     },
   );
 }
@@ -394,9 +425,18 @@ async function probeShared(
   const watcher = commandsWatcher();
   const sink = { ...SINK, ownsSession: (id: string) => id === sessionId, onUpdate: (n: SessionNotification) => watcher.onUpdate(n) };
   conn.attach(sink);
+  /* The same pair as `withAgentConnection`: the race ends the wait, and the
+     controller it aborts ends the request, so the pooled process is not left
+     holding a `session/new` the SDK still has a slot for. The process itself
+     is never killed here — other threads may be on it. */
+  const giveUp = new AbortController();
   let expire: ReturnType<typeof setTimeout>;
   const deadline = new Promise<never>((_, reject) => {
-    expire = setTimeout(() => reject(new Error("the agent did not answer in time")), PROBE_TIMEOUT_MS);
+    expire = setTimeout(() => {
+      const error = new Error("the agent did not answer in time");
+      giveUp.abort(error);
+      reject(error);
+    }, PROBE_TIMEOUT_MS);
     expire.unref();
   });
   try {
@@ -404,14 +444,18 @@ async function probeShared(
       (async () => {
         const init = await conn.initialized;
         const created = await conn.create(sink, () =>
-          conn.rpc.agent.request(acp.methods.agent.session.new, {
-            cwd: project.cwd,
-            mcpServers: [],
-            _meta: AcpBridge.sessionEnvMeta(env),
-          }),
+          conn.rpc.agent.request(
+            acp.methods.agent.session.new,
+            {
+              cwd: project.cwd,
+              mcpServers: [],
+              _meta: AcpBridge.sessionEnvMeta(env),
+            },
+            { cancellationSignal: giveUp.signal, stopWaitingOnCancel: true },
+          ),
         );
         sessionId = created.sessionId;
-        return await sweep(conn.rpc.agent, agentId, init, created, watcher);
+        return await sweep(conn.rpc.agent, agentId, init, created, watcher, giveUp.signal);
       })(),
       deadline,
     ]);
@@ -428,6 +472,8 @@ async function sweep(
   init: acp.InitializeResponse,
   created: acp.NewSessionResponse,
   watcher: ReturnType<typeof commandsWatcher>,
+  /** The probe's give-up signal; every `session/set_config_option` carries it. */
+  signal?: AbortSignal,
 ): Promise<AgentOptions> {
   const configOptions = created.configOptions ?? [];
 
@@ -447,14 +493,21 @@ async function sweep(
     }
     for (const choice of choices.slice(0, MAX_MODEL_SWEEP)) {
       try {
-        const set = await agent.request(acp.methods.agent.session.setConfigOption, {
-          sessionId: created.sessionId,
-          configId: model.id,
-          value: choice.value,
-        });
+        const set = await agent.request(
+          acp.methods.agent.session.setConfigOption,
+          {
+            sessionId: created.sessionId,
+            configId: model.id,
+            value: choice.value,
+          },
+          signal ? { cancellationSignal: signal, stopWaitingOnCancel: true } : undefined,
+        );
         if (set.configOptions) byModel[choice.value] = set.configOptions;
-      } catch {
+      } catch (error) {
         // A model the agent will not select is one the menu can fall back on.
+        // The probe giving up is not that: stop sweeping and let the race's
+        // own error be the answer.
+        if (signal?.aborted) throw error;
       }
     }
   }

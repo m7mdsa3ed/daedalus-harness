@@ -164,7 +164,10 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
         ...lost,
         error: {
           ...lost.error,
-          message: `The agent could not load this thread's history (session ${lost.acpSessionId}), so it continues in a fresh session without it. ${lost.error.message}`,
+          message:
+            lost.reason === "not_found"
+              ? `The agent no longer holds this thread's session (${lost.acpSessionId}: not found in its store), so it continues in a fresh session without the history. ${lost.error.message}`
+              : `The agent could not load this thread's history (session ${lost.acpSessionId}), so it continues in a fresh session without it. ${lost.error.message}`,
         },
       };
     },

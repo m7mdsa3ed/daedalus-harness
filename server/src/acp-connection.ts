@@ -1,10 +1,12 @@
+import { recordAgentCapabilities } from "./agent-capabilities.js";
 import * as acp from "./acp.js";
 import {
   CLIENT_CAPABILITIES,
   PAUSED_NOTIFICATION,
   RETRY_NOTIFICATION,
-  SUBAGENT_UPDATE_METHOD,
+  SESSION_UPDATE_EXT_METHOD,
   agentStream,
+  isSessionNotFound,
   parsePausedParams,
   parseRetryParams,
   parseSessionNotification,
@@ -13,6 +15,7 @@ import {
   type SessionNotification,
   type SpawnSpec,
 } from "./acp-bridge.js";
+import { translateDraftNotification } from "./subagent-update.js";
 import { durable, type Handle } from "./sandbox/index.js";
 import {
   dropProcessState,
@@ -101,6 +104,12 @@ export class AcpConnection {
   exited = false;
   /** Sent its SIGTERM: not handed out again, though it has not exited yet. */
   private killed = false;
+  /** Aborted when the process is killed, exits, or (a connection of its own)
+      its bridge closes. `initialize` is sent with it, so a handshake that gave
+      up on the process (`AcpBridge.handshake`'s clock, which kills a shared
+      one) rejects the one request every session is waiting on at once rather
+      than leaving it pending on a connection nobody will read again. */
+  private readonly lifetime = new AbortController();
 
   private readonly routes = new Set<ConnectionRoute>();
   /** `session/close` requests still in flight, by session id. A resume of the
@@ -142,24 +151,33 @@ export class AcpConnection {
     this.shared = shared;
     proc.on("exit", () => {
       this.exited = true;
+      this.lifetime.abort(new Error("the agent process exited"));
       this.forget();
     });
     // An unhandled 'error' on a ChildProcess takes the server down; each
     // session's own `wire` reports it, and a warm process nobody is on has
     // nobody to report it to.
-    proc.on("error", () => {
+    proc.on("error", (error: unknown) => {
       this.exited = true;
+      this.lifetime.abort(error);
       this.forget();
     });
     this.rpc = acp
       .client({ name: "daedalus" })
-      .onNotification(acp.methods.client.session.update, (ctx) =>
-        this.route(ctx.params.sessionId)?.onUpdate(ctx.params as SessionNotification),
-      )
-      // The RFD's subagent updates, re-addressed by `agentStream` — see
-      // SUBAGENT_UPDATE_METHOD. Same handler: they are session updates.
-      .onNotification(SUBAGENT_UPDATE_METHOD, parseSessionNotification, (ctx) =>
-        this.route(ctx.params.sessionId)?.onUpdate(ctx.params),
+      .onNotification(acp.methods.client.session.update, (ctx) => {
+        const route = this.route(ctx.params.sessionId);
+        if (!route) return;
+        /* The RFD's `subagent_update` is in the SDK's union, so it arrives
+           here and is the harness's canonical shape: forwarded as it is. */
+        route.onUpdate(ctx.params);
+      })
+      // Every session update the SDK's union does not carry, re-addressed by
+      // `agentStream` — see SESSION_UPDATE_EXT_METHOD. Same handler: they are
+      // session updates. The superseded draft subagent pair an older adapter
+      // still sends is one of them, and is said as `subagent_update` here
+      // (`subagent-update.ts`) so nothing downstream learns a second shape.
+      .onNotification(SESSION_UPDATE_EXT_METHOD, parseSessionNotification, (ctx) =>
+        this.route(ctx.params.sessionId)?.onUpdate(translateDraftNotification(ctx.params)),
       )
       .onRequest(acp.methods.client.session.requestPermission, (ctx) =>
         (this.route(ctx.params.sessionId) ?? SINK).park<acp.RequestPermissionResponse>(
@@ -191,14 +209,23 @@ export class AcpConnection {
       this.initResult = adopted.initResult;
       this.saved = true;
       this.initialized = Promise.resolve(adopted.initResult);
+      recordAgentCapabilities(agentId, adopted.initResult.agentCapabilities);
     } else {
-      this.initialized = this.rpc.agent.request(acp.methods.agent.initialize, {
-        protocolVersion: acp.PROTOCOL_VERSION,
-        clientCapabilities: CLIENT_CAPABILITIES,
-      });
+      this.initialized = this.rpc.agent.request(
+        acp.methods.agent.initialize,
+        {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: CLIENT_CAPABILITIES,
+        },
+        { cancellationSignal: this.lifetime.signal, stopWaitingOnCancel: true },
+      );
       this.initialized.catch(() => {});
       this.initialized.then((init) => {
         this.initResult = init;
+        /* What this runtime can do, remembered by agent id: the next spawn of
+           it reads this to decide which door its persona takes before the
+           handshake can answer (`personaGoesInEnv`). */
+        recordAgentCapabilities(this.agentId, init.agentCapabilities);
         this.markDirty(true);
       }, () => {});
     }
@@ -333,6 +360,7 @@ export class AcpConnection {
     this.routes.delete(route);
     if (!this.shared) {
       this.rpc.close(reason);
+      this.lifetime.abort(reason);
       this.kill();
       return;
     }
@@ -341,7 +369,17 @@ export class AcpConnection {
       void this.initialized
         .then((init) => {
           if (!init.agentCapabilities?.sessionCapabilities?.close || !this.alive) return;
-          const closing = this.rpc.agent.request(acp.methods.agent.session.close, { sessionId }).catch(() => {});
+          /* Never rejects: `whenClosed` awaits it. A `-32002` is the agent
+             saying it already dropped the session (a crash took it, or a load
+             never adopted it) — exactly the end this asked for, so it is
+             silent. Anything else is a close that did not happen, and the
+             session may still be live in the agent's store: said, because a
+             later resume of the id will wait on this and then be answered
+             from memory without the `_meta` it carries. */
+          const closing = this.rpc.agent.request(acp.methods.agent.session.close, { sessionId }).catch((error: unknown) => {
+            if (isSessionNotFound(error, sessionId)) return;
+            console.warn(`session/close failed for ${sessionId} on ${this.agentId}`, error);
+          });
           this.closing.set(sessionId, closing);
           void closing.finally(() => {
             if (this.closing.get(sessionId) === closing) this.closing.delete(sessionId);
@@ -357,6 +395,7 @@ export class AcpConnection {
   kill(): void {
     if (this.exited) return;
     this.killed = true;
+    this.lifetime.abort(new Error("the agent process was killed"));
     this.forget();
     this.proc.kill("SIGTERM");
     setTimeout(() => {

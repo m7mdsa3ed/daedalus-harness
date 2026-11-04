@@ -28,7 +28,7 @@
     "openui:check": "pnpm --dir ../client openui:check"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "1.8.0",
+    "@agentclientprotocol/sdk": "2.4.0",
     "@ai-sdk/anthropic": "^4.0.87",
     "@ai-sdk/openai-compatible": "^3.0.77",
     "@ai-sdk/provider": "^4.0.33",
