@@ -248,6 +248,21 @@ export function personaRequestFields(
   return { meta: { systemPrompt: { append: persona.prompt } } };
 }
 
+/** The one line the log gets per handshake request saying which door the
+    persona took — the positive half of `PersonaRequestFields.warn`, so a
+    runtime that advertised `systemPrompt` is as visible as one that did not. */
+export function describePersonaDoor(fields: PersonaRequestFields, personaInEnv: boolean): string {
+  if (fields.systemPrompt) {
+    const chars = fields.systemPrompt.content.reduce((n, block) => n + (block.type === "text" ? block.text.length : 0), 0);
+    return `systemPrompt (mode ${fields.systemPrompt.mode}, ${chars} chars)`;
+  }
+  if (personaInEnv) return "env (placed in the spawn env; nothing on the request)";
+  const meta = fields.meta as { jetbrains?: unknown; systemPrompt?: unknown };
+  if (meta.jetbrains) return "AIR _meta.jetbrains.air.customInstructions";
+  if (meta.systemPrompt) return "_meta.systemPrompt (acp-meta)";
+  return "none";
+}
+
 /** The session updates the SDK's `SessionUpdate` union does not carry:
     protocol.ts's own variants (the draft subagent pair, the AIR async-task
     lifecycle, `_daedalus/*`). What `SESSION_UPDATE_EXT_METHOD` delivers. */
@@ -1206,6 +1221,7 @@ export class AcpBridge implements ConnectionRoute {
   private personaFields(): PersonaRequestFields {
     const fields = personaRequestFields(this.persona, this.personaVia, this.personaInEnv, this.agentCapabilities);
     if (fields.warn) console.warn(fields.warn);
+    if (this.persona) console.info(`[acp:${this.conn.agentId}] persona door: ${describePersonaDoor(fields, this.personaInEnv)}`);
     return fields;
   }
 
