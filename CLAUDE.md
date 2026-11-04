@@ -42,12 +42,15 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   push drops** — anything the server reads must be declared there. The FTS index is maintained
   outside Drizzle.
 - **Agents spawn by their globally installed binary, never `npx`** (~0.4s vs ~3.2s, and a
-  thread spawns on create, revive and every profile/model change). codex-acp **≥ 2.0.1**,
-  claude-agent-acp **≥ 0.89.0** — the AIR shape below (and rules on its `customInstructions` key) (and `ToolCall.name`, the tool's own
-  name, which `lib/tools/naming.ts` prefers over a vendor `_meta` block). Claude's
-  `workflow_progress` passthrough and its `SendMessage` resume fixes (a resumed child is keyed on its
-  launch id, not the SendMessage's, and a load registers the replayed children) are
-  `server/scripts/patch-claude-acp.mjs` (check: `patch-claude-acp.check.mjs`), re-run per upgrade.
+  thread spawns on create, revive and every profile/model change). codex-acp **≥ 2.0.1**
+  (≥ 2.5.0 for the `systemPrompt` door; older falls back to env), claude-agent-acp
+  **≥ 0.100.0** — the AIR shape below, `ToolCall.name` (the tool's own name, which
+  `lib/tools/naming.ts` prefers over a vendor `_meta` block), `systemPrompt`, `auth/status`
+  and `session/archive`. Claude's `workflow_progress` passthrough and its `SendMessage` resume
+  fixes (a resumed child is keyed on its launch id, not the SendMessage's, and a load
+  registers the replayed children) are `server/scripts/patch-claude-acp.mjs` (check:
+  `patch-claude-acp.check.mjs`), re-run per upgrade; **it refuses an adapter below 0.100.0**
+  (it anchors on `dist/subagent-replay.js`) and repairs an install the older script patched.
   Seeding backfills new fields but **never** replaces name/command/args/env — those are the
   user's, and so are `install`/`icon` (descriptive, not protocol).
 - **What the harness believes about a runtime is a column on its row, never a comparison
@@ -118,8 +121,17 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   definite answer blocks (`incompatible-server.tsx`), never loading/offline. The server never
   self-updates. → `docs/protocol.md` "Versioning".
 - **The ACP SDK is named in one file per half** — `server/src/acp.ts`, `agent/src/acp.ts`,
-  the client's `@daedalus/acp`. Import `acp` from there, never from the package. The version
-  is pinned exactly in all three manifests.
+  the client's `@daedalus/acp` — and both barrels are over **`@agentclientprotocol/sdk/unstable`**
+  (2.4.0, pinned exactly in all three manifests; the entry that types `subagents`/`plan` and
+  carries `subagent_update`, `session/resume`, `fork`, `archive`, `auth/status`, `systemPrompt`).
+  Import `acp` from there, never from the package. **The SDK's `SessionUpdate` union is closed
+  and the reroute is derived from it, never hand-kept**: the server barrel reads the tag set
+  off the SDK's own schema (`readSdkSessionUpdateTags`), and `rewriteInbound` re-addresses any
+  `session/update` whose tag is outside it to `_daedalus/session_update_ext`; a tag in the
+  union goes through the typed handler. **Every request raced against a clock carries
+  `{cancellationSignal, stopWaitingOnCancel: true}`** (handshake, prompt, probe); a `-32002`
+  naming the id is `isSessionNotFound` → `historyLost.reason: "not_found"`, and a transport
+  failure or the clock firing takes no load-or-fresh fallback. → `docs/protocol.md` "The SDK seam".
 - **`session_config` is absolute — never make it a delta.** Replay start is *stated* on
   `attached`, never inferred. **Windows and `load_earlier` pages are counted in steps
   (turns), never events** — and a window opens at a turn boundary, so the gap above it comes
@@ -208,8 +220,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   items where the thread's own are meant. **A running child whose spawn says
   `capabilities.cancel` has a Stop on its row** (`POST /api/sessions/:id/subagents/:childId/cancel`):
   an ask is cancelled through its run (the parent is told), a runtime's own child gets ACP
-  `session/cancel` on its id; a workflow step is its card's to stop, never its row's. OpenCode 2's children arrive on its own `opencode/session/child_update`, translated on the
-  way in — nothing downstream learns a fourth shape. The Daedalus agent's
+  `session/cancel` on its id; a workflow step is its card's to stop, never its row's. **The
+  canonical shape is the RFD's `subagent_update`** (in the SDK union, typed path, `cwd` and
+  `additionalDirectories` carried as a patch — feature `subagentCwd`); the draft pair
+  (`subagent_spawned`/`subagent_state_update`) and OpenCode 2's `opencode/session/child_update`
+  are translated INTO it on the way in (`server/src/subagent-update.ts`, `disconnected` →
+  the extension state `_daedalus/disconnected`), the pair stays declared because old journals
+  replay it, and the client reads both into one tree — nothing downstream learns a second shape. The Daedalus agent's
   `task` children have stable ids and saved conversation state: use `list_agents` to find a
   child and `send_message` to follow up. A stopped or failed child resumes from its last
   complete model/tool step; a running child rejects a message instead of racing. This resumes
@@ -361,10 +378,17 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   everywhere. Personas are no longer copied into commands.
 - **Rules ride the spawn-instruction doors** (`AgentDef.personaVia`, `{personaPrompt}`,
   `{personaFile}`): `server/src/rules.ts`, one global block plus one per
-  project, beneath the thread's persona, plus the spawn trailers. Spawn-time — a change costs a respawn. Claude Code's and the Daedalus agent's door is AIR's
-  `_meta.jetbrains.air.customInstructions` (`"air-meta"`, re-sent on new/load/resume; the
-  bridge logs a runtime that never advertised it); **codex stays on `"env"`** because codex-acp reads that key on
-  `session/new` only, so a revived thread would never get a change.
+  project, beneath the thread's persona, plus the spawn trailers. Spawn-time — a change costs a
+  respawn. **Claude Code and codex are seeded `"acp-system-prompt"`** (seed 40): ACP's own
+  `systemPrompt {mode: "append", content}` on `session/new`, `load`, `resume` and `fork`, sent
+  **only when the live `initialize` advertises `sessionCapabilities.systemPrompt`**; the
+  fallback is read off the row, never the id — a template naming `{personaPrompt}`/`{personaFile}`
+  is the `"env"` door (codex's `developer_instructions`, read on `session/new` only), anything
+  else is `"air-meta"` (`_meta.jetbrains.air.customInstructions`, the Daedalus agent's own door;
+  the bridge logs a runtime that never advertised it). Env is fixed before the handshake answers,
+  so the env half is decided on the runtime's **last measured** `initialize`
+  (`server/src/agent-capabilities.ts`): unmeasured or absent → env, present → `systemPrompt`.
+  **One door per spawn, never two** (`personaRequestFields`) — claude-agent-acp joins both texts.
 - **Every agent gets a virtual "Default" profile** (`default:<agentId>`) with no credentials
   and deliberately no models. Never written to `data/`, uneditable.
 - **A draft cannot ask a process that does not exist**: option sets come from a live session

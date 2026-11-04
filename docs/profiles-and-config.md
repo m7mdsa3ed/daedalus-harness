@@ -439,8 +439,8 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `/api/personas`, the harness MCP's `library_*` tools); a thread names one in
   `sessions.persona_id`, a project's new threads start on `projects.default_persona_id`.
 - **It is spawn text.** `resolvePersonaSpawn` puts it first, the rules beneath it, the spawn
-  trailers after, and every door carries the one text (`personaVia`: AIR `customInstructions`,
-  `{personaPrompt}`, `{personaFile}`). The row is read at spawn, so an edit reaches a thread on
+  trailers after, and every door carries the one text (`personaVia`: ACP `systemPrompt`, AIR
+  `customInstructions`, `{personaPrompt}`, `{personaFile}` — see "Rules" below). The row is read at spawn, so an edit reaches a thread on
   its next respawn and a deleted persona reads as none — no foreign key, no cascade.
 - **A pick on a started thread is taken at once and said in the next message, not staged.**
   The persona heads the system prompt, so a respawn onto a new one sends a new prefix and the
@@ -458,8 +458,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - **Model and effort stay the profile's.** The first personas carried a thinking budget and
   an effort; those columns are still declared (a push would drop them) and never read.
 - **A workflow step inherits its parent's persona; an ask does not** — the asked pair works
-  from the brief alone. Codex reads the env door on `session/new` only, so a revived Codex
-  thread keeps the persona it started with, as it does rules.
+  from the brief alone. A Codex thread on the env fallback (its adapter not advertising
+  `systemPrompt`) reads that door on `session/new` only, so a revived one keeps the persona it
+  started with, as it does rules; on the `systemPrompt` door a revive carries the current one.
 
 ## Saved prompts (gone)
 
@@ -476,21 +477,48 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   doors.** Rows in the `rules` table — global (`project_id` null, Settings › Rules) and
   per project — that every thread spawns with. The spawn reads both layers, global first
   (`sessions.ts`), and `resolvePersonaSpawn` joins them with the spawn trailers into one
-  text, so each runtime carries it through the door its row names — AIR's
-  `_meta.jetbrains.air.customInstructions` (`"air-meta"`: claude-code since seed 28, the
-  daedalus agent since seed 29), `_meta.systemPrompt.append` (`"acp-meta"`, still
-  honoured), `{personaPrompt}`, `{personaFile}` — and no door learns rules exist.
-  **Spawn-time**: live threads pick a change up on their next respawn, which
-  `session/resume`/`session/load` make cheap — both carry the `_meta` again. The bridge
-  checks the runtime advertised `customInstructions` at `initialize` and logs when an
-  `"air-meta"` row's runtime did not.
-- **The AIR key is not a door for codex, though codex-acp reads it.** It passes
-  `customInstructions` to `thread/start` alone — `session/resume`, `session/load` and fork
-  carry none — so a rules change would reach a new Codex thread and never a revived one,
-  while `developer_instructions` in `CODEX_CONFIG` is re-read on every spawn. claude-agent-acp
-  reads it in `createSession`, which serves new, load and resume alike, and appends it to the
-  `claude_code` preset exactly as `systemPrompt.append` did; it needs ≥ 0.89, and an older
-  adapter ignores the key (rules silently lost), which is why the minimum moved.
+  text, so each runtime carries it through the door its row names (`AgentDef.personaVia`,
+  `PersonaVia` in `registry.ts`) — **ACP's own `systemPrompt`** (`"acp-system-prompt"`:
+  claude-code and codex since seed 40), AIR's `_meta.jetbrains.air.customInstructions`
+  (`"air-meta"`: the daedalus agent since seed 29), `_meta.systemPrompt.append` (`"acp-meta"`,
+  still honoured), `{personaPrompt}`/`{personaFile}` (`"env"`: opencode) — and no door learns
+  rules exist. **Spawn-time**: live threads pick a change up on their next respawn, which
+  `session/resume`/`session/load` make cheap — every door but env is carried on both.
+- **The `"acp-system-prompt"` door is ACP v1.29's `systemPrompt {mode, content}` on
+  `session/new`, `load`, `resume` and `fork`** (the fork, as the spec's SHOULD asks), sent
+  **only when the live `initialize` answer advertises `sessionCapabilities.systemPrompt`** —
+  presence of the object; `null`/omitted is "not advertised" and the spec forbids sending it
+  then — and always in `append`, because `SessionSystemPromptCapabilities.mode` lists only the
+  *extra* modes an agent takes, so `append` is the one every advertiser supports. The content
+  is byte-for-byte what the other doors carry (`PersonaSpawn.prompt`: persona above rules
+  above trailers). **The fallback for an adapter that does not advertise it is read off the
+  row, never the id**: a template naming `{personaPrompt}`/`{personaFile}` is the `"env"` door
+  (codex's `developer_instructions` in `CODEX_CONFIG`, which seed 40 keeps for exactly this),
+  anything else is `"air-meta"` (claude-code). **Env is fixed at spawn, before the handshake
+  can answer, so the env half is decided on the runtime's last measured `initialize`**
+  (`server/src/agent-capabilities.ts`, an in-memory per-agent record fed by every
+  `AcpConnection` and the probe's one-shot client): never measured, or measured absent → env
+  carries the text and the handshake sends nothing (`ResolvedSpawn.personaInEnv` →
+  `BridgeOptions.personaInEnv`); measured present → env carries nothing and the handshake
+  sends `systemPrompt`. **One door per spawn, never two** — claude-agent-acp 0.100 joins
+  `systemPrompt` and `customInstructions` into one text, so both would be the rules said
+  twice. The placement is the pure `personaRequestFields(persona, personaVia, personaInEnv,
+  agentCapabilities)` in `acp-bridge.ts`; `resolveAgentSpawn` returns a `ResolvedSpawn` and
+  decides env placement through `personaGoesInEnv`; `resolvePersonaSpawn` writes the
+  `{personaFile}` for any door that may reach the env (`personaMayUseEnv`). The record is lost
+  on restart by design, so the first codex spawn after boot — before the draft's probe has
+  measured it — goes by env and sends no `systemPrompt`; a measurement landing between a
+  draft's prewarm and the real spawn changes the env, so `specKeyFor` mismatches and the
+  thread spawns cold, which is the prewarm's safe half. The bridge logs a runtime that
+  advertised neither `systemPrompt` nor AIR `customInstructions`, once per session request.
+- **Why the AIR key alone was not a door for codex.** codex-acp passes `customInstructions`
+  to `thread/start` alone — `session/resume`, `session/load` and fork carry none — so a rules
+  change would reach a new Codex thread and never a revived one, while `developer_instructions`
+  is re-read on every spawn; `systemPrompt` (codex-acp ≥ 2.5) is read on all four, which is
+  what lets codex leave env. claude-agent-acp reads both keys in `createSession`, which serves
+  new, load and resume alike (`customInstructions` since 0.89, `systemPrompt` since 0.100), and
+  an older adapter ignores a key it does not know (rules silently lost), which is why the
+  minimums moved.
 
 ## The virtual Default profile
 

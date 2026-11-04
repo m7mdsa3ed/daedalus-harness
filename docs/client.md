@@ -2379,3 +2379,22 @@ enabled ones), the landing chips and the palette name the same noun. Code is
   identity until a reading moves (`useReadings`, the `useThreadStatuses` shape), because
   `state.threads` is replaced on every streamed token. Rows are a table from `@panel-md` and
   cards below it — one element per row, the columns folding onto a meta line.
+- **Three ACP v1.29 readings, each gated on a feature name and drawn with the kit.**
+  Settings › Agents (`settings/agents.tsx`) draws `AgentStatus.auth` — the agent's own
+  `auth/status` answer (`AgentAuthReading` in `lib/settings.ts`) — as a `StatusBadge` beside the
+  measured Installed/version badge under `useFeature("agentAuthStatus")`: `authenticated` →
+  "Logged in", `unauthenticated` → warn "Not logged in", `not_required` → "No login needed",
+  `unknown` → "Login state unknown", the accounts in its title and as an "Account(s)" row of the
+  expanded detail; with no protocol reading the old CLI-derived `authenticated === false` warn
+  badge still draws, so the two never stand side by side. The Import dialog
+  (`import-threads.tsx`, `lib/import-sessions.ts`) has an "Include archived sessions" `Switch`
+  under the pair row behind `useFeature("sessionArchive")` — it sends `archived: "include"`,
+  survives `reset()` like the filters and re-scans a list already on screen; a row with
+  `archived === true` wears a neutral "Archived" badge, and when the listing says
+  `archive: false` the count line says the agent cannot tell archived sessions apart. The
+  subagent row (`SubagentStep`, `useSubagentPlace`) and the `/graph` worker node say `in <dir>`
+  from `subagent_update.cwd` (`useFeature("subagentCwd")`), relative to the project's cwd through
+  the pure `lib/thread/subagent-cwd.ts` `relativeCwd` (`.` for the root, absolute when outside;
+  an isolated thread's worktree reads as its `.daedalus/worktrees/<id>/…` path). The reducer
+  patches `cwd`/`additionalDirectories` onto the `SubagentItem` (omitted = keep, `null` =
+  cleared); `additionalDirectories` is stored and not yet drawn.
