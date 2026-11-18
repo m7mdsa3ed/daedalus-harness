@@ -127,7 +127,7 @@ export function HunkDiff({
         ) : file.head.length === 0 ? (
           <Empty className="m-3">No changes.</Empty>
         ) : (
-          <pre className="px-3 py-4 font-mono text-xs whitespace-pre-wrap text-muted-foreground">{file.head.join("\n")}</pre>
+          <pre className="px-3 py-4 font-mono text-xs whitespace-pre-wrap wrap-anywhere text-muted-foreground">{file.head.join("\n")}</pre>
         )
       ) : (
         file.hunks.map((hunk, h) => {

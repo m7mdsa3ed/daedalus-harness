@@ -144,14 +144,20 @@ export function useFollowStream(enabled: boolean): FollowStream {
      The observer already batches a frame's resizes into one callback, so the
      write is still one per frame — and reading `scrollHeight`/`clientHeight`
      after layout does not force a reflow, which is what the old rAF was there
-     to avoid. */
+     to avoid.
+
+     The content is observed by its border box, not the default content box:
+     its bottom padding is the docked composer's reserve (`--composer-dock-h`),
+     and a composer that grows — a shelf row arriving, the box taking a second
+     line — grows only that padding. Content-box observation never heard it, so
+     a pinned tail was left under the composer by exactly the growth. */
   React.useEffect(() => {
     if (!enabled || !viewport || !content) return
     const correct = () => {
       if (pinnedRef.current) stick(viewport)
     }
     const observer = new ResizeObserver(correct)
-    observer.observe(content)
+    observer.observe(content, { box: "border-box" })
     observer.observe(viewport)
     correct()
     return () => observer.disconnect()
