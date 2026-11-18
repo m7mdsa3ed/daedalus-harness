@@ -16,12 +16,19 @@ import { buildRows, subagentLabel, type Row, type SubagentGroup } from "../trans
 import type { AgentState } from "./statuses"
 import { relativeCwd } from "./subagent-cwd"
 
-export type GraphScope = "active" | "all"
+export type GraphScope = "active" | "needs-you" | "all"
+
+/** What a node stands for, so a reader of the graph (the detail panel) need
+    not parse its id. */
+export type GraphNodeKind = "project" | "thread" | "run" | "worker" | "pending" | "fold"
 
 export interface ThreadGraphNode extends FlowchartNode {
+  kind: GraphNodeKind
   /** The thread a click opens: the node's own, or the parent of a worker
       that has no thread of its own. */
   open?: string
+  /** A project node's project. */
+  projectId?: string
 }
 
 export interface ThreadGraph {
@@ -41,6 +48,12 @@ export const BATCH_FOLD = 6
 
 const ACTIVE: ReadonlySet<AgentState> = new Set(["running", "waiting", "held"])
 export const isActiveState = (state: AgentState): boolean => ACTIVE.has(state)
+/* What a person has to act on: a question, a held turn, a turn that failed. */
+const NEEDS_YOU: ReadonlySet<AgentState> = new Set(["waiting", "held", "failed"])
+export const needsYouState = (state: AgentState): boolean => NEEDS_YOU.has(state)
+
+const inScope = (scope: GraphScope, state: AgentState): boolean =>
+  scope === "active" ? isActiveState(state) : scope === "needs-you" ? needsYouState(state) : state !== "archived"
 
 const STATE_TONE: Record<AgentState, FlowchartNode["tone"]> = {
   running: "running",
@@ -50,7 +63,7 @@ const STATE_TONE: Record<AgentState, FlowchartNode["tone"]> = {
   idle: "pending",
   archived: "pending",
 }
-const STATE_HINT: Record<AgentState, string> = {
+export const STATE_HINT: Record<AgentState, string> = {
   running: "running",
   waiting: "waiting on you",
   held: "held at an error",
@@ -77,6 +90,8 @@ export function threadGraph({
   states,
   projects,
   scope,
+  projectId = null,
+  query = "",
 }: {
   sessions: SessionMeta[]
   threads: Record<string, GraphThread | undefined>
@@ -86,17 +101,25 @@ export function threadGraph({
       without one (an older list) gets the absolute path. */
   projects: { id: string; name: string; cwd?: string }[]
   scope: GraphScope
+  /** Only this project's threads; null = every project. */
+  projectId?: string | null
+  /** Only threads whose title holds this (any case), with the chain above
+      them; blank = no filter. */
+  query?: string
 }): ThreadGraph {
-  const live = sessions.filter((s) => !s.draft && !s.deletedAt)
+  const live = sessions.filter((s) => !s.draft && !s.deletedAt && (!projectId || s.projectId === projectId))
+  const needle = query.trim().toLowerCase()
   const byId = new Map(live.map((s) => [s.id, s]))
   const stateOf = (s: SessionMeta): AgentState => states.get(s.id) ?? "idle"
 
   /* Who is drawn: Active is everything at work plus the chain above it, so a
-     running step is never an orphan; All is every thread with a process. */
+     running step is never an orphan; Needs you is what waits on a person, with
+     the same chain; All is every thread with a process. A search narrows any
+     of them by title and keeps the chain too. */
   const shown = new Set<string>()
   for (const s of live) {
-    const state = stateOf(s)
-    if (scope === "active" ? !isActiveState(state) : state === "archived") continue
+    if (!inScope(scope, stateOf(s))) continue
+    if (needle && !(s.title || "").toLowerCase().includes(needle)) continue
     for (let at: SessionMeta | undefined = s; at && !shown.has(at.id); at = byId.get(at.parentSessionId ?? "")) {
       shown.add(at.id)
     }
@@ -115,13 +138,14 @@ export function threadGraph({
     const id = `p:${projectId}`
     if (!nodes.has(id)) {
       const name = projects.find((p) => p.id === projectId)?.name ?? "Project"
-      nodes.set(id, { id, label: name, shape: "round" })
+      nodes.set(id, { id, kind: "project", label: name, shape: "round", projectId })
     }
     return id
   }
+  const parentOpen = (parent: string): string | undefined => nodes.get(parent)?.open
   const runNode = (runId: string, name: string | null | undefined, parent: string): string => {
     const id = `workflow:${runId}`
-    if (!nodes.has(id)) nodes.set(id, { id, label: clip(name || "workflow run"), shape: "diamond", tone: "running" })
+    if (!nodes.has(id)) nodes.set(id, { id, kind: "run", label: clip(name || "workflow run"), shape: "diamond", tone: "running", open: parentOpen(parent) })
     link(parent, id, "workflow")
     return id
   }
@@ -134,6 +158,7 @@ export function threadGraph({
     const kind = childKindOf(s)
     nodes.set(threadId(id), {
       id: threadId(id),
+      kind: "thread",
       label: clip(s.title || "Thread"),
       hint: [kind && kind !== "workflow" ? kind : null, STATE_HINT[state]].filter(Boolean).join(" · "),
       tone: STATE_TONE[state],
@@ -165,7 +190,7 @@ export function threadGraph({
         const busy = row.steps.filter((step) => step.active && !listed(step))
         if (busy.length > BATCH_FOLD) {
           const id = `more:${row.id}`
-          nodes.set(id, { id, label: `${busy.length} agents`, hint: "running", tone: "running", open })
+          nodes.set(id, { id, kind: "fold", label: `${busy.length} agents`, hint: "running", tone: "running", open })
           link(parent, id, "subagents")
           row.steps.filter(listed).forEach((step) => worker(step, parent, open))
         } else row.steps.forEach((step) => worker(step, parent, open))
@@ -178,7 +203,7 @@ export function threadGraph({
           phase.steps.forEach((name, i) => {
             if (spawned.has(name)) return
             const id = `pending:${row.id}:${p}:${i}`
-            nodes.set(id, { id, label: clip(name), hint: "pending", tone: "pending" })
+            nodes.set(id, { id, kind: "pending", label: clip(name), hint: "pending", tone: "pending", open })
             link(run, id)
           })
         )
@@ -215,6 +240,7 @@ export function threadGraph({
     const tone = headTone(group)
     nodes.set(id, {
       id,
+      kind: "worker",
       label: clip(task || name || "Agent"),
       hint: [
         name && name !== task ? clip(name, 30) : null,
