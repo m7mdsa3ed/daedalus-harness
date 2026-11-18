@@ -38,6 +38,10 @@ line: keep each bullet on a single line.
 
 - **The server survives the database going away and says so while it reconnects.** Boot waits for Postgres with backoff instead of crashing into a pm2 restart loop; once it has failed a query on a connection error, every `/api` route answers `503 { error: "database unavailable — reconnecting" }` at once instead of waiting out the 10s connect timeout, a request arriving while down re-probes it (at most every 2s, on its own short-timeout client) and the first success marks it back up, and `/api/health` carries `database: {up, since?, error?}`.
 
+### 2026-11-08
+
+- **The Daedalus agent's tool search answers with the names it loaded, not their descriptions, and drops weak keyword matches.** Each description was already in the catalogue and arrives in full as the tool's definition on the next step, so echoing it paid for every one a third time on every later step; a search now returns `{tools: [{name}]}` (with a hint to select from the catalogue when nothing matched), and a keyword match scoring under half of the best one is left out instead of filling the five-result cap (`agent/src/tools/tool-search.ts`, `test:tool-search`).
+
 ### 2026-11-06
 
 - **Picking "Default" effort on a running thread resets the agent's effort.** An empty effort used to be skipped as nothing to do, leaving the process on the effort it had while the menu said Default; the bridge now sets the selector's own `default` choice where the runtime offers one (`selectorValue` in `acp-bridge.ts`) and leaves a selector with no way to be cleared alone, and `codexDefaultEffort` names the Codex catalog's default reasoning level (`model-catalog.ts`).

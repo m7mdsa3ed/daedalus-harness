@@ -133,6 +133,34 @@ async function run(tools: ToolSet, messages: ModelMessage[], scripts: LanguageMo
   assert.equal(searchDeferred({ query: "+bulk", tools: bulk }).length, 25);
 }
 
+// --- a keyword match far weaker than the best is not loaded ---
+{
+  const tools = [
+    { name: "mcp__github__create_issue", description: "Create an issue on GitHub." },
+    { name: "mcp__github__list_branches", description: "List branches on GitHub." },
+    { name: "mcp__github__get_tag", description: "Get a tag on GitHub." },
+  ];
+  assert.deepEqual(searchDeferred({ query: "github create issue", tools }), ["mcp__github__create_issue"], "a server name in every description does not load the whole server");
+}
+
+// --- the model reads back names only; the history still records the load ---
+{
+  const tools = make();
+  deferMcpTools(tools, []);
+  const history: ModelMessage[] = [{ role: "user", content: "list prs" }];
+  const { sent, response } = await run(tools, history, [toolCallScript(SEARCH_TOOL, { query: "select:list_prs" }), textScript("done")]);
+  assert.ok(sent[1].includes("mcp__github__list_prs"));
+  const result = response
+    .filter((m) => m.role === "tool")
+    .flatMap((m) => m.content)
+    .find((p) => p.type === "tool-result");
+  assert.ok(result?.type === "tool-result" && result.output.type === "json");
+  assert.deepEqual(result.output.value, { tools: [{ name: "mcp__github__list_prs" }] }, "no description is echoed back");
+  const next = make();
+  deferMcpTools(next, [...history, ...response]);
+  assert.ok(!next.mcp__github__list_prs.deferLoading, "the slimmed result still marks the tool loaded");
+}
+
 // --- a near miss on the name loads rather than costing the step ---
 {
   const tools = catalog(make());

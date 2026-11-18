@@ -87,6 +87,7 @@ export function deferMcpTools(tools: ToolSet, messages: ModelMessage[]): Deferra
      the catalogue's size, so a selection can never be quietly cut short. */
   tools[SEARCH_TOOL] = {
     ...toolSearch({ search: searchDeferred, maxResults: Math.max(MAX_RESULTS, mcp.length) }),
+    toModelOutput: searchModelOutput,
     description: `Loads the full schema of MCP tools that are deferred to save context. Every MCP tool on this thread is in the list at the bottom: it is complete, and it does not change as tools load. A deferred tool cannot be called until it is loaded — its schema is not in your tool list yet. Load it here first; it becomes callable from the next step and stays loaded for the rest of the conversation. A tool already loaded can be called directly.
 
 A search is a step of its own, so when the catalogue already names what you need, select it instead of describing it.
@@ -94,7 +95,7 @@ A search is a step of its own, so when the catalogue already names what you need
 Query forms:
 - "select:<name>" loads the tools named, separated by commas or spaces. A name is the whole \`mcp__<server>__<tool>\`, or \`<server>/<tool>\`, or \`<server>/*\` for that server's tools (up to ${SERVER_RESULTS}), or the bare tool name when only one tool in the catalogue carries it. Naming tools is never cut short.
 - "+<server> <keywords>" searches one server only; the server's name may be abbreviated. "+<server>" alone loads that server's tools.
-- Keywords ("github issue") load the ${KEYWORD_RESULTS} best matches by name, then description.
+- Keywords ("github issue") load up to ${KEYWORD_RESULTS} of the best matches by name, then description; a match far weaker than the best is left out.
 
 MCP tools, by server:
 ${catalogue(mcp, tools)}`,
@@ -144,6 +145,29 @@ function synopsis(description: unknown): string {
   return `: ${head.trimEnd()}…`;
 }
 
+/* What the model reads back from a search: the names it loaded, never their
+   descriptions. The SDK answers `{ tools: [{ name, description }] }`, and every
+   description in it is already in the catalogue as a synopsis and arrives in
+   full as the tool's own definition on the next step — so echoing it paid for
+   each one a third time, and kept paying, because the result stays in the
+   history. Still JSON with `tools[].name`, the shape `loadedIn` reads a
+   thread's loads from. A miss says what to do instead of an empty list. */
+function searchModelOutput({ output }: { output: unknown }): { type: "json"; value: { tools: { name: string }[]; hint?: string } } {
+  const found = (output as { tools?: unknown } | null)?.tools;
+  const tools = (Array.isArray(found) ? found : [])
+    .map((t) => (t as { name?: unknown } | null)?.name)
+    .filter((name): name is string => typeof name === "string")
+    .map((name) => ({ name }));
+  if (tools.length > 0) return { type: "json", value: { tools } };
+  return { type: "json", value: { tools, hint: "Nothing matched. Select a name from the catalogue in this tool's description." } };
+}
+
+/* A keyword match scoring under this share of the best one is a stranger: on a
+   server whose every description names the server, "github create issue" gave
+   each of its tools a point, and the five-result cap filled with schemas nobody
+   asked for — each one then sent on every step after. */
+const RELATIVE_CUTOFF = 0.5;
+
 /**
  * The SDK's `search` callback: exact names for `select:`, else a keyword rank.
  * The SDK drops unknown names and duplicates, so a selection is passed through.
@@ -175,10 +199,13 @@ export function searchDeferred({ query, tools }: { query: string; tools: { name:
       return { name, score: words.length === 0 ? 1 : keywordScore(name, description ?? "", words) };
     })
     .filter((match) => match.score > 0)
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.score - a.score);
+  const floor = whole ? 0 : (ranked[0]?.score ?? 0) * RELATIVE_CUTOFF;
+  const kept = ranked
+    .filter((match) => match.score >= floor)
     .slice(0, cap)
     .map((match) => match.name);
-  if (ranked.length > 0 || words.length === 0) return ranked;
+  if (kept.length > 0 || words.length === 0) return kept;
   return looseMatches(words, tools, servers);
 }
 
