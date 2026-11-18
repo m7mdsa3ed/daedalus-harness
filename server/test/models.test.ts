@@ -320,6 +320,12 @@ await test("enrichProviderModels prefers the endpoint's own display name", async
   assert.equal(named.devRef, "provA/smart-2");
 });
 
+await test("codexDefaultEffort is the catalog's default_reasoning_level: the first effort, or none when it lists none", async () => {
+  const { codexDefaultEffort } = await import("../src/model-catalog.js");
+  assert.equal(codexDefaultEffort({ id: "m", label: "M", reasoningEfforts: ["low", "high"] }), "low");
+  assert.equal(codexDefaultEffort({ id: "m", label: "M", reasoningEfforts: [] }), null);
+});
+
 console.log(`models: ${passed} passed, ${failures.length} failed`);
 for (const failure of failures) console.error(`\nFAIL ${failure}`);
 process.exit(failures.length ? 1 : 0);

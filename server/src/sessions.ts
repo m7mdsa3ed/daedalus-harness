@@ -34,6 +34,7 @@ import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { defaultProfileFor, getProfile, listProfiles, profileBaseUrl, profileSupports } from "./profiles.js";
 import { listModelRoles } from "./model-roles.js";
+import { codexDefaultEffort } from "./model-catalog.js";
 import { agentModelId, bareModelId, getAgent, modelAllowlistFor, modelRoleDefs, type AgentDef } from "./registry.js";
 import type { WorkspaceLayout } from "./db/schema.js";
 import { gatewayUrlFor, setGatewayDraftResolver, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";

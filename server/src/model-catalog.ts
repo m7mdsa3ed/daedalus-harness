@@ -146,6 +146,16 @@ function entryFor(base: CodexModel, model: ModelDef, index: number): CodexModel 
 }
 
 /**
+ * The effort Codex runs a catalog model on when it is given none — the
+ * catalog's `default_reasoning_level`. Named once because the gateway shim has
+ * to put the same value on the wire when a running Codex thread is moved to
+ * "Default": Codex cannot be told, and a fresh spawn would have used this.
+ */
+export function codexDefaultEffort(model: ModelDef): string | null {
+  return model.reasoningEfforts?.[0] ?? null;
+}
+
+/**
  * Write a profile's models out as a Codex catalog and return its path, or
  * undefined when there is nothing to say — a profile with no `models[]` defers
  * to the agent (see CLAUDE.md), and a missing `codex` binary leaves us with no

@@ -1530,10 +1530,11 @@ export class AcpBridge implements ConnectionRoute {
       ["model", "model", next.model],
       ["thought_level", "effort", next.effort],
     ] as const;
-    for (const [category, field, value] of wanted) {
-      if (!value) continue;
+    for (const [category, field, asked] of wanted) {
       const option = this.selectorFor(category);
       if (!option || option.type !== "select") continue;
+      const value = selectorValue(option, field, asked);
+      if (!value) continue;
       if (option.currentValue === value) {
         placed[field] = true;
         continue;
@@ -3093,6 +3094,24 @@ export function isSessionNotFound(error: unknown, sessionId?: string): boolean {
   if (fields && Object.keys(fields).length > 0) return false;
   if (sessionId !== undefined) console.warn(`-32002 with no data.sessionId read as session ${sessionId} not found`);
   return true;
+}
+
+/**
+ * The value to put on a model or effort selector for what the harness asked.
+ *
+ * An empty effort is the menu's "Default", and on a running process that is a
+ * value to *set*, not nothing to do: skipping it left the agent on the effort
+ * it had while the row said Default. Both runtimes that take effort live offer
+ * a `default` choice for exactly this; a selector without one has no way to be
+ * cleared, and is left alone. An empty model is never a pick.
+ */
+function selectorValue(option: acp.SessionConfigOption, field: "model" | "effort", asked: string | undefined): string | undefined {
+  if (asked) return asked;
+  if (field !== "effort" || asked === undefined || option.type !== "select") return undefined;
+  const offersDefault = option.options
+    .flatMap((entry) => ("options" in entry ? entry.options : [entry]))
+    .some((choice) => choice.value === "default");
+  return offersDefault ? "default" : undefined;
 }
 
 /**

@@ -36,6 +36,10 @@ line: keep each bullet on a single line.
 
 - **The server survives the database going away and says so while it reconnects.** Boot waits for Postgres with backoff instead of crashing into a pm2 restart loop; once it has failed a query on a connection error, every `/api` route answers `503 { error: "database unavailable — reconnecting" }` at once instead of waiting out the 10s connect timeout, a request arriving while down re-probes it (at most every 2s, on its own short-timeout client) and the first success marks it back up, and `/api/health` carries `database: {up, since?, error?}`.
 
+### 2026-11-06
+
+- **Picking "Default" effort on a running thread resets the agent's effort.** An empty effort used to be skipped as nothing to do, leaving the process on the effort it had while the menu said Default; the bridge now sets the selector's own `default` choice where the runtime offers one (`selectorValue` in `acp-bridge.ts`) and leaves a selector with no way to be cleared alone, and `codexDefaultEffort` names the Codex catalog's default reasoning level (`model-catalog.ts`).
+
 ### 2026-11-05
 
 - **Workflows run five steps at once by default and the `agent` tool teaches models to split work wide.** A `steps`/`phases` definition used to default `maxParallel` to 3 while a script ran 5; the graph now takes the engine's own `defaultConcurrency`/`maxConcurrency` (`workflows/graph.ts`). The tool's manual says a phase is a barrier that waits for its slowest step, steers later steps to depend on only what they read, and adds splitting rules: split by disjoint area, keep the graph wide and shallow, size `maxParallel` to the widest layer, brief each step fully, isolate only overlapping edits, `forEach` over a schema'd list instead of a script, and end with a verify step (`workflows/manual.ts`, `agents-mcp.ts`).

@@ -68,13 +68,15 @@ writeFileSync(
     extract("parseSessionNotification"),
     extract("isModeTwin"),
     extract("isFallbackModelMetadataWarning"),
-    "export { parseSessionNotification, isModeTwin, isFallbackModelMetadataWarning };",
+    extract("selectorValue"),
+    "export { parseSessionNotification, isModeTwin, isFallbackModelMetadataWarning, selectorValue };",
   ].join("\n"),
 );
 
 let parseSessionNotification: (params: unknown) => { sessionId: string; update: { sessionUpdate: string } };
 let isModeTwin: (option: acp.SessionConfigOption, modeIds: ReadonlySet<string>) => boolean;
 let isFallbackModelMetadataWarning: (update: Record<string, unknown>) => boolean;
+let selectorValue: (option: acp.SessionConfigOption, field: "model" | "effort", asked: string | undefined) => string | undefined;
 let toWireError: typeof import("../src/acp-bridge.js").toWireError;
 let SDK_SESSION_UPDATE_TAGS: typeof import("../src/acp-bridge.js").SDK_SESSION_UPDATE_TAGS;
 let SESSION_UPDATE_EXT_METHOD: typeof import("../src/acp-bridge.js").SESSION_UPDATE_EXT_METHOD;
@@ -85,10 +87,11 @@ let personaGoesInEnv: typeof import("../src/acp-bridge.js").personaGoesInEnv;
 try {
   // Imported through a variable so the type checker does not look for a file
   // that only exists while this test runs.
-  ({ parseSessionNotification, isModeTwin, isFallbackModelMetadataWarning } = (await import(scratch)) as {
+  ({ parseSessionNotification, isModeTwin, isFallbackModelMetadataWarning, selectorValue } = (await import(scratch)) as {
     parseSessionNotification: typeof parseSessionNotification;
     isModeTwin: typeof isModeTwin;
     isFallbackModelMetadataWarning: typeof isFallbackModelMetadataWarning;
+    selectorValue: typeof selectorValue;
   });
   ({ toWireError, SDK_SESSION_UPDATE_TAGS, SESSION_UPDATE_EXT_METHOD, rewriteInbound, isSessionNotFound, personaRequestFields, personaGoesInEnv } =
     await import("../src/acp-bridge.js"));
@@ -276,6 +279,17 @@ test("a non-select option is never the mode", () => {
   assert.equal(isModeTwin(bool, modeIds), false);
 });
 
+// ---- selectorValue ----
+
+test("an empty effort is the selector's Default on a running agent, not a skipped pick", () => {
+  const effort = select(["default", "low", "high"], "thought_level");
+  assert.equal(selectorValue(effort, "effort", ""), "default");
+  assert.equal(selectorValue(effort, "effort", "high"), "high");
+  assert.equal(selectorValue(effort, "effort", undefined), undefined, "an unnamed effort is left alone");
+  assert.equal(selectorValue(select(["low", "high"], "thought_level"), "effort", ""), undefined, "no default to clear to");
+  assert.equal(selectorValue(select(["default", "m"], "model"), "model", ""), undefined, "an empty model is never a pick");
+});
+
 // ---- the SDK surface ----
 //
 // The runtime half of what the server takes from the SDK, as reached through
@@ -338,6 +352,7 @@ const SDK_KNOWN_TAGS = [
   "notice",
   "compaction_update",
   "compaction_summary_chunk",
+  "prompt_suggestions_update", // SDK 2.7 / schema v1.32
   "subagent_update",
   "session_message",
   "session_message_chunk",
@@ -356,10 +371,10 @@ const FOREIGN_TAGS = [
   "_daedalus/shell",
 ] as const;
 
-test("the derived set is the SDK schema's SessionUpdate union, all 19 tags", () => {
+test("the derived set is the SDK schema's SessionUpdate union, all 20 tags", () => {
   const missing = SDK_KNOWN_TAGS.filter((tag) => !SDK_SESSION_UPDATE_TAGS.has(tag));
   assert.deepEqual(missing, [], `schema no longer lists: ${missing.join(", ")}`);
-  assert.equal(SDK_SESSION_UPDATE_TAGS.size, 19, `the union grew or shrank: ${[...SDK_SESSION_UPDATE_TAGS].join(", ")}`);
+  assert.equal(SDK_SESSION_UPDATE_TAGS.size, 20, `the union grew or shrank: ${[...SDK_SESSION_UPDATE_TAGS].join(", ")}`);
 });
 
 test("the derived set excludes every tag the harness speaks beyond the union", () => {
