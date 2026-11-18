@@ -182,16 +182,22 @@ export function ChipPreview({
   caption,
   text,
   markdown = false,
+  actions,
 }: {
   caption?: string
   text: string
   markdown?: boolean
+  /** Controls beside the Copy — the composer's "Expand" on a parked paste. */
+  actions?: React.ReactNode
 }) {
   return (
     <>
       <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5 text-xs text-muted-foreground">
         <span>{caption}</span>
-        <CopyButton text={text} />
+        <span className="flex shrink-0 items-center gap-1">
+          {actions}
+          <CopyButton text={text} />
+        </span>
       </div>
       {markdown ? (
         /* The raw body is the fallback, so the popover is never empty while the

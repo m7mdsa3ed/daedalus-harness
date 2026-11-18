@@ -65,7 +65,6 @@ import {
   UserRound,
   ListTree,
   Maximize2,
-  Minimize2,
   Palette,
   MessageSquareText,
   RotateCcw,
@@ -204,13 +203,6 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
         icon: SeparatorHorizontal,
         title: "Turn dividers",
         description: "A hairline above each of your messages, separating one turn from the next.",
-      },
-      {
-        key: "miniComposer",
-        icon: Minimize2,
-        title: "Mini composer",
-        description:
-          "After the first message, fold the box to a single line — the editor, a toggle and Send — and bring the scope row, the add menu and the pickers back from the toggle, which folds again when you scroll away from the tail. Off, a started thread keeps the full box. A draft and the landing console are never folded.",
       },
       {
         key: "turnRail",

@@ -664,35 +664,25 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `--harness-composer-width`, so the whole unit breathes on every click in and out of the
   textarea, which is motion the reader did not ask for at the exact moment they are aiming
   at something.
-- **After the first message the composer is the mini one, and the advanced form is a toggle on it
-  — nothing is hidden behind a button of its own.** `ThreadView` hands `Composer` `compact`
-  (the thread is not empty), and the mini box is the project's mark (a read-out), the agent's
-  marks (the settings chip, `iconOnly`), the add menu, the editor, the toggle and Send on one line:
-  **the two faces stand down while the reader is writing** (`marksDown` — the box has the caret
-  or holds words), folded to zero width with an ease rather than unmounted so the words do not
-  jump under the caret, because a reading of a thread already chosen is not what a line being
-  typed into is for; the "+" stays, since adding to a message is done while writing it. **Words
-  that wrap stack the line** (`stacked`, the editor's `onWrapChange`): the editor takes a full row
-  over the same controls, latched until the box empties, up to the card's `max-h-40`. The
-  scope row, the chip's words and the readings come back with the toggle
-  (remembered per thread for the life of the page, `ADVANCED_THREADS`). The MCP servers are
-  a row of the chip's menu, so they come back with it. A draft and the landing
-  console are the full box — the first message is written in it. `ThreadView` also hands it the
-  scroller's own pin (`useFollowStream.pinned`) as `collapsed`: leaving the tail folds an advanced
-  box back to mini, and **a fill re-opens it** (`revealed`), because a suggested follow-up, a
-  queued row's Edit or an "Ask about this" has to be seen. Only a voice call still takes the box
-  away (the `composer-pill`, a clip-path morph that keeps the height it reserves,
-  `--composer-dock-h`). A composer that collapsed *itself* — on a narrow panel or a short window —
-  was tried and removed: it took the box away from someone who was typing, on no gesture at all.
+- **The composer has one form, the full card, on every thread.** The mini composer (a one-line
+  capsule after the first message, its advanced-form toggle, `miniComposer` in View options, and
+  the `compact`/`collapsed` props `ThreadView` handed it) was removed: every control, the scope row
+  and its readings are always drawn, and scrolling off the tail changes nothing. Only a voice call
+  still takes the box away (the `composer-pill`, a clip-path morph that keeps the height it
+  reserves, `--composer-dock-h`). A composer that collapsed *itself* — on a narrow panel or a short
+  window — was tried and removed: it took the box away from someone who was typing, on no gesture
+  at all.
 - **The shelf has a surface of its own** (`--shelf`, `bg-shelf`), derived from `--composer`
   and **darker than it in both modes — which is two declarations, not one**: darker is toward
   the foreground in a light palette and toward the *background* in a dark one, where
   `--composer` is already the lighter of the two tones. It wore `--surface`, which is the
   *page's* ground and resolves to the same thing `--composer` does in a light palette, so the
   shelf, the composer and the page were one flat band with an invisible tuck between them.
-  Derived, never picked, so every generated palette gets it for nothing. **Neither the composer
-  nor the shelf draws a hairline ring** — the two grounds meeting is the seam, and the
-  composer's only ring is the destructive one while voice is listening.
+  Derived, never picked, so every generated palette gets it for nothing. **The composer is a flat card**: a solid `bg-composer` ground with no
+  glass or blur, a `ring-edge` hairline that steps to `ring-focus-soft` while the editor has the
+  caret (the destructive ring while voice is listening), and a Send key the row's own size in
+  the theme's `rounded-key`, set apart by its fill, never by being bigger. The shelf draws no ring: its seam with the page is
+  the two grounds meeting.
 - **The send row has one voice key, and the modes are behind it**
   (`composer/voice-button.tsx`): a dictated note (`Mic`, the browser's own speech API) and a
   call (`AudioLines`, a configured backend) are the same gesture at different lengths, and as

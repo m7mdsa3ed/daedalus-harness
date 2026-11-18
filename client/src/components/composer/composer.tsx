@@ -68,8 +68,6 @@ import { useLocation, useNavigate } from "react-router"
 import {
   ArrowUp,
   Check,
-  ChevronDown,
-  ChevronUp,
   Maximize2,
   Minimize2,
   Pause,
@@ -119,13 +117,13 @@ import { threadRecap } from "@/lib/thread/recap"
 import { useComposerAttachments } from "@/hooks/use-composer-attachments"
 import { useCoarsePointer, useIsMobile } from "@/hooks/use-device"
 import { useScreenRecord } from "@/hooks/use-screen-record"
+import { ScreenRecordReview, ScreenRecordingRow } from "@/components/composer/screen-record"
 import { useVoice } from "@/hooks/use-voice"
 import { useAgents, useCommands, useProfiles } from "@/lib/queries/catalog"
 import { defaultVoice, useVoiceProviders, voiceFor } from "@/lib/queries/voice"
 import { endVoiceCall, startVoiceCall, useVoiceCallActive } from "@/lib/voice-call"
 import type { Actions } from "@/lib/actions"
 import { setComposerPrefs, useComposerPrefs } from "@/lib/composer-prefs"
-import { useLayoutOptions } from "@/lib/layout-options"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
 import { consumeComposerFocusRequest, useComposerFocusRequest } from "@/lib/composer-focus"
 import { consumeComposerInsertRequest, useComposerInsertRequest } from "@/lib/composer-insert"
@@ -196,9 +194,6 @@ export interface ComposerHandle {
   quote(excerpt: string): void
 }
 
-/* Threads whose reader opened the advanced box, for the life of the page. */
-const ADVANCED_THREADS = new Set<string>()
-
 /* Memoized: `ThreadView` re-renders on every streamed token, and the
    composer — the Tiptap editor, the indicators, the menus — was re-rendered
    with it on the urgent pass, holding the *old* deferred thread, before its
@@ -218,8 +213,6 @@ export const Composer = React.memo(function Composer({
   beforeSend,
   placeholder,
   autoFocus,
-  collapsed = false,
-  compact = false,
   voiceCall = false,
   ref,
 }: {
@@ -244,20 +237,6 @@ export const Composer = React.memo(function Composer({
       whose route is `/` and whose only purpose is this box. Still refused on
       touch, and still only for a draft. */
   autoFocus?: boolean
-  /** The reader has scrolled away from the tail of the transcript, so an
-      advanced box folds to the mini one until they come back to it. Read off
-      the scroller's own pin by `ThreadView` (`useFollowStream`), never state of
-      this component's own, so it is the same fact the scroll-to-end button
-      draws. */
-  collapsed?: boolean
-  /** The thread has started, so the box may take its mini form — a line, a send
-      and the toggle, stacking once the words wrap — with the advanced form (every
-      control, the scope row and its readings) a choice behind the toggle. That
-      form is drawn only while
-      the reader's own `miniComposer` is on; False for a draft and the landing
-      console, which are what the first message is written in and always draw
-      the whole box. */
-  compact?: boolean
   /** Offer the voice call. Wherever it is offered, something has to draw the
       call card with it — a thread view at the transcript's foot, the landing
       console above its box (`landing-page.tsx`). */
@@ -283,54 +262,7 @@ export const Composer = React.memo(function Composer({
   const onEditorOverflowChange = React.useCallback((overflowing: boolean) => {
     setEditorOverflows(overflowing)
   }, [])
-  /* A mini box whose words outgrew one line stacks: the words take a row of
-     their own over the controls, rather than wrapping in the gap between the
-     marks and Send. Latched until the box empties, because stacking widens the
-     line, which can fit the words on one again and un-stack it.
-     ponytail: sticky until cleared; drop the latch if a narrower box ever
-     measures its own width instead. */
-  const [wrapped, setWrapped] = React.useState(false)
-  const onEditorWrapChange = React.useCallback((next: boolean) => {
-    if (next) setWrapped(true)
-  }, [])
-  /* Mini or advanced, for a started thread that has `miniComposer` on. The
-     toggle's pick is remembered per thread for as long as the page lives so a
-     tab switch does not fold a box they opened. Scrolling off the tail folds
-     an advanced box back to mini (`collapsed`) and `revealed` is the reader
-     asking for it again — the toggle, or words put in the box from outside it (a
-     suggested follow-up, a queued row's Edit, an "Ask about this", the
-     enhancer's rewrite), which have to be seen. Handed back to the scroll the
-     moment the reader is at the tail again. */
-  const [advanced, setAdvancedState] = React.useState(() => ADVANCED_THREADS.has(sessionId))
-  React.useEffect(() => setAdvancedState(ADVANCED_THREADS.has(sessionId)), [sessionId])
-  const [revealed, setRevealed] = React.useState(false)
-  React.useEffect(() => {
-    if (!collapsed) setRevealed(false)
-  }, [collapsed])
-  /* Whether the box has the caret. The mini line's marks — where it runs and
-     who answers — are readings of the thread, and the one thing being typed
-     into is the message, so they stand down while it is being written in: on
-     focus, and for as long as it holds words. They come back to an idle,
-     empty box, which is the state they are for. */
-  const [focused, setFocused] = React.useState(false)
-  /* The reader's own switch (Settings › Appearance › Layout › Mini composer),
-     off unless they turned it on: the mini form is a shape a thread can be
-     given, never one it is forced into. Read during render, so flipping it
-     moves a box already on screen rather than only the next thread mounted. */
-  const { miniComposer } = useLayoutOptions()
-  const mini = compact && miniComposer && (!advanced || (collapsed && !revealed))
-  const toggleAdvanced = () => {
-    const next = mini ? true : !advanced
-    if (next) ADVANCED_THREADS.add(sessionId)
-    else ADVANCED_THREADS.delete(sessionId)
-    setAdvancedState(next)
-    setRevealed(next)
-    requestAnimationFrame(() => composerRef.current?.focus())
-  }
   textRef.current = text
-  React.useEffect(() => {
-    if (!text) setWrapped(false)
-  }, [text])
   React.useEffect(() => setText(loadDraft(sessionId)), [sessionId])
   React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
   /* ── Warming the draft's agent behind the keystrokes ──
@@ -817,7 +749,9 @@ export const Composer = React.memo(function Composer({
     const surface = composerRef.current
     if (!surface) return null
     /* A selection is not a place to fill: the gap would replace text the reader
-       chose, which is an edit, not a suggestion. */
+       chose, which is an edit, not a suggestion. Nor is an IME composition: the
+       string is not yet what was typed. */
+    if (surface.composing) return null
     return surface.selectionStart === surface.selectionEnd ? surface.selectionStart : null
   }, [])
   const fimInsert = React.useCallback(
@@ -840,6 +774,13 @@ export const Composer = React.memo(function Composer({
     enabled: !disabled,
     context: fimContext,
   })
+
+  /* Both readers of the caret: the `@` completer, and the ghost, which a caret
+     move retires because it was drawn for another place. */
+  const onEditorSelect = React.useCallback(() => {
+    mentions.onSelect()
+    fim.onSelect()
+  }, [mentions.onSelect, fim.onSelect])
 
   const { insertMention, insertCommand, insertProjectCommand, insertCodeBlock } = textInsertions({
     text,
@@ -874,7 +815,6 @@ export const Composer = React.memo(function Composer({
      is the same act — replaced, unsent, caret at the end. */
   const applySuggestion = React.useCallback(
     (prompt: string) => {
-      setRevealed(true)
       setText(prompt)
       mentions.requestCaret(prompt.length)
       requestAnimationFrame(() => composerRef.current?.focus())
@@ -901,7 +841,6 @@ export const Composer = React.memo(function Composer({
   React.useEffect(() => {
     if (!insertRequest) return
     consumeComposerInsertRequest(sessionId, insertRequest.revision)
-    setRevealed(true)
     const typed = textRef.current.replace(/\s+$/, "")
     const next = typed ? `${typed}\n\n${insertRequest.text}` : insertRequest.text
     setText(next)
@@ -949,6 +888,18 @@ export const Composer = React.memo(function Composer({
     }
     if (!isLongPaste(plain)) return false
     event.preventDefault()
+    /* The same body pasted again is the ask for the text itself: the chip it
+       already is expands in place (the chip's own "Expand" does the same), and
+       this paste adds nothing of its own. */
+    const twin = shownPastes.find((paste) => paste.text === plain)
+    if (twin) {
+      const token = pasteToken(twin.n)
+      const at = text.indexOf(token)
+      const body = plain.replace(/\r\n?/g, "\n")
+      mentions.requestCaret(at + body.length)
+      setText(text.slice(0, at) + body + text.slice(at + token.length))
+      return true
+    }
     const el = composerRef.current
     const [start, end] = selectionOf(el, text.length)
     const paste = mintPaste(pastes, plain)
@@ -968,13 +919,6 @@ export const Composer = React.memo(function Composer({
   const lines = chars === 0 ? 0 : text.split("\n").length
   const long = chars >= LONG_PROMPT_CHARS || lines >= LONG_PROMPT_LINES
   const hasContent = text.trim().length > 0 || files.attachments.length > 0 || shownPastes.length > 0
-  /* The mini line's marks stand down while the message is being written: the
-     reader is looking at the words, and the project and the pair are readings
-     of a thread they have already chosen. Back the moment the box is idle and
-     empty, which is when they are worth drawing. */
-  const stacked = mini && wrapped
-  /* Stacked, the controls have a row to themselves, so nothing needs to fold. */
-  const marksDown = mini && !stacked && (focused || hasContent)
   const canSend =
     !disabled &&
     !gated &&
@@ -997,8 +941,7 @@ export const Composer = React.memo(function Composer({
         ? `Queue (${steerChord} steers the running turn instead)`
         : "Send"
 
-  /* The "+" menu, drawn in both shapes: at the head of the advanced row, and
-     at the start of the mini line beside the agent's marks. */
+  /* The "+" menu, at the head of the toolbar row. */
   const addMenu = (
     <ComposerAddMenu
       disabled={disabled || gated}
@@ -1039,8 +982,7 @@ export const Composer = React.memo(function Composer({
        it reserves for the transcript (measured off this element as
        `--composer-dock-h`) does not move. `inert` too, or the box would keep
        the caret and the tab order while it is clipped away. Out of a call the
-       box never leaves: it is the mini one when the thread is started and the
-       reader is not asking for more. */
+       box never leaves. */
     <div
       data-composer-away={away || undefined}
       className={cn(
@@ -1105,8 +1047,7 @@ export const Composer = React.memo(function Composer({
            at, so it is a `Notice` at the foot of the transcript with the other
            things the thread is doing (`ThreadStatus`). */
         footer={
-          meta &&
-          !mini && (
+          meta && (
             <DraftScopeRow
               meta={meta}
               actions={actions}
@@ -1147,6 +1088,13 @@ export const Composer = React.memo(function Composer({
             checklist and the running-agent count are readings of the *thread*
             and live in the footer's cluster; the queue is the user's own
             sentences and lives in the transcript, as sentences. */}
+        {/* A recording in progress will become an attachment: said first, with its Stop. */}
+        <ScreenRecordingRow
+          startedAt={screenRecord.startedAt}
+          bytes={screenRecord.bytes}
+          budget={screenRecord.budget}
+          onStop={screenRecord.stop}
+        />
         {/* What is riding along with the message but is not in the box: a file. */}
         <ComposerAttachments
           attachments={files.attachments}
@@ -1183,21 +1131,10 @@ export const Composer = React.memo(function Composer({
         inert={away || undefined}
         className={cn(
           "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)]",
-          /* The box's two shapes, corner and inset together. The advanced form
-             is a card — tall and variable in height, its 2xl-derived corner
-             capped so it stays a lozenge, its padding derived from that corner
-             so the trailing key's curve shares its centre. The mini one is a
-             single line, so it is a capsule instead: the theme's own pill capped
-             at half a line's height. Its padding is two numbers because a
-             capsule's ends are all curve and its top and bottom are not — the
-             ends take the reading inset, where the card's 6px left the key
-             hugging the sweep, and the top and bottom keep that 6px so a
-             one-line box still reads as a pill. The editor gives up its own
-             `px-2` inside one, below, so the first glyph and the key's outer
-             edge sit at the same distance from the edge. */
-          mini
-            ? "rounded-composer-mini px-composer-pad-mini py-composer-pad-mini-y"
-            : "rounded-composer p-composer-pad",
+          /* A card — tall and variable in height, its 2xl-derived corner capped
+             so it stays a lozenge, its padding derived from that corner so the
+             trailing key's curve shares its centre. */
+          "rounded-composer p-composer-pad",
           /* The morph: clipped down to the pill's box (`--composer-pill` square,
              bottom right) while away. Open is a negative inset, not `none`, so the
              two shapes interpolate. A
@@ -1208,12 +1145,12 @@ export const Composer = React.memo(function Composer({
           away
             ? "[clip-path:inset(calc(100%_-_var(--composer-pill))_0_0_calc(100%_-_var(--composer-pill))_round_var(--app-radius-pill))] [&>*]:opacity-0"
             : "[clip-path:inset(-5rem)]",
-          /* The composer's ground (theme glass, the recipe `Card` wears). */
-          "bg-composer-glass backdrop-blur-[var(--app-blur)] backdrop-saturate-[calc(1.3*var(--app-saturate))]",
-          voice.listening && "ring-1 ring-destructive/40",
-          /* Mini: the editor, the toggle and Send share one line. */
-          mini && "flex items-end gap-1",
-          stacked && "flex-wrap"
+          /* The flat card: one solid ground (no glass, no blur) with a hairline
+             edge, which steps up to the quiet focus ring while the box has the
+             caret. Listening outranks both. */
+          "bg-composer ring-1 ring-edge shadow-sm",
+          "has-[.composer-editor:focus-within]:ring-focus-soft",
+          voice.listening && "ring-destructive/40 has-[.composer-editor:focus-within]:ring-destructive/40"
         )}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return
@@ -1241,8 +1178,7 @@ export const Composer = React.memo(function Composer({
         {dragging && (
           <div
             className={cn(
-              "pointer-events-none absolute inset-0 z-20 grid place-items-center border-2 border-dashed border-primary bg-composer-glass text-sm font-medium text-primary",
-              mini ? "rounded-composer-mini" : "rounded-composer"
+              "pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-composer border-2 border-dashed border-primary bg-composer text-sm font-medium text-primary"
             )}
           >
             Drop to attach
@@ -1253,7 +1189,6 @@ export const Composer = React.memo(function Composer({
             of controls about sending. It rewrites the draft through the AI SDK
             against the profile picked in Settings › General — a device habit,
             not a property of the thread. */}
-        {!mini && (
         <div className={cn("absolute right-composer-pad z-10 animate-in fade-in-0 duration-300 motion-reduce:animate-none", coarse ? "top-[calc(var(--spacing-composer-pad)+0.125rem)]" : "top-[calc(var(--spacing-composer-pad)+0.375rem)]")}>
           <EnhanceButton
             sessionId={sessionId}
@@ -1267,70 +1202,17 @@ export const Composer = React.memo(function Composer({
             onEnhanced={applySuggestion}
           />
         </div>
-        )}
-        {/* Mini: the line opens with where it runs, who answers and the "+"
-            menu — kept when the rest folds away. The project is a read-out, as
-            the scope row draws it on a started thread (its project is the
-            agent's cwd, fixed); the agent's marks are the advanced row's
-            settings chip without its words.
-
-            The two faces — the project's and the pair's — stand down as soon
-            as the reader is writing on one line (`marksDown`): they are a
-            reading of a thread already chosen, and the line is a line. Folded
-            rather than
-            unmounted, so the width goes with an ease instead of snapping the
-            words sideways under the caret; the "+" stays, because adding to a
-            message is something done while writing it. */}
-        {mini && (
-          <div className="flex min-h-(--composer-mini-line) shrink-0 items-center gap-0.5 self-center">
-            {(project || meta) && (
-              <div
-                aria-hidden={marksDown || undefined}
-                inert={marksDown || undefined}
-                className={cn(
-                  "flex items-center gap-0.5 overflow-hidden",
-                  "transition-[max-width,opacity] duration-200 ease-out motion-reduce:transition-none",
-                  marksDown ? "pointer-events-none max-w-0 opacity-0" : "max-w-40 opacity-100"
-                )}
-              >
-                {project && (
-                  <span
-                    className="flex shrink-0 items-center px-1"
-                    title={project.cwd ? `${project.name} · ${project.cwd}` : project.name}
-                    aria-label={`Project: ${project.name}`}
-                    role="img"
-                  >
-                    <ProjectIcon project={project} className={READING_MARK} />
-                  </span>
-                )}
-                {meta && (
-                  <ConfigPopover
-                    meta={meta}
-                    sessionId={sessionId}
-                    actions={actions}
-                    thread={thread}
-                    keys={routed || autoFocus}
-                    iconOnly
-                  />
-                )}
-              </div>
-            )}
-            {addMenu}
-          </div>
-        )}
         <ComposerEditor
           ref={composerRef}
           value={text}
           onChange={changeText}
-          onSelect={mentions.onSelect}
+          onSelect={onEditorSelect}
           onPaste={onPaste}
-          onFocusChange={setFocused}
           pastes={shownPastes}
           ghost={fim.ghost}
           onAcceptGhost={coarse ? fim.accept : undefined}
           pending={fim.pending}
           onOverflowChange={onEditorOverflowChange}
-          onWrapChange={mini ? onEditorWrapChange : undefined}
           expanded={expanded}
           coarse={coarse}
           onKeyDown={composerKeyDown({
@@ -1366,28 +1248,14 @@ export const Composer = React.memo(function Composer({
             /* Same reading size as the transcript's messages: the card carries
                the `--text-sm` bump `.thread-transcript` sets, so typing matches
                what is being answered. */
-            mini ? "min-w-0 flex-1 text-sm md:text-sm" : "w-full text-sm md:text-sm",
-            /* Stacked: the words first, a whole row wide, the controls under them. */
-            stacked && "order-first basis-full",
+            "w-full text-sm md:text-sm",
             /* Clear of the enhance button in the corner. */
-            !mini && (coarse ? "pr-8" : "pr-6"),
-            /* Keep the compact default, with more room available on demand. */
-            /* One cap for both shapes: the expand button appears past it
-               (`onOverflowChange`), so a lower mini cap left long text
-               scrolling with no way to open it up. */
+            coarse ? "pr-8" : "pr-6",
+            /* Keep the compact default, with more room available on demand:
+               the expand button appears past the cap (`onOverflowChange`). */
             expanded ? "max-h-[min(50vh,32rem)]" : "max-h-40",
-            /* The card's roomier line under a thumb. In the capsule it is the
-               token's business instead — `--composer-mini-line` is restated
-               where the pointer is coarse — so the two never claim the same
-               `min-h`, which would leave the winner to stylesheet order. */
-            coarse && !mini && "[&_.tiptap]:min-h-11",
-            /* In the capsule the editor takes the box's own line and end inset:
-               its `min-h-9`/`min-h-11` are the card's numbers, and its `px-2`
-               on top of `--spacing-composer-pad-mini` would put the first glyph
-               8px further in than the key sits from the other edge. Reading the
-               one token here is what keeps the box exactly as tall as
-               `--radius-composer-mini` assumes, at both pointers. */
-            mini && "[&_.tiptap]:min-h-(--composer-mini-line) [&_.tiptap]:px-0"
+            /* The card's roomier line under a thumb. */
+            coarse && "[&_.tiptap]:min-h-11"
           )}
         />
         {/* One control language across the row: every icon button is the
@@ -1401,20 +1269,14 @@ export const Composer = React.memo(function Composer({
              making any of them easier to hit — the glyphs are the same size
              either way, so all the extra gap bought was air. Only the row's
              own height grows, which is what keeps the box clear of the thumb. */
-          /* Mini: the row is as tall as the editor's line — the same
-             `--composer-mini-line` token the capsule's radius is halved out of,
-             so the two cannot disagree about how tall one line is — and centres
-             its buttons in it, so they sit on the text's line rather than
-             hanging off the bottom of the box. */
           className={cn(
             "flex items-center gap-1 pt-1",
-            coarse && "pt-2",
-            mini && "shrink-0 self-center pt-0 min-h-(--composer-mini-line)",
-            stacked && "ml-auto"
+            coarse && "pt-2"
           )}
         >
-          {!mini && (
-            <>
+          {/* The left group — what adds to the message and who answers it — is
+              quieter than the right, which is about sending it. */}
+          <div className="flex min-w-0 flex-1 items-center gap-1 text-muted-foreground">
           {addMenu}
           <div className="flex min-w-0 flex-1 animate-in items-center gap-1 overflow-x-auto fade-in-0 slide-in-from-bottom-1 duration-300 [scrollbar-width:none] motion-reduce:animate-none [&::-webkit-scrollbar]:hidden">
             {/* Who answers, and everything about how — the model, the effort,
@@ -1429,8 +1291,7 @@ export const Composer = React.memo(function Composer({
               <ConfigPopover meta={meta} sessionId={sessionId} actions={actions} thread={thread} keys={routed || autoFocus} />
             )}
           </div>
-            </>
-          )}
+          </div>
           {/* The completion lane at work. It sits in this row rather than over
               the text because nothing about it is positioned: it is a fact about
               the box, like the length. A failure takes the same slot for one
@@ -1499,11 +1360,8 @@ export const Composer = React.memo(function Composer({
               buttons which of them existed depended on two unrelated facts
               (the browser's speech API, a configured backend). The fold beside
               it changes which one a click runs; a live one always wins, so the
-              same key stops what it started.
-
-              The mini line keeps only the live half of it: one line has room
-              for a key that stops something, not for a key that starts one. */}
-          {voiceOffered && (!mini || voice.listening || inCall || screenRecord.recording) && (
+              same key stops what it started. */}
+          {voiceOffered && (
             <VoiceButton
               size={iconSize}
               disabled={disabled}
@@ -1529,6 +1387,16 @@ export const Composer = React.memo(function Composer({
               }
             />
           )}
+          <ScreenRecordReview
+            file={screenRecord.review}
+            onAccept={screenRecord.accept}
+            onDiscard={screenRecord.discard}
+            onEdited={screenRecord.replace}
+            onRetake={() => {
+              screenRecord.discard()
+              void screenRecord.start()
+            }}
+          />
           {/* Pause is the harness's own agent's, not ACP's: the runtime holds
               at its next step boundary and carries on from there, where Stop
               throws the step away. Shown while a turn runs, and while a hold
@@ -1539,7 +1407,7 @@ export const Composer = React.memo(function Composer({
               is the same hold: a turn that failed waits at the same boundary
               for the same resume. Only the words change — after a model change
               this is Continue, and continuing is what it does. */}
-          {thread.canPause && (thread.turnActive || thread.paused) && (!mini || thread.paused) && (
+          {thread.canPause && (thread.turnActive || thread.paused) && (
             <Button
               variant="ghost"
               size={iconSize}
@@ -1563,19 +1431,6 @@ export const Composer = React.memo(function Composer({
               }
             >
               {thread.paused ? <Play className={KEY_MARK} /> : <Pause className={KEY_MARK} />}
-            </Button>
-          )}
-          {compact && miniComposer && (
-            <Button
-              variant="ghost"
-              size={iconSize}
-              className="text-muted-foreground"
-              onClick={toggleAdvanced}
-              title={mini ? "Show all controls" : "Show the mini composer"}
-              aria-label={mini ? "Show all controls" : "Show the mini composer"}
-              aria-pressed={!mini}
-            >
-              {mini ? <ChevronUp className={KEY_MARK} /> : <ChevronDown className={KEY_MARK} />}
             </Button>
           )}
           {thread.turnActive && (
@@ -1602,9 +1457,11 @@ export const Composer = React.memo(function Composer({
               stays in the same place before and after you type, rather than
               appearing the moment the first character lands. When there is
               nothing to send `canSend` is false and it wears the stock disabled
-              look. Like the "+", it is round and the same size. */}
+              look. The row's own size and gap, like every other key — its fill
+              and the theme's key shape are what make it the one to aim at. */}
           <Button
             size={iconSize}
+            className="rounded-key"
             onClick={() => void send()}
             disabled={!canSend}
             loading={gated}

@@ -18,7 +18,8 @@
    destructive pulse both old buttons wore alone.
 
    A screen recording rides the same key as a third mode: it is the same
-   "show, then send" gesture, and it ends as a `.webm` on the message's
+   "show, then send" gesture, and it ends as a `.webm` the reader watches back
+   (`composer/screen-record.tsx`) before it joins the message's
    attachments (`hooks/use-screen-record.ts`), sent as a file like any other.
 
    Voice is offered only where it can actually run, and a mode that cannot says
@@ -33,13 +34,24 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { KEY_MARK } from "@/components/composer/indicator"
 import { MENU_WIDTH, MenuRow } from "@/components/menu-row"
 import { setComposerPrefs, useComposerPrefs } from "@/lib/composer-prefs"
 import { useCoarsePointer } from "@/hooks/use-device"
+import {
+  SCREEN_FPS,
+  SCREEN_QUALITIES,
+  fitsFor,
+  type ScreenFps,
+  type ScreenQuality,
+} from "@/lib/screen-record-options"
 import { cn } from "@/lib/utils"
 
 export type VoiceMode = "note" | "call" | "screen"
@@ -82,6 +94,7 @@ export function VoiceButton({
      that only re-read when its parent re-rendered would keep showing a mic
      after ⌥C had picked the call. */
   const mode = useVoiceMode()
+  const prefs = useComposerPrefs()
   /* The mode the key acts on: whatever is *running* wins, so the same key that
      started a call ends it even after a note was picked in between. */
   const current: VoiceMode = active ?? mode
@@ -105,7 +118,7 @@ export function VoiceButton({
           /* A live mode is a live state, so it stays coloured — as text, not as
              a filled chip that would reintroduce the chrome the row does not
              wear. */
-          running && "animate-pulse pe-0.5 text-destructive hover:text-destructive"
+          running && "animate-pulse text-destructive hover:text-destructive"
         )}
         onClick={() => (running ? onStop(current) : onStart(current))}
         disabled={disabled || !canRun}
@@ -130,7 +143,10 @@ export function VoiceButton({
                 "-ms-1 grid w-3.5 place-items-center rounded-pill text-muted-foreground",
                 coarse ? "h-8" : "h-6",
                 "data-popup-open:bg-muted data-popup-open:text-foreground",
-                "opacity-0 transition-opacity focus-visible:opacity-100 group-hover/voice:opacity-100",
+                /* Always drawn, quiet until the pair is hovered: hidden, it
+                   still held its width, which left a hole after the key that
+                   no other gap on the row has. */
+                "opacity-60 transition-opacity focus-visible:opacity-100 group-hover/voice:opacity-100",
                 (coarse || open) && "opacity-100"
               )}
               aria-label="Voice options"
@@ -141,40 +157,86 @@ export function VoiceButton({
           <ChevronDown className="size-3" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" side="top" className={MENU_WIDTH}>
-          <DropdownMenuLabel>Voice</DropdownMenuLabel>
-          <ModeRow
-            label="Voice note"
-            hint={dictation.supported ? "Dictate into the message" : (dictation.reason ?? "Not available here")}
-            icon={<Mic />}
-            offered={dictation.supported}
-            checked={current === "note"}
-            onPick={() => {
-              setComposerPrefs({ voiceMode: "note" })
-              setOpen(false)
-            }}
-          />
-          <ModeRow
-            label="Voice call"
-            hint={call.supported ? "Talk to the agent, hands free" : (call.reason ?? "Not available here")}
-            icon={<AudioLines />}
-            offered={call.supported}
-            checked={current === "call"}
-            onPick={() => {
-              setComposerPrefs({ voiceMode: "call" })
-              setOpen(false)
-            }}
-          />
-          <ModeRow
-            label="Screen recording"
-            hint={screen.supported ? "Record the screen, attach it as a video" : (screen.reason ?? "Not available here")}
-            icon={<ScreenShare />}
-            offered={screen.supported}
-            checked={current === "screen"}
-            onPick={() => {
-              setComposerPrefs({ voiceMode: "screen" })
-              setOpen(false)
-            }}
-          />
+          {/* DropdownMenuLabel is Base UI's Menu.GroupLabel: outside a group it
+              throws (Base UI error #31). */}
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Voice</DropdownMenuLabel>
+            <ModeRow
+              label="Voice note"
+              hint={dictation.supported ? "Dictate into the message" : (dictation.reason ?? "Not available here")}
+              icon={<Mic />}
+              offered={dictation.supported}
+              checked={current === "note"}
+              onPick={() => {
+                setComposerPrefs({ voiceMode: "note" })
+                setOpen(false)
+              }}
+            />
+            <ModeRow
+              label="Voice call"
+              hint={call.supported ? "Talk to the agent, hands free" : (call.reason ?? "Not available here")}
+              icon={<AudioLines />}
+              offered={call.supported}
+              checked={current === "call"}
+              onPick={() => {
+                setComposerPrefs({ voiceMode: "call" })
+                setOpen(false)
+              }}
+            />
+            <ModeRow
+              label="Screen recording"
+              hint={screen.supported ? "Record the screen, attach it as a video" : (screen.reason ?? "Not available here")}
+              icon={<ScreenShare />}
+              offered={screen.supported}
+              checked={current === "screen"}
+              onPick={() => {
+                setComposerPrefs({ voiceMode: "screen" })
+                setOpen(false)
+              }}
+            />
+          </DropdownMenuGroup>
+          {/* The recording's own settings, only while it is the picked mode: they
+              change nothing for a note or a call. A change applies to the next
+              recording, never to one already running. */}
+          {current === "screen" && screen.supported && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Recording quality</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={prefs.screenQuality}
+                  onValueChange={(value) => setComposerPrefs({ screenQuality: value as ScreenQuality })}
+                >
+                  {SCREEN_QUALITIES.map((q) => (
+                    <DropdownMenuRadioItem key={q.id} value={q.id}>
+                      <MenuRow label={q.label} hint={`Fits ${fitsFor(q.id)}`} />
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Frame rate</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={String(prefs.screenFps)}
+                  onValueChange={(value) => setComposerPrefs({ screenFps: Number(value) as ScreenFps })}
+                >
+                  {SCREEN_FPS.map((fps) => (
+                    <DropdownMenuRadioItem key={fps} value={String(fps)}>
+                      <MenuRow label={`${fps} fps`} />
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem
+                checked={prefs.screenAudio}
+                onCheckedChange={(checked) => setComposerPrefs({ screenAudio: checked })}
+              >
+                <MenuRow label="Record audio" hint="Tab or system sound, where the browser offers it" />
+              </DropdownMenuCheckboxItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

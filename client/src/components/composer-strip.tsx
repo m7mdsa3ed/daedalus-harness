@@ -182,6 +182,7 @@ type StripContext = {
    archive notice and the subagent count both spent time listed here after they
    had moved out of the pile and into the footer / above the strip. */
 const SUMMARY_ORDER = [
+  "screen-recording",
   "attachments",
   "pastes",
   "history",
@@ -281,6 +282,11 @@ const GROUND = "bg-shelf"
 /* The narrow layout's horizontal selector rail and the gap before its panel. */
 const RAIL_HEIGHT = 32
 const RAIL_GAP = 8
+/* The wide layout's vertical rail's tab column (its `w-34` ground also covers
+   `RAIL_GAP`, the `pr-3`, so no transcript shows between it and the panel). The panels are absolutely
+   positioned, so padding on the strip never moved them out from under the
+   rail -- each panel is offset by this plus `RAIL_GAP` instead. */
+const RAIL_WIDTH = 128
 
 /* The shelf's own bottom edge, hidden behind the composer. Must stay in step
    with the `pb-4` it is spelled on: the box has to reserve it, and the pile's
@@ -480,6 +486,7 @@ export function ComposerStrip({
   /* The selector is horizontal in a narrow panel and becomes a vertical rail
      in a wider panel. The measurement follows the panel, not the viewport. */
   const railHeight = many && !wideLayout ? RAIL_HEIGHT + RAIL_GAP : 0
+  const railWidth = many && wideLayout ? RAIL_WIDTH + RAIL_GAP : 0
   /* The tuck belongs to whatever is last. With a footer the cards stand ON it
      rather than on the composer, so they stop reserving a bottom edge nothing
      covers — and the footer takes the `pb-4` instead. */
@@ -519,12 +526,16 @@ export function ComposerStrip({
         data-strip-tone={entry?.tone ?? "neutral"}
         style={{
           top: railHeight,
+          left: railWidth,
           bottom: footerHeight + tuck,
           "--strip-tone": `var(--shelf-tone-${entry?.tone ?? "neutral"})`,
         } as React.CSSProperties}
         hidden={!front}
         className={cn(
-          "harness-strip-card absolute inset-x-0 overflow-hidden rounded-t-composer",
+          "harness-strip-card absolute inset-x-0 overflow-hidden",
+          /* Beside the vertical rail the card's left edge meets the rail's
+             ground, so only its outer corner is rounded. */
+          railWidth ? "rounded-tr-composer" : "rounded-t-composer",
           /* The wash is the card's, not the class's: `[data-strip-tone]` paints
              it, so only the blur is conditional here. A `neutral` card is the
              shelf exactly. */
@@ -557,8 +568,6 @@ export function ComposerStrip({
           // The selector rail and selected panel share one measured height
           // transition, so changing rows does not jump the composer or transcript.
           "harness-strip-panel relative",
-          /* The rail's w-32 plus `RAIL_GAP`. */
-          many && wideLayout && "pl-34",
           // isolate: the composer is `relative z-10` beside this box. Without a
           // stacking context, the shelf could paint over the thing it attaches to.
           "isolate",
@@ -594,10 +603,12 @@ export function ComposerStrip({
             role="tablist"
             aria-label="Composer shelf"
             onKeyDown={onRailKeyDown}
+            /* The vertical rail stands on the footer rather than over it. */
+            style={wideLayout ? { bottom: footerHeight + tuck } : undefined}
             className={cn(
               "absolute z-20 flex min-w-0 gap-1",
               wideLayout
-                ? "inset-y-0 left-0 w-32 flex-col items-stretch overflow-y-auto rounded-tl-composer p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                ? cn(ground, "top-0 left-0 w-34 flex-col items-stretch overflow-y-auto rounded-tl-composer p-1 pr-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden")
                 : "inset-x-0 top-0 h-8 flex-row items-center overflow-x-auto rounded-t-composer px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             )}
           >

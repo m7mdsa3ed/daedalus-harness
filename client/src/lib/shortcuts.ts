@@ -228,6 +228,8 @@ export type ShortcutId =
   | "historyPrev"
   | "historyNext"
   | "historyLeave"
+  | "completionWord"
+  | "completionRequest"
   | "threadStop"
   | "questionSkip"
   | "questionChoose"
@@ -352,6 +354,13 @@ export const KEYS = {
   /** Send the pending review comments — answered only while the focus is in
       the inspector, so the composer keeps its own ⌘↵. */
   sendReview: "mod+enter",
+  /** Take the next word of a ghost suggestion. ⌘/Ctrl+→ is the editors' own
+      "accept word"; it is only taken while a ghost is drawn, so the caret's
+      word jump is untouched otherwise. */
+  completionWord: "mod+right",
+  /** Ask for a suggestion now. Alt+\\ is the editors' "trigger inline
+      suggestion"; macOS's Option types a character there, so ⌘I sits beside it. */
+  completionRequest: ["alt+\\", "mod+i"],
 } as const
 
 export const SHORTCUTS: ShortcutDef[] = [
@@ -603,6 +612,23 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Leave the prompt history",
     chords: [KEYS.escape],
     note: "Puts back whatever you had typed before you started walking back.",
+  },
+
+  {
+    id: "completionWord",
+    scope: "Composer",
+    label: "Accept the next word of a suggestion",
+    chords: [KEYS.completionWord],
+    rebindable: true,
+    note: "Only while a suggestion is drawn; Tab takes all of it and Escape drops it. Needs a completion model (Settings › AI › Composer).",
+  },
+  {
+    id: "completionRequest",
+    scope: "Composer",
+    label: "Suggest a completion now",
+    chords: [...KEYS.completionRequest],
+    rebindable: true,
+    note: "Asks at once, at the caret, for a longer gap than the one a pause asks for, even where a suggestion was just dropped.",
   },
 
   {

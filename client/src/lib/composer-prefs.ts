@@ -6,8 +6,16 @@
    app offers). Device-local and global, like the reading options: the hand
    that types is the same in every thread. */
 import { createLocalStore } from "./local-store"
+import {
+  SCREEN_FPS,
+  SCREEN_QUALITIES,
+  SCREEN_RECORD_DEFAULTS,
+  type ScreenFps,
+  type ScreenQuality,
+  type ScreenRecordPrefs,
+} from "./screen-record-options"
 
-export interface ComposerPrefs {
+export interface ComposerPrefs extends ScreenRecordPrefs {
   /** Bare Enter sends and Shift+Enter breaks the line. Off, Enter breaks the
       line and sending is the button or the steer chord (⌘/Ctrl+Enter), which is
       an ordinary send while nothing is running. Touch ignores this: Return is
@@ -20,7 +28,7 @@ export interface ComposerPrefs {
   voiceMode: "note" | "call" | "screen"
 }
 
-export const COMPOSER_DEFAULTS: ComposerPrefs = { enterSends: true, voiceMode: "note" }
+export const COMPOSER_DEFAULTS: ComposerPrefs = { enterSends: true, voiceMode: "note", ...SCREEN_RECORD_DEFAULTS }
 
 const store = createLocalStore<ComposerPrefs>(
   "ui.composerPrefs",
@@ -29,6 +37,11 @@ const store = createLocalStore<ComposerPrefs>(
     return {
       enterSends: typeof obj.enterSends === "boolean" ? obj.enterSends : COMPOSER_DEFAULTS.enterSends,
       voiceMode: obj.voiceMode === "call" || obj.voiceMode === "screen" ? obj.voiceMode : "note",
+      screenQuality: SCREEN_QUALITIES.some((q) => q.id === obj.screenQuality)
+        ? (obj.screenQuality as ScreenQuality)
+        : COMPOSER_DEFAULTS.screenQuality,
+      screenFps: SCREEN_FPS.includes(obj.screenFps as ScreenFps) ? (obj.screenFps as ScreenFps) : COMPOSER_DEFAULTS.screenFps,
+      screenAudio: typeof obj.screenAudio === "boolean" ? obj.screenAudio : COMPOSER_DEFAULTS.screenAudio,
     }
   },
   COMPOSER_DEFAULTS

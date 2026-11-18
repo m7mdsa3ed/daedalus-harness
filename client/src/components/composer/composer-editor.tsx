@@ -29,7 +29,9 @@ import StarterKit from "@tiptap/starter-kit"
 import Placeholder from "@tiptap/extension-placeholder"
 import { Plugin } from "@tiptap/pm/state"
 import { Decoration, DecorationSet } from "@tiptap/pm/view"
-import { ClipboardListIcon, TextQuoteIcon, XIcon } from "lucide-react"
+import { ClipboardListIcon, TextQuoteIcon, UnfoldVerticalIcon, XIcon } from "lucide-react"
+
+import { Button } from "@/components/ui/button"
 
 import {
   ChipBody,
@@ -65,6 +67,9 @@ export interface TextSurface {
   readonly value: string
   readonly selectionStart: number
   readonly selectionEnd: number
+  /** An IME composition is in progress: the caret is not a place to suggest at,
+      and the string is not yet what was typed. */
+  readonly composing: boolean
   setSelectionRange(start: number, end: number): void
   focus(): void
 }
@@ -112,9 +117,18 @@ function Chip({
   )
 }
 
-function PasteChipView({ node, deleteNode, selected }: NodeViewProps) {
+function PasteChipView({ node, deleteNode, selected, editor, getPos }: NodeViewProps) {
   const n = node.attrs.n as number
   const paste = React.useContext(PastesContext).find((p) => p.n === n)
+  /* Expand puts the body back in the box where the chip stood — the same
+     plain-text insert a short paste takes. The token leaves the string, so the
+     parked body is no longer live and is not sent a second time. */
+  const expand = () => {
+    const pos = getPos()
+    if (!paste || typeof pos !== "number") return
+    editor.view.dispatch(editor.state.tr.insertText(paste.text.replace(/\r\n?/g, "\n"), pos, pos + node.nodeSize))
+    editor.commands.focus()
+  }
   return (
     <Chip
       icon={ClipboardListIcon}
@@ -132,6 +146,14 @@ function PasteChipView({ node, deleteNode, selected }: NodeViewProps) {
           }
           text={paste?.text ?? ""}
           markdown={paste !== undefined && readsAsMarkdown(paste.text)}
+          actions={
+            paste && (
+              <Button type="button" variant="ghost" size="sm" onClick={expand} title="Put the text in the box">
+                <UnfoldVerticalIcon />
+                Expand
+              </Button>
+            )
+          }
         />
       }
     />
@@ -294,38 +316,57 @@ const ghostPlacement = (
   ghost: ComposerGhost,
   onAccept: (() => void) | null
 ): DecorationSet => {
-  const span = document.createElement("span")
-  span.className = cn(
-    "select-none whitespace-pre-wrap text-muted-foreground/60",
-    onAccept ? "cursor-pointer" : "pointer-events-none"
-  )
-  span.setAttribute("aria-hidden", "true")
-  span.setAttribute("contenteditable", "false")
-  span.textContent = ghost.text
-  if (onAccept) {
-    /* A tap takes the suggestion, where there is no Tab to do it. The press is
-       held back from the editor so the soft keyboard stays up and the caret
-       stays where the gap goes. */
-    span.addEventListener("pointerdown", (event) => event.preventDefault())
-    span.addEventListener("click", (event) => {
-      event.preventDefault()
-      onAccept()
-    })
+  /* A function and a key, never a node built here: `decorations` is asked on
+     every transaction, and a fresh DOM node each time is a widget ProseMirror
+     tears out and re-inserts *at the caret* on every keystroke — the flicker,
+     and the selection Chrome then re-guesses. The key is what lets it keep the
+     one already drawn while the suggestion is unchanged. */
+  const toDOM = () => {
+    const span = document.createElement("span")
+    span.className = cn(
+      "composer-ghost select-none whitespace-pre-wrap text-muted-foreground/60",
+      onAccept ? "cursor-pointer" : "pointer-events-none"
+    )
+    span.setAttribute("aria-hidden", "true")
+    span.setAttribute("contenteditable", "false")
+    span.textContent = ghost.text
+    if (onAccept) {
+      /* A tap takes the suggestion, where there is no Tab to do it. The press is
+         held back from the editor so the soft keyboard stays up and the caret
+         stays where the gap goes. */
+      span.addEventListener("pointerdown", (event) => event.preventDefault())
+      span.addEventListener("click", (event) => {
+        event.preventDefault()
+        onAccept()
+      })
+    }
+    return span
   }
-  return DecorationSet.create(doc, [Decoration.widget(offsetToPos(doc, ghost.at), span, { side: 1 })])
+  return DecorationSet.create(doc, [
+    Decoration.widget(offsetToPos(doc, ghost.at), toDOM, {
+      side: 1,
+      key: `ghost:${ghost.at}:${onAccept ? "tap" : "key"}:${ghost.text}`,
+      ignoreSelection: true,
+    }),
+  ])
 }
 
 /* The "asking" mark, drawn where the ghost will land: the caret the request was
    made at, so the indicator sits on the line being typed on rather than in the
    toolbar three rows down. A spinning ring, pure CSS, so it animates without a
-   transaction — ProseMirror never redraws it. */
+   transaction — and keyed, so a keystroke does not restart its spin. */
 const pendingPlacement = (doc: Parameters<typeof offsetToPos>[0], at: number): DecorationSet => {
-  const ring = document.createElement("span")
-  ring.className =
-    "pointer-events-none ml-0.5 inline-block size-2.5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground align-middle"
-  ring.setAttribute("aria-hidden", "true")
-  ring.setAttribute("contenteditable", "false")
-  return DecorationSet.create(doc, [Decoration.widget(offsetToPos(doc, at), ring, { side: 1 })])
+  const toDOM = () => {
+    const ring = document.createElement("span")
+    ring.className =
+      "pointer-events-none ml-0.5 inline-block size-2.5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground align-middle"
+    ring.setAttribute("aria-hidden", "true")
+    ring.setAttribute("contenteditable", "false")
+    return ring
+  }
+  return DecorationSet.create(doc, [
+    Decoration.widget(offsetToPos(doc, at), toDOM, { side: 1, key: `pending:${at}`, ignoreSelection: true }),
+  ])
 }
 
 /* A line break is a new paragraph whichever key made it: the string has one
@@ -345,8 +386,6 @@ export function ComposerEditor({
   onPaste,
   onKeyDown,
   onOverflowChange,
-  onWrapChange,
-  onFocusChange,
   expanded,
   coarse,
   pastes,
@@ -363,16 +402,10 @@ export function ComposerEditor({
   onChange: (text: string) => void
   /** The caret moved — the `@` completer's cue. */
   onSelect: () => void
-  /** The box took or lost the caret. The mini line reads it to stand its marks
-      down while the reader is writing in it. */
-  onFocusChange?: (focused: boolean) => void
   /** Return true when the paste was taken; otherwise it goes in as plain text. */
   onPaste: (event: ClipboardEvent) => boolean
   onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void
   onOverflowChange: (overflowing: boolean) => void
-  /** The text runs past one line (a newline or a wrap) — the mini box's cue to
-      give the words a row of their own. */
-  onWrapChange?: (wrapped: boolean) => void
   expanded: boolean
   coarse: boolean
   pastes: Paste[]
@@ -395,8 +428,8 @@ export function ComposerEditor({
      not it came from outside (a pick, a recall, a quote) and is loaded; one
      that is, is the editor's own echo and is left alone. */
   const agreed = React.useRef(value)
-  const latest = React.useRef({ onChange, onSelect, onPaste, onFocusChange, placeholder, onAcceptGhost })
-  latest.current = { onChange, onSelect, onPaste, onFocusChange, placeholder, onAcceptGhost }
+  const latest = React.useRef({ onChange, onSelect, onPaste, placeholder, onAcceptGhost })
+  latest.current = { onChange, onSelect, onPaste, placeholder, onAcceptGhost }
   const editorContentRef = React.useRef<HTMLDivElement>(null)
   /* What the decorations read. A ref, not state: the plugin asks on every
      redraw, and the effect below is what redraws it. */
@@ -475,7 +508,16 @@ export function ComposerEditor({
       },
       // Registering a keydown handler is what makes ProseMirror skip a key the
       // capture-phase handler already `preventDefault`ed.
-      handleDOMEvents: { keydown: () => false },
+      handleDOMEvents: {
+        keydown: () => false,
+        /* The caret is no place to suggest at while an IME composes
+           (`TextSurface.composing`), so it is said again once it is: the
+           composed word is the pause a suggestion follows. */
+        compositionend: () => {
+          queueMicrotask(() => latest.current.onSelect())
+          return false
+        },
+      },
       handlePaste: (view, event) => {
         if (latest.current.onPaste(event)) return true
         const plain = event.clipboardData?.getData("text/plain")
@@ -492,8 +534,6 @@ export function ComposerEditor({
       latest.current.onChange(text)
     },
     onSelectionUpdate: () => latest.current.onSelect(),
-    onFocus: () => latest.current.onFocusChange?.(true),
-    onBlur: () => latest.current.onFocusChange?.(false),
   })
 
   React.useEffect(() => {
@@ -513,8 +553,6 @@ export function ComposerEditor({
 
     const measure = () => {
       onOverflowChange(tiptap.scrollHeight > 161)
-      /* Over the box's own one-line floor by more than a rounding error. */
-      onWrapChange?.(tiptap.scrollHeight > parseFloat(getComputedStyle(tiptap).minHeight) + 8)
     }
     measure()
     const observer = new ResizeObserver(measure)
@@ -525,7 +563,7 @@ export function ComposerEditor({
       observer.disconnect()
       window.removeEventListener("resize", measure)
     }
-  }, [editor, expanded, onOverflowChange, onWrapChange, value, coarse])
+  }, [editor, expanded, onOverflowChange, value, coarse])
 
   // The placeholder is a decoration; a new one needs a transaction to redraw.
   React.useEffect(() => {
@@ -557,6 +595,18 @@ export function ComposerEditor({
     }
     markRef.current = next
 
+    /* Never mid-composition: a transaction while an IME composes is what drops
+       the half-typed word on Android and CJK keyboards. The redraw waits for
+       the composition to end, reading whatever the mark is by then. */
+    const dom = editor.view.dom
+    if (editor.view.composing) {
+      const redraw = () => {
+        if (!editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta("addToHistory", false))
+      }
+      dom.addEventListener("compositionend", redraw, { once: true })
+      return () => dom.removeEventListener("compositionend", redraw)
+    }
+
     /* Only a caret, never a selection: restating a position would collapse text
        the reader had chosen. */
     const selection = editor.state.selection
@@ -583,6 +633,9 @@ export function ComposerEditor({
       },
       get selectionEnd() {
         return posToOffset(editor.state.doc, editor.state.selection.to)
+      },
+      get composing() {
+        return editor.view.composing
       },
       setSelectionRange(start, end) {
         const doc = editor.state.doc
