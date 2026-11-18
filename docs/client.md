@@ -1321,6 +1321,12 @@ landed. Every rule here is gated on `useIsMobile()` (the device), never a panel'
   in its thread (the card opens it). Freshness is a 15s poll while a reader is mounted, focus,
   and an invalidation whenever the count of open cards across the store moves
   (`lib/queries/pending.ts`) — no global socket.
+- **Two or more parked permissions are one card** (`InlinePermissionGroup` in
+  `tool-approval.tsx`, grouped by `groupPermissions` in `thread-view.tsx`): a row per call
+  (heading, a two-line clamp of what it runs, Allow/Reject on the row, the agent's other
+  options behind the row's chevron) and "Allow all"/"Reject all" at the foot, picked by ACP
+  option kind. A plan is a document and keeps its own card. The keys still answer
+  `permissions[0]`, and its row is the one that shows Enter and takes focus.
 
 ## Panel vs device width
 

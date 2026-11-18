@@ -24,6 +24,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   ClipboardListIcon,
+  ListChecksIcon,
   WrenchIcon,
   XIcon,
 } from "lucide-react"
@@ -53,6 +54,7 @@ import {
   permissionToolCall,
   toolDescription,
   toolHeading,
+  toolPrimaryText,
 } from "@/lib/tools"
 import { cn } from "@/lib/utils"
 
@@ -158,15 +160,17 @@ function PermissionOptions({
   request,
   resolve,
   optionsRef,
+  className,
 }: {
   request: PendingPermission["request"]
   resolve: PendingPermission["resolve"]
-  optionsRef: React.RefObject<HTMLDivElement | null>
+  optionsRef?: React.RefObject<HTMLDivElement | null>
+  className?: string
 }) {
   const primaryId = primaryPermissionOption(request.options)
   const rejectStart = request.options.findIndex((o) => o.kind.startsWith("reject"))
   return (
-    <AgentRequestActions ref={optionsRef}>
+    <AgentRequestActions ref={optionsRef} className={className}>
       {request.options.map((option, index) => {
         const primary = option.optionId === primaryId
         const rejecting = option.kind.startsWith("reject")
@@ -323,6 +327,46 @@ function PlanApproval({
       <PermissionOptions request={request} resolve={resolve} optionsRef={optionsRef} />
     </AgentRequestCard>
   )
+}
+
+/**
+ * What a request says about itself, read once for every card that draws one —
+ * the full card and a row of the grouped one — so the two cannot name the same
+ * call differently.
+ */
+function readRequest(call: acp.ToolCallUpdate) {
+  const kind = call.kind ?? "other"
+  const KindIcon = KIND_ICONS[kind] ?? WrenchIcon
+  /* The header has one line to spend, so it prints whichever of these says the
+     most — which means the other one is on screen nowhere. Keep both and let
+     Details carry the one the heading did not. */
+  const description = toolDescription({
+    meta: call._meta,
+    rawInput: call.rawInput,
+    title: call.title,
+  })
+  /* The file badge rides on the heading row the same way it does on a step row:
+     `toolHeading` names the file and strips it out of the prose, so the card
+     says "Read" + a `package.json` chip rather than an elided path. */
+  const h = toolHeading({
+    title: call.title,
+    rawInput: call.rawInput,
+    meta: call._meta ?? undefined,
+    toolKind: call.kind ?? undefined,
+    locations: call.locations ?? [],
+  })
+  /* An MCP call's `name` is `mcp__Clickup__create_task` and its title is
+     either the agent's prose or that name again, so the card says what the row
+     says — which integration, which tool — captioned with what it acts on.
+     Every other call keeps the description-or-name it always had. */
+  const mcp = extractMcpCall({
+    title: call.title ?? "",
+    meta: call._meta ?? undefined,
+    rawInput: call.rawInput,
+  })
+  const heading = mcp ? h.title : (description ?? call.name ?? call.toolCallId)
+  const caption = mcp ? h.detail : undefined
+  return { kind, KindIcon, description, h, heading, caption }
 }
 
 /**
@@ -526,4 +570,220 @@ export function InlineApproval({
       <PermissionOptions request={request} resolve={resolve} optionsRef={optionsRef} />
     </AgentRequestCard>
   )
+}
+
+/* ── Several permissions at once ──
+   Two or more asks parked together (parallel tool calls, a child thread's
+   asks beside the parent's) used to be one full card each: a stack of
+   identical frames, every one with its own four-button bar, the thing being
+   approved pushed a screen apart from its neighbours. They are one decision —
+   "the agent wants to do these N things" — so they are one card: a row per
+   call with the act and a clamped preview of what it runs, an Allow and a
+   Reject on the row, and the whole batch answered from the foot.
+
+   The hotkeys still answer the oldest request (`useThreadKeys`), so the row
+   that is next carries the digits; the rest wait their turn. A plan is a
+   document, not a row, and keeps its own card (`PermissionStack`). */
+
+const firstOfKind = (
+  options: acp.RequestPermissionRequest["options"],
+  prefix: "allow" | "reject"
+) =>
+  prefix === "allow"
+    ? primaryPermissionOption(options)
+    : (options.find((o) => o.kind === "reject_once") ?? options.find((o) => o.kind.startsWith("reject")))
+        ?.optionId
+
+const answer = (permission: PendingPermission, optionId: string) =>
+  permission.resolve({ outcome: { outcome: "selected", optionId } })
+
+function PermissionRow({
+  permission,
+  item,
+  next,
+  askedBy,
+}: {
+  permission: PendingPermission
+  item?: ToolItem
+  /** The request the hotkeys answer: it shows its digits and takes focus. */
+  next: boolean
+  askedBy?: React.ReactNode
+}) {
+  const { request, resolve } = permission
+  const [open, setOpen] = React.useState(false)
+  const call = permissionToolCall(request.toolCall, item)
+  const { KindIcon, heading, caption, h } = readRequest(call)
+  const preview = call.content?.length ? null : toolPrimaryText({ rawInput: call.rawInput })
+  const content = call.content ?? []
+  const allowId = firstOfKind(request.options, "allow")
+  const rejectId = firstOfKind(request.options, "reject")
+  const allow = request.options.find((o) => o.optionId === allowId)
+  const reject = request.options.find((o) => o.optionId === rejectId)
+  const rowRef = React.useRef<HTMLDivElement>(null)
+  React.useEffect(() => {
+    if (!next || isTypingTarget(document.activeElement)) return
+    rowRef.current?.querySelector<HTMLButtonElement>("[data-primary-option]")?.focus()
+  }, [next, permission.requestId])
+  return (
+    <li className="py-3 first:pt-0 last:pb-0" aria-label={`Permission needed: ${heading}`}>
+      {askedBy}
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <div className="flex items-start gap-2">
+          <KindIcon aria-hidden className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-sm leading-snug font-medium">
+            <span className="min-w-0 break-words">{heading}</span>
+            {caption && <span className="min-w-0 break-words text-muted-foreground">{caption}</span>}
+            {h.file && <FileBadge file={h.file} filePath={h.filePath} />}
+          </div>
+          <CollapsibleTrigger
+            render={
+              <button
+                type="button"
+                aria-label={open ? "Hide details" : "Show details"}
+                className="mt-0.5 shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+              />
+            }
+          >
+            <ChevronRightIcon
+              aria-hidden
+              className={cn("size-3.5 transition-transform duration-200", open && "rotate-90")}
+            />
+          </CollapsibleTrigger>
+        </div>
+        {preview && !open && (
+          <AgentRequestWell className="mt-2 py-2">
+            <pre className="line-clamp-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-muted-foreground">
+              {preview}
+            </pre>
+          </AgentRequestWell>
+        )}
+        <CollapsibleContent className="harness-collapse">
+          <div className="mt-2 max-h-[calc(var(--panel-h,100svh)*0.4)] space-y-3 overflow-auto overscroll-contain">
+            {content.length > 0 ? (
+              <ToolCallContent content={content} />
+            ) : (
+              call.rawInput !== null &&
+              call.rawInput !== undefined && (
+                <JsonView
+                  value={call.rawInput}
+                  text={prettyJson(call.rawInput) ?? ""}
+                  preview={JSON_INPUT_PREVIEW}
+                />
+              )
+            )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+      <div ref={rowRef} className="mt-2 flex flex-wrap items-center gap-2">
+        {allow && (
+          <Button
+            size="sm"
+            data-primary-option=""
+            onClick={() => answer(permission, allow.optionId)}
+          >
+            <CheckIcon aria-hidden />
+            {allow.name}
+            {next && (
+              <Shortcut className="hidden sm:inline-flex" keys={["↵"]} keyClassName="bg-transparent" />
+            )}
+          </Button>
+        )}
+        {reject && (
+          <Button size="sm" variant="destructive" onClick={() => answer(permission, reject.optionId)}>
+            <XIcon aria-hidden />
+            {reject.name}
+          </Button>
+        )}
+        {/* Everything else the agent offered — "always" variants and the like —
+            is one fold away, on the card's own bar and the same buttons. */}
+        {open && request.options.length > [allow, reject].filter(Boolean).length && (
+          <PermissionOptions
+            request={{
+              ...request,
+              options: request.options.filter(
+                (o) => o.optionId !== allowId && o.optionId !== rejectId
+              ),
+            }}
+            resolve={resolve}
+            className="mx-0 mt-0 w-full border-0 p-0"
+          />
+        )}
+      </div>
+    </li>
+  )
+}
+
+/**
+ * Two or more parked asks as one card. `permissions` is the thread's queue in
+ * arrival order, and the first of them is the one the keys answer.
+ */
+export function InlinePermissionGroup({
+  permissions,
+  headId,
+  items,
+  askedBy,
+}: {
+  permissions: PendingPermission[]
+  /** The request the keyboard answers — the oldest of the whole queue, which
+      may be a plan drawn above this card. */
+  headId: string | undefined
+  items: (permission: PendingPermission) => ToolItem | undefined
+  askedBy?: (permission: PendingPermission) => React.ReactNode
+}) {
+  const allowable = permissions.filter((p) => firstOfKind(p.request.options, "allow"))
+  const rejectable = permissions.filter((p) => firstOfKind(p.request.options, "reject"))
+  const resolveAll = (prefix: "allow" | "reject") => {
+    for (const permission of prefix === "allow" ? allowable : rejectable) {
+      const optionId = firstOfKind(permission.request.options, prefix)
+      if (optionId) answer(permission, optionId)
+    }
+  }
+  return (
+    <AgentRequestCard
+      aria-live="assertive"
+      aria-label={`${permissions.length} permissions needed`}
+    >
+      <AgentRequestHeader
+        icon={ListChecksIcon}
+        label="Permission needed"
+        aside={
+          <span className="shrink-0 text-xs text-muted-foreground">{permissions.length} requests</span>
+        }
+      >
+        {permissions.length} actions are waiting on you
+      </AgentRequestHeader>
+      <AgentRequestBody>
+        <ul className="divide-y">
+          {permissions.map((permission) => (
+            <PermissionRow
+              key={permission.requestId}
+              permission={permission}
+              item={items(permission)}
+              next={permission.requestId === headId}
+              askedBy={askedBy?.(permission)}
+            />
+          ))}
+        </ul>
+      </AgentRequestBody>
+      <AgentRequestActions>
+        {allowable.length > 0 && (
+          <Button size="sm" variant="secondary" onClick={() => resolveAll("allow")}>
+            <CheckIcon aria-hidden />
+            Allow all ({allowable.length})
+          </Button>
+        )}
+        {rejectable.length > 0 && (
+          <Button size="sm" variant="destructive" className="ms-auto" onClick={() => resolveAll("reject")}>
+            <XIcon aria-hidden />
+            Reject all ({rejectable.length})
+          </Button>
+        )}
+      </AgentRequestActions>
+    </AgentRequestCard>
+  )
+}
+
+/** A permission is a plan when the card for it is the plan's own. */
+export function isPlanPermission(permission: PendingPermission, item?: ToolItem): boolean {
+  return extractPlanProposalFromPermission(permissionToolCall(permission.request.toolCall, item)) !== null
 }

@@ -28,7 +28,7 @@ import { holdOf } from "@/lib/thread/hold"
 import { isOpening } from "@/lib/thread/phase"
 import { currentThreadId, navigateTo, threadPath } from "@/lib/router"
 import { openInNewTab } from "@/lib/workspace/open-threads"
-import { useDispatch, useSessionMeta, useThread, threadIsEmpty, workLive, type ThreadItem, type ToolItem } from "@/lib/store"
+import { useDispatch, useSessionMeta, useThread, threadIsEmpty, workLive, type PendingPermission, type ThreadItem, type ToolItem } from "@/lib/store"
 import { FilePreviewContext, type FilePreviewValue } from "@/lib/file-preview"
 import { DockContext, useIsFrontPanel } from "@/components/workspace/dock-context"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
@@ -45,7 +45,7 @@ import { OpenuiActionsContext } from "@/lib/openui/actions"
 import { StepTokensProvider, createStepTokensStore } from "@/components/token-usage"
 import { TurnFooter } from "@/components/thread-view/turn-footer"
 import { InlineElicitation } from "@/components/elicitation-form"
-import { InlineApproval } from "@/components/tool-approval"
+import { InlineApproval, InlinePermissionGroup, isPlanPermission } from "@/components/tool-approval"
 import { InlineHeldTurn } from "@/components/held-turn"
 import { ThreadStatus } from "@/components/thread-view/thread-status"
 import { PendingSettings } from "@/components/thread-view/pending-settings"
@@ -178,6 +178,31 @@ function AskedBy({ from }: { from: RequestFrom }) {
   )
 }
 
+type PermissionCard =
+  | { kind: "single"; permission: PendingPermission; index: number }
+  | { kind: "group"; key: string; permissions: PendingPermission[]; index: number }
+
+/** The transcript's permission cards: plans one each, everything else folded
+    into a single group at the first one's place once there are two. */
+function groupPermissions(
+  permissions: PendingPermission[],
+  itemFor: (permission: PendingPermission) => ToolItem | undefined
+): PermissionCard[] {
+  const plain = permissions.filter((p) => !isPlanPermission(p, itemFor(p)))
+  const grouped = plain.length > 1
+  const cards: PermissionCard[] = []
+  permissions.forEach((permission, index) => {
+    if (grouped && plain.includes(permission)) {
+      if (plain[0] === permission) {
+        cards.push({ kind: "group", key: "group", permissions: plain, index })
+      }
+      return
+    }
+    cards.push({ kind: "single", permission, index })
+  })
+  return cards
+}
+
 export function ThreadView({
   sessionId,
   actions,
@@ -208,6 +233,14 @@ export function ThreadView({
      already replaced. */
   const lazyThread = React.useDeferredValue(thread)
   const hold = holdOf(thread)
+  /* Parked permissions: two or more ordinary asks are one card (a row per
+     call, the batch answerable from its foot); a plan is a document and keeps
+     its own card, drawn in arrival order beside the group. */
+  const toolItemFor = (pending: (typeof thread.permissions)[number]) =>
+    thread.items.find(
+      (i): i is ToolItem => i.kind === "tool" && i.id === pending.request.toolCall.toolCallId
+    )
+  const permissionCards = groupPermissions(thread.permissions, toolItemFor)
   /* Rows animate in only once the view is up and the thread is live: a replay,
      or a thread opened with its transcript already in the store, mounts every
      row on one frame, and 480ms of every row rising together is lag, not news. */
@@ -1116,30 +1149,44 @@ export function ThreadView({
                   </div>
                 </MessageScrollerItem>
               )}
-              {thread.permissions.map((pending, index) => (
-                <MessageScrollerItem
-                  key={pending.requestId}
-                  messageId={`permission:${pending.requestId}`}
-                >
-                  {/* Continuing the foot's count rather than restarting it, and
-                      the one place here that is a real list: two approvals
-                      arriving at once are two rows, so they cascade past each
-                      other the way a run's steps do. */}
-                  <div className="harness-item-in" style={stagger(4 + index)}>
-                    <div className="py-1">
-                      {pending.from && <AskedBy from={pending.from} />}
-                      <InlineApproval
-                        permission={pending}
-                        item={thread.items.find(
-                          (i): i is ToolItem =>
-                            i.kind === "tool" && i.id === pending.request.toolCall.toolCallId
-                        )}
-                        autofocus={index === 0}
-                      />
+              {permissionCards.map((card) =>
+                card.kind === "group" ? (
+                  <MessageScrollerItem
+                    key={card.key}
+                    messageId={`permission:${card.key}`}
+                  >
+                    <div className="harness-item-in" style={stagger(4 + card.index)}>
+                      <div className="py-1">
+                        <InlinePermissionGroup
+                          permissions={card.permissions}
+                          headId={thread.permissions[0]?.requestId}
+                          items={toolItemFor}
+                          askedBy={(pending) => pending.from && <AskedBy from={pending.from} />}
+                        />
+                      </div>
                     </div>
-                  </div>
-                </MessageScrollerItem>
-              ))}
+                  </MessageScrollerItem>
+                ) : (
+                  <MessageScrollerItem
+                    key={card.permission.requestId}
+                    messageId={`permission:${card.permission.requestId}`}
+                  >
+                    {/* Continuing the foot's count rather than restarting it:
+                        a plan beside other asks is its own row, so they
+                        cascade past each other the way a run's steps do. */}
+                    <div className="harness-item-in" style={stagger(4 + card.index)}>
+                      <div className="py-1">
+                        {card.permission.from && <AskedBy from={card.permission.from} />}
+                        <InlineApproval
+                          permission={card.permission}
+                          item={toolItemFor(card.permission)}
+                          autofocus={card.permission === thread.permissions[0]}
+                        />
+                      </div>
+                    </div>
+                  </MessageScrollerItem>
+                )
+              )}
               {/* The card rides the soft keyboard while a field within it is
                   being answered. It is the transcript's live tail, resting on
                   the margin above the docked composer — so when the composer
