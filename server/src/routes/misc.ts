@@ -31,7 +31,6 @@ import { appVersion, changelog } from "../meta.js";
 import { dbAvailable, dbStatus } from "../db/index.js";
 import { API, FEATURES, MIN_CLIENT_API } from "../compat.js";
 import { resolveLinkPreview } from "../link-preview.js";
-import { CATEGORIES, PROFILES, mapsConfig, nearby, placePhoto, route, searchPlaces } from "../geo.js";
 import { bearerToken, workspace } from "./helpers.js";
 
 /* A dockview's own shape and nothing deeper: its panels and its grid. */
@@ -66,52 +65,6 @@ export function miscRoutes(
   deps: { config: ReturnType<typeof loadConfig>; sessions: SessionManager; push: Push },
 ): void {
   const { config, sessions, push } = deps;
-
-  // The openui Map's directions panel (geo.ts). Points are "lat,lng;lat,lng", at most 25 of them.
-  const Point = z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)]);
-  const GeoRouteQuery = z.object({
-    profile: z.enum(PROFILES),
-    points: z
-      .string()
-      .transform((s) => s.split(";").map((p) => p.split(",").map(Number) as [number, number]))
-      .pipe(z.array(Point).min(2).max(25)),
-    alternatives: z.enum(["0", "1"]).optional(),
-    lang: z.string().max(35).optional(),
-  });
-  app.get("/api/geo/config", (c) => c.json(mapsConfig()));
-  app.get("/api/geo/route", async (c) => {
-    const q = GeoRouteQuery.safeParse(c.req.query());
-    if (!q.success) return c.json({ error: "profile must be car, bike or foot and points 2-25 lat,lng pairs" }, 400);
-    return c.json({ routes: await route(q.data.profile, q.data.points, q.data.alternatives === "1", q.data.lang) });
-  });
-  // A POST because an encoded polyline for a long route is far past a sensible URL.
-  const GeoNearbyBody = z.object({
-    categories: z.array(z.enum(CATEGORIES)).min(1).max(3),
-    polyline: z.string().max(200_000).optional(),
-    center: Point.optional(),
-    radius: z.number().min(100).max(50_000).default(3000),
-    lang: z.string().max(35).optional(),
-  });
-  app.post("/api/geo/nearby", async (c) => {
-    const body = GeoNearbyBody.safeParse(await c.req.json().catch(() => null));
-    if (!body.success || (!body.data.polyline && !body.data.center))
-      return c.json({ error: "categories (fuel, lodging, food) and a polyline or a center are required" }, 400);
-    const where = body.data.polyline ? { polyline: body.data.polyline } : { center: body.data.center!, radius: body.data.radius };
-    return c.json({ places: await nearby(body.data.categories, where, body.data.lang) });
-  });
-  app.get("/api/geo/search", async (c) => {
-    const query = (c.req.query("q") ?? "").trim();
-    if (!query || query.length > 200) return c.json({ error: "q must be 1-200 characters" }, 400);
-    return c.json({ places: await searchPlaces(query, c.req.query("lang")?.slice(0, 35) || undefined) });
-  });
-
-  // One photo for a named place (the openui CardGrid), looked up only when the reader asks for photos.
-  app.get("/api/geo/photo", async (c) => {
-    const query = (c.req.query("q") ?? "").trim();
-    if (!query || query.length > 200) return c.json({ error: "q must be 1-200 characters" }, 400);
-    const near = Point.safeParse([Number(c.req.query("lat")), Number(c.req.query("lon"))]);
-    return c.json({ photo: await placePhoto(query, near.success ? near.data : undefined) });
-  });
 
   app.get("/api/health", async (c) => {
     await dbAvailable();

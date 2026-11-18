@@ -24,17 +24,18 @@
    Role is derived too (`alert` for the two tones that are news, `status` for the
    rest) so nothing has to remember to say it. */
 import * as React from "react"
-import { InfoIcon, TriangleAlertIcon } from "lucide-react"
+import { CircleCheckIcon, InfoIcon, TriangleAlertIcon } from "lucide-react"
 
 import { Alert } from "@/components/ui/alert"
 import { CopyButton } from "@/components/ui/copy-button"
 import { cn } from "@/lib/utils"
 
-type Tone = "neutral" | "info" | "warn" | "error"
+type Tone = "neutral" | "info" | "success" | "warn" | "error"
 
 const TONE_CLASS: Record<Tone, string> = {
   neutral: "text-muted-foreground",
   info: "",
+  success: "text-success",
   warn: "text-warning",
   error: "",
 }
@@ -43,6 +44,7 @@ const TONE_CLASS: Record<Tone, string> = {
 const TONE_ICON = {
   neutral: InfoIcon,
   info: InfoIcon,
+  success: CircleCheckIcon,
   warn: TriangleAlertIcon,
   error: TriangleAlertIcon,
 } as const

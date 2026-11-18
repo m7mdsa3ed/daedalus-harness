@@ -10,35 +10,18 @@
 export type UiGroup = { id: string; label: string; caption: string; components: string[] }
 
 export const UI_GROUPS: UiGroup[] = [
-  { id: "layout", label: "Layout", caption: "Containers and structure. Required: turning it off turns drawn answers off.", components: ["Stack", "Card", "Section", "Divider", "Details", "Tabs", "Accordion", "Grid", "Row", "Panel", "Heading", "Text", "Icon", "Spacer"] },
-  {
-    id: "text",
-    label: "Text",
-    caption: "Markdown, verdicts, tables, verdict grids, lists, links, triage rows, callouts, comparisons and quotes for prose-shaped answers.",
-    components: ["Markdown", "Verdict", "List", "Table", "Matrix", "Callout", "KeyValue", "Badges", "EmptyState", "Compare", "People", "Quote", "Link", "Links", "Rows", "FeatureGrid", "Glossary", "PricingTiers", "Testimonial", "Faq", "AvatarGroup"],
-  },
+  { id: "layout", label: "Layout", caption: "Containers and structure. Required: turning it off turns drawn answers off.", components: ["Stack", "Grid", "Card", "Divider", "Tabs", "Accordion", "Heading", "Text"] },
+  { id: "text", label: "Text", caption: "Markdown, tables, lists, badges and callouts for prose-shaped answers.", components: ["Markdown", "Table", "List", "Badges", "Callout"] },
   {
     id: "interactive",
     label: "Interactive",
-    caption: "Buttons and form fields. A pick fills the reader's composer; nothing runs on its own.",
-    components: ["Button", "Form", "FormControl", "Input", "Textarea", "Select", "SelectItem", "Checkbox", "Slider"],
+    caption: "Buttons, form fields, dates, rankings and editable tables. A pick fills the reader's composer; nothing runs on its own.",
+    components: ["Button", "Form", "FormControl", "Input", "Textarea", "Select", "SelectItem", "Checkbox", "Switch", "RadioGroup", "Slider", "DatePicker", "Rank", "EditableTable"],
   },
-  { id: "process", label: "Process", caption: "Steps, timelines, plans and check results: things done in order.", components: ["Timeline", "Plan", "Steps", "Checks", "Stepper", "Kanban", "Agenda", "Calendar"] },
-  {
-    id: "dev",
-    label: "Developer",
-    caption: "Code, diffs, changed files, review findings, shortcuts, file trees and terminal output.",
-    components: ["Code", "Diff", "Keys", "FileTree", "Findings", "Terminal", "Endpoints"],
-  },
-  { id: "diagrams", label: "Diagrams", caption: "Flowcharts, sequence diagrams and 2x2 matrices.", components: ["Flowchart", "Sequence", "Quadrant"] },
-  {
-    id: "numbers",
-    label: "Numbers",
-    caption: "Metrics, charts, ranked bars, share bars, heatmaps, funnels and meters.",
-    components: ["StatRow", "Stat", "Sparkline", "Chart", "Bars", "Breakdown", "Heatmap", "Funnel", "Waterfall", "Progress", "Gauge"],
-  },
-  { id: "media", label: "Media", caption: "Images and galleries. Remote images load only on a click.", components: ["Image", "Gallery"] },
-  { id: "places", label: "Places", caption: "Google Maps and place cards. Each map is a billed load.", components: ["Map", "CardGrid"] },
+  { id: "dev", label: "Developer", caption: "Code, shell sessions and diffs, copyable.", components: ["Code"] },
+  { id: "diagrams", label: "Diagrams", caption: "Flowcharts and sequence diagrams.", components: ["Flowchart", "Sequence"] },
+  { id: "numbers", label: "Numbers", caption: "Metrics with trends, charts and meters.", components: ["Stat", "Chart", "Progress"] },
+  { id: "media", label: "Media", caption: "Images and galleries. Remote images load only on a click.", components: ["Image"] },
 ]
 
 export const DEFAULT_UI_GROUPS = UI_GROUPS.map((group) => group.id)

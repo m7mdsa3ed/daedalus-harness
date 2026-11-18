@@ -40,9 +40,18 @@ const TMP = join(TMP_DIR, "openui-prompt.mjs")
    Every flag here decides what the model is told it may write, and the client
    only draws a subset of it:
 
-   — `inlineMode: true` is what makes a fenced block legal at all. Without it
-     the generated prompt insists the ENTIRE reply is openui-lang, which is
-     wrong for a coding agent whose usual answer is prose;
+   — `preamble` replaces the library's, which opens "You are an AI assistant
+     that responds using openui-lang… Your ENTIRE response must be valid
+     openui-lang code — no markdown, no explanations". That is an identity
+     claim folded into somebody else's system prompt, and it contradicts the
+     lane outright: this harness wants prose with a fence in it;
+   — `inlineMode: false`, though answers ARE inline: the library's inline
+     section says a QUESTION gets plain text and "NO code", that a change is
+     "ONLY the changed/new statements", and that "the existing dashboard stays
+     unchanged" — a chat-over-one-dashboard product, and three contradictions
+     of the rules below (drawn by default, a fresh view per answer). The fence
+     rules it carried live in our preamble instead. It changes nothing else in
+     the generated text;
    — `toolCalls: false` is the inertness guarantee. No `Query`/`Mutation` is
      advertised, so the language has no way to name a tool — and the renderer
      passes no `toolProvider`, so one could not run if it did. A view composes
@@ -59,7 +68,23 @@ const TMP = join(TMP_DIR, "openui-prompt.mjs")
    — `editMode: false`: each answer draws its own view, so there is no previous
      program to patch. */
 const PROMPT_OPTIONS = {
-  inlineMode: true,
+  /* Addressed to an agent that already has an identity and a job: this says
+     what the lane is and what one answer looks like, and leaves who the model
+     is to the instructions it is folded into. */
+  preamble: `openui-lang is a small declarative language this client draws as real UI. You keep answering as you normally do, and when an answer has shape you write a fenced \`openui-lang\` program where that part of the answer goes. An answer that draws reads like this:
+
+One short sentence of lead-in.
+
+\`\`\`openui-lang
+root = Stack([first, second])
+first = ...
+second = ...
+\`\`\`
+
+An optional short close.
+
+The fence holds one program and nothing else. Draw in the answer that closes a turn, not in progress notes between tool calls, and draw a fresh, complete program every time: there is no earlier view to patch.`,
+  inlineMode: false,
   toolCalls: false,
   bindings: true,
   editMode: false,
@@ -71,16 +96,26 @@ const PROMPT_OPTIONS = {
        extra positional args, the prop comes out null, and the component is
        dropped with a validation error. Leading with the prohibition and a
        worked counter-example is the only thing that has held. */
-    "Arguments are POSITIONAL ONLY. Write `Section(\"Builds\", \"412 today\")` — NEVER `Section(title=\"Builds\", text=\"412 today\")` and never with `:` either. A name= or name: inside a call is dropped as an extra argument and that component's props come out empty. Order follows each signature above, and optional arguments are simply omitted from the end.",
+    "Arguments are POSITIONAL ONLY. Write `Heading(\"Builds today\", 2)` — NEVER `Heading(text=\"Builds today\", level=2)` and never with `:` either. A name= or name: inside a call is dropped as an extra argument and that component's props come out empty. Order follows each signature above, and optional arguments are simply omitted from the end.",
     /* The lane is on because the reader switched it on, so what has to be said
        is WHEN prose is still right — not whether to draw at all. The old wording
        ("reach for a fenced block ONLY when…") was read as permission to keep
        answering in markdown, and a reader who selected the components got pipe
        tables and heading trees back. Drawn by default, prose named as the narrow
        exception, is the only phrasing that has held. */
-    "Drawn answers are ON for this thread: the reader switched these components on and expects them used. Any answer with shape at all — two or more of anything, a result, a list, a set of steps, a status, a comparison, a set of files, a decision to confirm — is a fenced `openui-lang` program instead of prose. A markdown heading tree, a pipe table, a bulleted report or a fenced code block in your prose is the thing this lane replaces.",
+    "Drawn answers are ON for this thread: the reader switched these components on and expects them used. Any answer with shape at all — two or more of anything, a result, a list, a set of steps, a status, a comparison, a set of files, a decision to confirm — is a fenced `openui-lang` program instead of prose. A markdown heading tree, a pipe table or a bulleted report in your prose is the thing this lane replaces, and code the reader should copy goes inside the view too when it is part of a drawn answer.",
     "Prose is right for exactly three things: a one-sentence answer with no shape, a clarifying question back to the reader, and the short lead-in or close around a fence. Never put a markdown table, a heading tree or a bulleted report beside a view.",
     "Put the complete program inside exactly one fenced code block tagged `openui-lang`; never emit OpenUI statements as unfenced prose. The first line INSIDE the fence must be `root = Stack([...])` (with the equals sign), followed by any component definitions. Do not write `root Stack(...)`, and do not put prose inside the fence.",
+    /* The failure the language's own syntax rules do not name: a code snippet,
+       a log line or a quoted sentence put inside a string. An unescaped `"`
+       ends the string mid-snippet and the rest of the line is read as
+       program. A raw newline inside a string parses; a quote does not. */
+    "Every string is double-quoted: write a double quote inside one as \\\" and a backslash as \\\\. This matters most for code, logs and quoted words, where an unescaped quote ends the string early and the rest of the line is read as program.",
+    /* The language's Built-in Functions section says "Do NOT hardcode computed
+       values" — written for Query results that refresh, which this lane does
+       not have. Read literally it turns a status board into arithmetic over
+       arrays the model typed itself. */
+    "Write the values you know as literals. The built-in functions are for a list the program already holds and a $variable changes (a filter, a count of what is shown), not a way to recompute numbers you already have. Every figure, state and name in a view must come from this conversation or a tool result: never draw a check that was not run, a number you did not see or a link you were not given.",
     /* The shape a brief takes, named, because it is the one that gets answered
        as markdown headings and pipe tables by a model that read the rules above
        as being about dashboards only. A report with sections, counts and a list
@@ -110,26 +145,45 @@ const PROMPT_OPTIONS = {
        recent threads showed: a conclusion buried under the evidence, a pipe
        table for every shape, and a view that is three tables stacked. */
     "Lead with the conclusion: the first thing in the view answers the question, and the evidence follows it. Do not open with a title that only restates the request.",
-    "Pick the most specific component whose note matches the content before reaching for a generic table or list: a review, a set of results, a changed-file list, a ranking and a yes/no grid each have one. A generic table is for values that have none.",
-    "One view says one thing. Two unrelated answers are two short views or prose between them, not one tall stack; three tables in a row is a sign the content wanted a different component.",
+    "Compose from the pieces you were given, following their notes: a review, a set of results, a ranking and a yes/no grid each have a recipe there. A plain table is for values no recipe fits.",
+    "One view says one thing. Two unrelated answers are two short fences, one program each, with a line of prose between them, not one tall stack; three tables in a row is a sign the content wanted a different component.",
     "Keep the program to roughly a dozen statements. A long fence is harder to follow and likelier to be cut off before `root` — and a program with no `root` draws nothing at all.",
   ],
   /* Layout-only: the example is shown whatever groups are on, and `layout` is the one
-     group that always is. */
+     group that always is. It does what the rules ask — conclusion first, as a
+     toned tile, then the figures, then the detail folded — because a model
+     copies the example's shape before it reads a rule. It used to open on a
+     title restating the request, which is the habit a rule forbids. Parsed
+     against the library at generation time (`checkExamples`), so an example
+     that would not draw cannot ship. */
   examples: [
-    `root = Stack([title, summary, log])
-title = Section("Build health", "The last 24 hours.")
-summary = Card("Failures", "Seven, down from nine", [cause])
-cause = Section("Most common", "The e2e stage timing out.")
-log = Details("Raw log", [entry])
-entry = Section("unit", "Passed.")`,
+    `root = Stack([verdict, counts, detail])
+verdict = Card("Build is red", "CI run 4812", [reason], "error")
+reason = Text("Two of five checks fail, both the e2e stage timing out after the auth change.")
+counts = Grid([passed, failed], 2)
+passed = Card("Passed", "", [Heading("3", 1)], "success")
+failed = Card("Failed", "", [Heading("2", 1)], "error")
+detail = Accordion([{title: "What failed", children: [cause]}])
+cause = Text("\`e2e/login\` and \`e2e/checkout\` hit the 30s timeout.")`,
   ],
 }
 
+/* Each example is parsed with the parser the renderer uses, over the same
+   schema: an example the reader's app could not draw is a generation error. */
 const ENTRY = `
+import { createParser } from "@openuidev/react-lang"
 import { openuiLibrary } from "@/lib/openui/library"
 import { UI_GROUPS } from "@/lib/openui/groups"
-process.stdout.write(JSON.stringify({ prompt: openuiLibrary.prompt(${JSON.stringify(PROMPT_OPTIONS)}), groups: UI_GROUPS.map(({ id, label }) => ({ id, label })) }))
+const options = ${JSON.stringify(PROMPT_OPTIONS)}
+const parser = createParser(openuiLibrary.toJSONSchema(), openuiLibrary.root)
+const exampleErrors = options.examples.flatMap((source, i) => {
+  const result = parser.parse(source)
+  const errors = result.meta.errors.map((e) => e.message)
+  if (!result.root) errors.push("no root")
+  if (result.meta.orphaned.length) errors.push("unreachable: " + result.meta.orphaned.join(", "))
+  return errors.map((e) => "example " + (i + 1) + ": " + e)
+})
+process.stdout.write(JSON.stringify({ prompt: openuiLibrary.prompt(options), groups: UI_GROUPS.map(({ id, label }) => ({ id, label })), exampleErrors }))
 `
 
 async function generate() {
@@ -151,17 +205,6 @@ async function generate() {
       "@daedalus/tps": join(ROOT, "../server/src/tps.ts"),
       "@daedalus/peak": join(ROOT, "../server/src/peak.ts"),
     },
-    /* The Map's Google Maps half is a lazy browser-only chunk (it touches `window` and imports CSS);
-       the prompt needs only the specs, so it is compiled as nothing. */
-    plugins: [
-      {
-        name: "stub-google-map",
-        setup(b) {
-          b.onResolve({ filter: /\/(google-map|place-photo)$/ }, () => ({ path: "google-map", namespace: "stub" }))
-          b.onLoad({ filter: /.*/, namespace: "stub" }, () => ({ contents: "export default () => null; export const usePlacePhoto = () => undefined", loader: "js" }))
-        },
-      },
-    ],
     logLevel: "silent",
     write: false,
   })
@@ -223,7 +266,8 @@ export const OPENUI_GROUP_ORDER: string[] = ${JSON.stringify(parts.order)};
 `
 }
 
-const { prompt, groups } = JSON.parse(await generate())
+const { prompt, groups, exampleErrors } = JSON.parse(await generate())
+if (exampleErrors.length) throw new Error(`an example does not draw:\n${exampleErrors.join("\n")}`)
 const parts = split(prompt, groups)
 /* The cut loses nothing: the pieces, joined, are the prompt. */
 if (parts.head + parts.order.map((id) => parts.sections[id]).join("") + parts.tail !== prompt) throw new Error("the split does not reassemble into the prompt")

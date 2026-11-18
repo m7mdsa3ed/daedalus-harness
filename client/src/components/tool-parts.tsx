@@ -508,7 +508,11 @@ function OpenuiFenceView({ code, open }: { code: string; open: boolean }) {
      the same lazy component — no per-view identity games there. */
   return (
     <React.Suspense fallback={<Prose text={"```openui-lang\n" + code + "\n```"} />}>
-      <ErrorBoundary name="openui view" resetKeys={[code]} key={code}>
+      {/* No `key={code}`: the code changes on every streamed chunk, and a key on
+          it tore the whole view down and rebuilt it each time — the renderer
+          from blank, every block's fade-in again, a flowchart's layout from
+          scratch. `resetKeys` already clears a caught error when it changes. */}
+      <ErrorBoundary name="openui view" resetKeys={[code]}>
         <OpenuiView code={code} streaming={open} />
       </ErrorBoundary>
     </React.Suspense>

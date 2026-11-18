@@ -90,7 +90,7 @@ const persona = { id: "p1", prompt: "PERSONA TEXT" };
   assert.ok(OPENUI_INSTRUCTIONS.includes("exactly one fenced code block tagged `openui-lang`"), "requires the client-recognized fence");
   assert.ok(OPENUI_INSTRUCTIONS.includes("never emit OpenUI statements as unfenced prose"), "prevents raw OpenUI output");
   assert.ok(
-    OPENUI_INSTRUCTIONS.includes("StatRow(") &&
+    OPENUI_INSTRUCTIONS.includes("Stat(") &&
       OPENUI_INSTRUCTIONS.includes("Chart(") &&
       OPENUI_INSTRUCTIONS.includes("Flowchart("),
     "and carries the generated component table, so every runtime gets the same one",
@@ -102,6 +102,15 @@ const persona = { id: "p1", prompt: "PERSONA TEXT" };
   assert.ok(OPENUI_INSTRUCTIONS.includes("Drawn answers are ON for this thread"), "states that the lane is the default, not an option");
   assert.ok(/Prose is right for exactly/.test(OPENUI_INSTRUCTIONS), "names the narrow cases where prose still wins");
   assert.ok(!/Reach for a fenced block ONLY/i.test(OPENUI_INSTRUCTIONS), "no leftover hedging that reads as permission to skip the lane");
+  /* The library's stock preamble and inline-mode section were written for a
+     chat over one dashboard: "your ENTIRE response must be openui-lang", a
+     question gets "NO code", a change is "ONLY the changed statements". Each
+     contradicts the lane, and the preamble claims an identity. */
+  assert.ok(!OPENUI_INSTRUCTIONS.includes("ENTIRE response"), "no stock preamble demanding an all-openui reply");
+  assert.ok(!OPENUI_INSTRUCTIONS.includes("You are an AI assistant"), "and no identity claim inside another runtime's prompt");
+  assert.ok(!OPENUI_INSTRUCTIONS.includes("## Inline Mode") && !OPENUI_INSTRUCTIONS.includes("RootComp"), "no stock inline-mode section");
+  assert.ok(OPENUI_INSTRUCTIONS.includes("Every string is double-quoted"), "teaches escaping, the parse failure the syntax rules omit");
+  assert.ok(OPENUI_INSTRUCTIONS.includes("Write the values you know as literals"), "overrides the stock 'never hardcode computed values' for a lane with no queries");
   console.log("openui-trailer: instructions ok");
 }
 
@@ -112,10 +121,10 @@ const persona = { id: "p1", prompt: "PERSONA TEXT" };
   assert.equal(openuiInstructions([...UI_GROUP_IDS]), OPENUI_INSTRUCTIONS, "the whole registry is the full lane");
 
   const narrow = openuiInstructions(["numbers"]);
-  assert.ok(narrow.includes("Chart(") && narrow.includes("StatRow("), "the chosen group is taught");
+  assert.ok(narrow.includes("Chart(") && narrow.includes("Stat("), "the chosen group is taught");
   assert.ok(narrow.includes("### Layout") && narrow.includes("Stack("), "layout is forced in: root lives there");
-  assert.ok(!narrow.includes("Map(locations") && !narrow.includes("Flowchart("), "an unselected group's text is absent");
-  assert.ok(!narrow.includes("### Places") && !narrow.includes("### Diagrams"), "and so are its headings");
+  assert.ok(!narrow.includes("Image(") && !narrow.includes("Flowchart("), "an unselected group's text is absent");
+  assert.ok(!narrow.includes("### Media") && !narrow.includes("### Diagrams"), "and so are its headings");
   assert.ok(/positional/i.test(narrow) && narrow.includes("Final Verification"), "the frame around the groups is unchanged");
   assert.ok(narrow.length < OPENUI_INSTRUCTIONS.length, "narrowing costs fewer tokens");
 
@@ -129,11 +138,11 @@ const persona = { id: "p1", prompt: "PERSONA TEXT" };
         for (const name of names[other]!) assert.ok(!new RegExp(`\\b${name}\\b`).test(text), `${id} alone must not name ${other}'s ${name}`);
   }
 
-  const heads = [...openuiInstructions(["places", "text", "layout"]).split("## Hoisting")[0]!.matchAll(/^### (\w+)$/gm)].map((m) => m[1]);
-  assert.deepEqual(heads, ["Layout", "Text", "Places"], "taught in registry order, whatever order they were picked in");
+  const heads = [...openuiInstructions(["media", "text", "layout"]).split("## Hoisting")[0]!.matchAll(/^### (\w+)$/gm)].map((m) => m[1]);
+  assert.deepEqual(heads, ["Layout", "Text", "Media"], "taught in registry order, whatever order they were picked in");
 
   const out = withInstructionTrailers(persona, { uiGroups: ["media"] });
-  assert.ok(out!.prompt.includes("Gallery(") && !out!.prompt.includes("Chart("), "the behaviour carries the set into the trailer");
+  assert.ok(out!.prompt.includes("Image(") && !out!.prompt.includes("Chart("), "the behaviour carries the set into the trailer");
   assert.equal(withInstructionTrailers(persona, { uiGroups: [] })!.prompt, "PERSONA TEXT", "an empty set asks for nothing");
   assert.equal(withInstructionTrailers(persona, {})!.prompt, "PERSONA TEXT", "and so does no set");
   assert.ok(out!.prompt.includes("### Layout") && out!.prompt.includes("Stack("), "layout is forced in for a set that omits it");
@@ -146,7 +155,7 @@ const persona = { id: "p1", prompt: "PERSONA TEXT" };
   assert.deepEqual(normalizeUiGroups([]), [], "an empty set stays empty: drawn answers off");
   assert.deepEqual(normalizeUiGroups("text"), [], "anything but an array is empty");
   assert.deepEqual(normalizeUiGroups(["media"]), ["layout", "media"], "layout is forced into a non-empty set");
-  assert.deepEqual(normalizeUiGroups(["places", "nope", "text", "text"]), ["layout", "text", "places"], "known ids, deduped, registry order");
+  assert.deepEqual(normalizeUiGroups(["media", "nope", "text", "text"]), ["layout", "text", "media"], "known ids, deduped, registry order");
   assert.deepEqual(uiGroupsOf(null, false), [], "legacy: the switch off reads as none");
   assert.deepEqual(uiGroupsOf(null, true), [...UI_GROUP_IDS], "legacy: the switch on reads as every group");
   assert.deepEqual(uiGroupsOf(null, null), [...UI_GROUP_IDS], "legacy: never asked reads as every group");

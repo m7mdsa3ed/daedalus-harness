@@ -1141,26 +1141,35 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   asking: the renderer reads no set, so a fence from a group the thread was not taught still draws.
   `library.tsx` builds its `componentGroups` from `groups.ts` (names and membership are one
   place), keeping each group's notes beside the components.
-- **The generated-view library has a component per recurring answer shape, and the prompt says which to
-  reach for** (`Verdict`, `Matrix`, `Checks`, `Findings`, `Bars`, each in
-  `lib/openui/components/`). They came from reading what threads actually drew: a table for every shape
-  (a column of "Yes", a review as five-column prose, a ranking as a table of counts) and a conclusion
-  buried under its evidence. Each takes a **flat** schema with strings the model already has, and each
-  tolerates a half-streamed or empty prop. `Matrix` cells are plain strings whose first word is the
-  verdict (`yes`/`no`/`partial`/`n/a`), not a typed cell per column, because pairing a
-  typed cell with its column is what models get wrong — and both readers are `kit.tsx`'s
-  `readStateCell`, which `Table`'s `tones: true` chips from the same word list, so `yes, per request`
-  cannot mean two things in one answer; `Findings` sorts worst-first itself so the order
-  the model found them in does not matter. The state chip (`ToneChip`), the state said as a dot and a word (`StateLine`) and the
-  tone list (`TONES`) live in `kit.tsx` so a severity, a status and a badge cannot drift apart.
-  The scale was raised once for legibility on a phone (14px body, uppercase `LABEL`, `FIG` up to 36px), and a status chip is a tone-washed pill rather than a dot-only outline.
+- **The generated-view library is a small generic set, shadcn-style, and the notes are recipes**
+  (29 components: `Stack`, `Grid`, `Card`, `Divider`, `Tabs`, `Accordion`, `Heading`, `Text`,
+  `Markdown`, `Table`, `List`, `Badges`, `Callout`, `Code`, `Stat`, `Chart`, `Progress`, `Image`,
+  `Flowchart`, `Sequence` and the nine form pieces). OpenUI's own guidance is the reason — every
+  component costs prompt and confusion, flat schemas composed with `.ref` beat a component per
+  shape — so a review, a plan, a run's results and a how-to are `List` rows with a `state` chip
+  and a `code` well, a status tile is a toned `Card`, a terminal session and a diff are `Code` in
+  `bash`/`diff`, a sparkline is a `Stat` with `values`, a ranking is a bar `Chart`, and the group
+  notes say which recipe makes which shape. Only `Flowchart` and `Sequence` stay specialised,
+  because no composition draws them. **A removed name is not aliased**: an old fence naming one
+  falls back to its source. `Table` cells are plain strings whose first word is the verdict
+  (`yes`/`no`/`partial`/`n/a`), read by `kit.tsx`'s `readStateCell`, because a typed cell per
+  column is what models get wrong. The state chip (`ToneChip`) and the tone list (`TONES`) live in
+  `kit.tsx` so a severity, a status and a badge cannot drift apart.
   **Every component is one file in `lib/openui/components/`** and `library.tsx` only lists them, so
   adding one is a new file plus a line and restyling one is never a diff in a two-thousand-line
-  module; they share one short, dense scale (`TITLE`/`BODY`/`META`/`LABEL`/`FIG`) and one three-step
+  module; they share one short scale (`TITLE`/`BODY`/`META`/`LABEL`/`FIG`) and one three-step
   inset (`PAD`, `PAD_ROW`, `LIST_ROW`) from `kit.tsx`, and **none of them states a size of its own** —
-  a component that wants a new one is a component that has stopped matching the rest. The page ground
-  is the card's hairline rather than a shadow, because at this density a stack of seven soft-ringed
-  18px cards read as a stack of buttons. **A group's notes may only name its own
+  a component that wants a new one is a component that has stopped matching the rest.
+  **The scale is the app's own, not a parallel one**: `TITLE`/`BODY` are `text-sm` (15px in the
+  transcript, 16px on a phone), `META`/`LABEL` are `text-xs` and `FIG` is `text-2xl` — the sizes a
+  settings stat tile, the suggestion card and a tool row already use — so a drawn answer needs no
+  second type vocabulary. A frame on the page is the product's card: `rounded-2xl`, `bg-card` and
+  the one `ring-1 ring-foreground/10`, no shadow (`settings/primitives` `CARD`, a task's comment
+  and a suggestion group all draw exactly that; the fill is what lifts it on dark, and on light
+  the ring is what draws it). A frame inside a frame is `INSET` — a recessed `bg-muted/50` under a
+  lighter hairline, never a second identical ring. A status chip is the app's tonal one
+  (`bg-success/10 text-success`, the shape a task, a workflow step and a palette row use) rather
+  than a bordered outline, so a status means the same thing everywhere. **A group's notes may only name its own
   components** (`openui-trailer.test.ts` fails on a bare English word that is another group's
   component name, e.g. "List"), and the three composition rules in `gen-openui.mjs` (lead with the
   conclusion, prefer the most specific component, one view says one thing) name no component for the

@@ -1751,6 +1751,27 @@ html[data-window-controls-overlay="true"] {
 }
 
 /* Inline code as a chip — and without the plugin's literal backticks. */
+/* ── A generated view arriving ──
+   Each block of a drawn answer (`lib/openui`, every `.openui-flow` container's
+   children) rises into place once as it streams in, the way a sentence does.
+   Gated on the view's `data-live` (the row is still being written), and the
+   renderer keys children by position, so a block animates once when it mounts
+   and never again — not on the next chunk, a reload or a scroll back. */
+@keyframes openui-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+[data-live] .openui-flow > * {
+  animation: openui-in 280ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-live] .openui-flow > * {
+    animation: none;
+  }
+}
+
 .prose :where(code):not(:where(pre code)) {
   @apply rounded-md bg-muted px-[0.3em] py-[0.1em] text-[0.875em] font-normal;
 }

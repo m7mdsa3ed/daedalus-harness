@@ -510,21 +510,17 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   no `toolProvider` is passed, so a `Query()`/`Mutation()` is dropped rather than run, and the
   prompt carries `bindings:false`/`toolCalls:false` so a form is never offered — a generated
   view composes what the model already knows, and every tool call stays an ACP one with a
-  permission in front of it. **The one thing it may reach is the network, and only through `Image` and `Map`**: `Image`
-  loads a remote URL on a click, and `Map` is Google Maps (`lib/openui/google-map.tsx`, its own
-  lazy chunk, loaded on a click ("Show map" or a location row) because every rendered map is a billed load) with a directions panel whose
-  routing, search and places-along-the-route are the server's (`/api/geo/*`, `server/src/geo.ts`:
-  Google's Routes and Places APIs under `config.geo.googleServerKey`). **Two keys, two doors**:
-  the Maps JavaScript key (`geo.googleMapsKey`, referrer-restricted) is handed to the browser by
-  `GET /api/geo/config`; the server key never leaves the server; with no key the map says how to set one. **An unclosed fence draws too, from the moment it opens** — the
+  permission in front of it. **The one thing it may reach is the network, and only through `Image`**, which loads a remote
+  URL on a click naming its host. There is no map component and no Google key: a generated view
+  is a reading of what the model already knows and never a live lookup. **An unclosed fence draws too, from the moment it opens** — the
   language puts `root` first and resolves forward references as their statements arrive, so a
   program fills in over the answer rather than appearing at the end; what that demands is that
   the drawing be forgiving, so the "came out empty" fallback is suspended while the row is
   still being written (a one-line program is legitimately an empty shell). A fence that will
   not parse falls back to the source, and the components are the harness's own (`Notice`, `Empty`,
   the `--chart-*` tokens) in `lib/openui/library.tsx` — the component table, which is one
-  file's edit. **Anything framed goes through its `Box`, which asks where it is** — a card on
-  the page, a recessed well inside another frame, a bare cell in a `StatRow` — so no generated
+  file's edit. **Anything framed goes through its `Box`, which asks where it is** — a hairline
+  frame on the message's own ground on the page, a lighter hairline inside another frame — so no generated
   component picks its own ground, and one type scale (`TITLE`/`BODY`/`META`/`LABEL`) sizes all
   of them. **The prompt is generated from that table, never hand-written**:
   `pnpm openui` in client/ runs `scripts/gen-openui.mjs` (the library's own prompt generator,
@@ -545,8 +541,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   same project defaults. Adding a component is a file in `lib/openui/components/`, an entry in
   `lib/openui/groups.ts` (plain data, no React, so the picker never pulls the lazy chunk), its
   notes in `library.tsx` and one `pnpm openui`. **A generated view reflows on the panel's
-  width, not the window's** — the components carry `@panel-sm:` variants (`StatRow` falls two-up,
-  `KeyValue` stacks key over value, the chart's tick gutters shrink, and a **`Table` becomes one
+  width, not the window's** — the components carry `@panel-sm:` variants (a `Grid` of metrics falls
+  two-up with `phone` 2, the chart's tick gutters shrink, and a **`Table` becomes one
   block per row** — first column its name, the rest named facts under it — because a five-column
   grid in a phone panel was a sideways scroller showing two of them), because the one thing the
   model cannot control is how wide the box it lands in is. The lane is written for a thread with a

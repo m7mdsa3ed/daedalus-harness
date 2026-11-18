@@ -19,10 +19,15 @@ import {
   type NodeProps,
   type ReactFlowInstance,
 } from "@xyflow/react"
-import { RotateCcw } from "lucide-react"
+import { CircleCheck, RotateCcw } from "lucide-react"
 
 import { PANEL_SM, useCoarsePointer } from "@/hooks/use-device"
 import { layoutFlow } from "@/lib/openui/flow-layout"
+import { FLOW_ICONS } from "@/lib/openui/icons"
+
+/** The five tones a generated view spells; on a node they tint a card, on an
+    edge its label pill. Distinct from `tone`, which is a run step's state. */
+export type FlowAccent = "neutral" | "info" | "success" | "warn" | "error"
 
 export type FlowchartNode = {
   id: string
@@ -37,6 +42,12 @@ export type FlowchartNode = {
   updates?: string[]
   /** What a finished node came back with, clamped to three lines. */
   result?: string
+  /** Any of the next four makes the node a card: a glyph tile beside the
+      label, a muted sentence under it, a checklist under a rule, and a tint. */
+  icon?: string
+  text?: string
+  items?: string[]
+  accent?: FlowAccent
 }
 
 export type FlowchartEdge = {
@@ -44,6 +55,8 @@ export type FlowchartEdge = {
   to: string
   label?: string
   dashed?: boolean
+  /** Tints the label's pill; a label without one keeps the plain chip. */
+  tone?: FlowAccent
 }
 
 type FlowDirection = "down" | "right"
@@ -55,7 +68,14 @@ type FlowNodeData = {
   hint?: string
   updates?: string[]
   result?: string
+  icon?: string
+  text?: string
+  items?: string[]
+  accent?: FlowAccent
 }
+
+const isCard = (node: Pick<FlowchartNode, "icon" | "text" | "items" | "accent">) =>
+  Boolean(node.icon || node.text || node.items?.length || node.accent)
 type FlowNode = Node<FlowNodeData, "flowNode">
 type Size = { width: number; height: number }
 
@@ -69,6 +89,14 @@ const BACK = { source: "back-s", target: "back-t" } as const
    character, 208px at most with 32px of padding. */
 function estimate(node: FlowchartNode): Size {
   if (node.shape === "dot") return { width: 12, height: 12 }
+  /* A card: 288px wide, ~30 characters a line of its text column, plus the
+     checklist rows under the rule. */
+  if (isCard(node)) {
+    const lines = (s?: string) => (s ? Math.ceil(s.length / 30) : 0)
+    const head = Math.max(40, lines(node.label ?? node.id) * 20 + lines(node.text) * 18)
+    const list = node.items?.length ? 17 + node.items.reduce((t, item) => t + Math.max(1, Math.ceil(item.length / 34)) * 20 + 6, 0) : 0
+    return { width: 288, height: head + list + 32 }
+  }
   const text = (node.label ?? node.id).length * 6.6
   const width = Math.min(208, Math.max(112, text + 34))
   const lines =
@@ -96,8 +124,33 @@ function toNodes(nodes: FlowchartNode[], positions: Map<string, { x: number; y: 
       hint: node.hint,
       updates: node.updates,
       result: node.result,
+      icon: node.icon,
+      text: node.text,
+      items: node.items,
+      accent: node.accent,
     },
   }))
+}
+
+/* A toned label is a pill in the tone's wash with its ink: React Flow draws
+   the label as SVG, so the tints are fills and the radius is the rect's. */
+const PILL: Record<FlowAccent, { ink: string; wash: string }> = {
+  neutral: { ink: "var(--muted-foreground)", wash: "color-mix(in oklab, var(--muted) 85%, var(--background))" },
+  info: { ink: "var(--primary)", wash: "color-mix(in oklab, var(--primary) 12%, var(--background))" },
+  success: { ink: "var(--success)", wash: "color-mix(in oklab, var(--success) 14%, var(--background))" },
+  warn: { ink: "var(--warning)", wash: "color-mix(in oklab, var(--warning) 14%, var(--background))" },
+  error: { ink: "var(--destructive)", wash: "color-mix(in oklab, var(--destructive) 12%, var(--background))" },
+}
+
+function labelLook(edge: FlowchartEdge) {
+  if (!edge.tone) return { labelBgPadding: [6, 3] as [number, number], labelBgBorderRadius: 4 }
+  const pill = PILL[edge.tone]
+  return {
+    labelBgPadding: [10, 4] as [number, number],
+    labelBgBorderRadius: 999,
+    labelStyle: { fill: pill.ink, fontWeight: 600 },
+    labelBgStyle: { fill: pill.wash },
+  }
 }
 
 /* A loop's return edge leaves and enters by the side, so it runs beside the
@@ -115,8 +168,7 @@ function toEdges(nodes: FlowchartNode[], edges: FlowchartEdge[], back: Set<numbe
             type: "smoothstep" as const,
             pathOptions: { borderRadius: 10, offset: 20 },
             label: edge.label,
-            labelBgPadding: [6, 3] as [number, number],
-            labelBgBorderRadius: 4,
+            ...labelLook(edge),
             style: edge.dashed ? { strokeDasharray: "5 4" } : undefined,
           },
         ]
@@ -227,6 +279,58 @@ function FlowNodeView({ data, selected, isConnectable }: NodeProps<FlowNode>) {
   )
 }
 
+/* A decision chart's card: a question or an outcome as a titled tile rather
+   than a shape. Class names are whole so Tailwind can see them. */
+const CARD_FRAME: Record<FlowAccent, string> = {
+  neutral: "border-border bg-card",
+  info: "border-primary/20 bg-[color-mix(in_oklab,var(--primary)_4%,var(--card))]",
+  success: "border-success/25 bg-[color-mix(in_oklab,var(--success)_6%,var(--card))]",
+  warn: "border-warning/30 bg-[color-mix(in_oklab,var(--warning)_6%,var(--card))]",
+  error: "border-destructive/20 bg-[color-mix(in_oklab,var(--destructive)_4%,var(--card))]",
+}
+const CARD_TILE: Record<FlowAccent, string> = {
+  neutral: "bg-muted text-foreground",
+  info: "bg-primary/10 text-primary",
+  success: "bg-success/15 text-success",
+  warn: "bg-warning/15 text-warning",
+  error: "bg-destructive/10 text-destructive",
+}
+
+function FlowCardView({ data, selected, handles }: { data: FlowNodeData; selected: boolean; handles: React.ReactNode }) {
+  const accent = data.accent ?? "neutral"
+  const Glyph = data.icon ? FLOW_ICONS[data.icon] : undefined
+  return (
+    <div
+      className={`group relative w-72 rounded-xl border p-4 text-start shadow-xs ${CARD_FRAME[accent]} ${
+        selected ? "ring-2 ring-primary/25" : ""
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        {Glyph && (
+          <span className={`flex size-10 shrink-0 items-center justify-center rounded-full ${CARD_TILE[accent]}`}>
+            <Glyph aria-hidden className="size-5" />
+          </span>
+        )}
+        <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+          <div className="text-sm leading-snug font-semibold text-card-foreground">{data.label}</div>
+          {data.text && <div className="mt-1 text-xs leading-snug text-muted-foreground">{data.text}</div>}
+        </div>
+      </div>
+      {data.items && data.items.length > 0 && (
+        <ul className="mt-3 space-y-1.5 border-t border-border/70 pt-3">
+          {data.items.map((item, i) => (
+            <li key={i} className="flex items-start gap-2 text-xs leading-5 text-card-foreground [overflow-wrap:anywhere]">
+              <CircleCheck aria-hidden className="mt-0.5 size-4 shrink-0 text-success" />
+              <span className="min-w-0">{item}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {handles}
+    </div>
+  )
+}
+
 const nodeTypes = { flowNode: FlowNodeView }
 
 /* React Flow's own palette is light-only; point it at the theme's tokens. */
@@ -244,6 +348,8 @@ export function InteractiveFlowchart({
   direction = "down",
   readOnly = false,
   onNodeClick,
+  onNodeDoubleClick,
+  onPaneClick,
   selectedId,
   fill = false,
 }: {
@@ -254,6 +360,9 @@ export function InteractiveFlowchart({
       connects or deletes, and a change in the inputs redraws it. */
   readOnly?: boolean
   onNodeClick?: (id: string) => void
+  onNodeDoubleClick?: (id: string) => void
+  /** A click on the empty canvas — where a caller holding `selectedId` clears it. */
+  onPaneClick?: () => void
   /** Read-only: the node drawn as selected — the caller's pick, since a
       derived node list has no selection state of its own to keep. */
   selectedId?: string | null
@@ -281,13 +390,15 @@ export function InteractiveFlowchart({
     return () => observer.disconnect()
   }, [])
   const layoutDirection: FlowDirection = direction === "right" && width > 0 && width < PANEL_SM ? "down" : direction
-  // ponytail: wraps on an average node width; wrap on measured widths if rows overflow.
-  const columns = layoutDirection === "down" && width > 0 ? Math.max(1, Math.floor((width - 48) / 200)) : Number.POSITIVE_INFINITY
 
   /* The inputs by content, not identity: a parse makes new arrays every chunk. */
   const signature = JSON.stringify([inputNodes, inputEdges])
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const graph = React.useMemo(() => ({ nodes: uniqueNodes(inputNodes), edges: inputEdges }), [signature])
+
+  // ponytail: wraps on an average node width (a card's when there is one); wrap on measured widths if rows overflow.
+  const slotWidth = graph.nodes.some(isCard) ? 328 : 200
+  const columns = layoutDirection === "down" && width > 0 ? Math.max(1, Math.floor((width - 48) / slotWidth)) : Number.POSITIVE_INFINITY
 
   const [sizes, setSizes] = React.useState<Record<string, Size>>({})
   const layout = React.useMemo(
@@ -415,6 +526,8 @@ export function InteractiveFlowchart({
           onEdgesChange={editable ? onEdgesChange : undefined}
           onConnect={editable ? onConnect : undefined}
           onNodeClick={onNodeClick ? (_, node) => onNodeClick(node.id) : undefined}
+          onNodeDoubleClick={onNodeDoubleClick ? (_, node) => onNodeDoubleClick(node.id) : undefined}
+          onPaneClick={onPaneClick}
           onInit={(instance) => (flowRef.current = instance)}
           fitView
           fitViewOptions={FIT}

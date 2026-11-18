@@ -21,16 +21,49 @@
  * `readStateCell` says why).
  */
 import { z } from "zod/v4"
+import { Check, Minus, X } from "lucide-react"
 import { defineComponent } from "@openuidev/react-lang"
 import { cn } from "@/lib/utils"
 import { Table as UiTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { BODY, Box, CELL_STATES, LABEL, PAD_ROW, readStateCell, TITLE, ToneChip } from "@/lib/openui/kit"
+import { BODY, Box, CELL_STATES, LABEL, PAD_ROW, readStateCell, readVerdict, RecordList, TITLE, ToneChip, VERDICT_STATE } from "@/lib/openui/kit"
 import { plainText, RichText } from "@/lib/openui/rich-text"
 
 /** One cell: its state as the app's chip when it opens with one, the rest as
     written. `tones` is the table's opt-in, so an ordinary cell is one string
     through `RichText` and nothing else. */
-function ToneCell({ raw, tones }: { raw: string | undefined; tones?: boolean }) {
+const GLYPH = { check: Check, x: X, minus: Minus } as const
+const GLYPH_TONE = { yes: "text-success", no: "text-destructive", partial: "text-warning", na: "text-muted-foreground" } as const
+
+/** The glyph form of a verdict cell, for a grid of answers rather than of
+    values. */
+function VerdictCell({ raw }: { raw: string | undefined }) {
+  const { state, note } = readVerdict(raw)
+  if (!state) {
+    return note ? <RichText text={note} /> : <span aria-hidden className="text-muted-foreground">&ndash;</span>
+  }
+  const { word, glyph } = VERDICT_STATE[state]
+  const Glyph = glyph ? GLYPH[glyph] : null
+  return (
+    <span className="inline-flex min-w-0 flex-wrap items-baseline gap-1.5 align-top">
+      {Glyph ? (
+        <Glyph aria-hidden className={cn("size-3.5 shrink-0 self-center", GLYPH_TONE[state])} strokeWidth={3} />
+      ) : (
+        <span aria-hidden className="w-3.5 shrink-0 text-center text-[0.6875rem] text-muted-foreground">
+          n/a
+        </span>
+      )}
+      <span className="sr-only">{word}</span>
+      {note && (
+        <span className={cn("min-w-0", state === "na" && "text-muted-foreground")}>
+          <RichText text={note} />
+        </span>
+      )}
+    </span>
+  )
+}
+
+function ToneCell({ raw, tones, verdicts }: { raw: string | undefined; tones?: boolean; verdicts?: boolean }) {
+  if (verdicts) return <VerdictCell raw={raw} />
   const { state, note } = readStateCell(raw)
   const chip = tones && state ? CELL_STATES[state] : undefined
   if (!chip) return <RichText text={note} />
@@ -49,7 +82,7 @@ function ToneCell({ raw, tones }: { raw: string | undefined; tones?: boolean }) 
 /** A cell is a number when it reads as one — a figure, a currency, a percent,
     a short unit. A column whose every filled cell is one aligns to the end. */
 const NUMERIC = /^[-+~]?[$€£¥]?\s?\d[\d,.]*\s?(%|[a-zA-Z]{1,3})?$/
-function numericColumns(columns: string[], rows: string[][]) {
+export function numericColumns(columns: string[], rows: string[][]) {
   return columns.map((_, c) => {
     const cells = rows.map((row) => row[c]?.trim() ?? "").filter(Boolean)
     // Read through the marks: `**22**` is a figure in bold, not a string.
@@ -83,13 +116,17 @@ export const Table = defineComponent({
     header: z.boolean().optional(),
     tone: z.enum(["default", "muted", "accent"]).optional(),
     tones: z.boolean().optional(),
+    /* `verdicts` is the grid of answers: the same four words `tones` chips, but
+       led by a glyph instead of a chip, which is what a column of yes/no needs.
+       It was `Matrix`. */
+    verdicts: z.boolean().optional(),
   }),
   component: ({ props }) => {
     const numeric = numericColumns(props.columns, props.rows)
     const muted = props.tone === "muted"
     /* A cell that carries a state is a chip, so its column is not a column of
        end-aligned figures — the tone reading wins over the numeric one. */
-    const toned = (row: string[], index: number) => props.tones && Boolean(readStateCell(row[index]).state)
+    const toned = (row: string[], index: number) => (props.tones || props.verdicts) && Boolean(readStateCell(row[index]).state)
     // Two columns (a name and its value) still fit a phone panel, and stacking
     // them would put a column label above every row for nothing.
     const stacked = props.columns.length > 2
@@ -100,7 +137,7 @@ export const Table = defineComponent({
             with nothing in that row is left out rather than drawn as a label
             with a blank beside it. */}
         {stacked && (
-          <ul className="w-full min-w-0 list-none divide-y divide-rule @panel-sm:hidden">
+          <RecordList className="@panel-sm:hidden">
             {props.rows.map((row, rowIndex) => {
               const facts = props.columns
                 .map((column, index) => ({ column, value: (row[index] ?? "").trim(), index }))
@@ -108,8 +145,8 @@ export const Table = defineComponent({
                 .filter((fact) => fact.value !== "")
               return (
                 <li key={rowIndex} className={cn("min-w-0 space-y-1.5", PAD_ROW)}>
-                  <p className={cn(TITLE, "text-[length:calc(var(--text-sm,0.875rem)+0.0625rem)]", muted && "text-muted-foreground")}>
-                    {(row[0] ?? "").trim() ? <ToneCell raw={row[0]} tones={props.tones} /> : "–"}
+                  <p className={cn(TITLE, muted && "text-muted-foreground")}>
+                    {(row[0] ?? "").trim() ? <ToneCell raw={row[0]} tones={props.tones} verdicts={props.verdicts} /> : "–"}
                   </p>
                   {facts.length > 0 && (
                     <dl className="min-w-0 space-y-0.5">
@@ -124,7 +161,7 @@ export const Table = defineComponent({
                               numeric[fact.index] && !toned(row, fact.index) && "tabular-nums"
                             )}
                           >
-                            <ToneCell raw={fact.value} tones={props.tones} />
+                            <ToneCell raw={fact.value} tones={props.tones} verdicts={props.verdicts} />
                           </dd>
                         </div>
                       ))}
@@ -133,7 +170,7 @@ export const Table = defineComponent({
                 </li>
               )
             })}
-          </ul>
+          </RecordList>
         )}
         {/* Wide: the registry table, whose own container scrolls, so a table
             still wider than the panel scrolls inside the turn rather than widening it. */}
@@ -141,11 +178,11 @@ export const Table = defineComponent({
           <UiTable>
             {props.header !== false && (
               <TableHeader>
-                <TableRow className="bg-wash hover:bg-wash">
+                <TableRow className="border-rule hover:bg-transparent">
                   {props.columns.map((column, index) => (
                     <TableHead
                       key={index}
-                      className={cn(LABEL, "h-9 px-3.5 whitespace-normal @panel-sm:px-4", numeric[index] ? "text-end" : "text-start")}
+                      className={cn(LABEL, "h-8 px-3 whitespace-normal @panel-sm:px-4", numeric[index] ? "text-end" : "text-start")}
                     >
                       {column}
                     </TableHead>
@@ -155,19 +192,19 @@ export const Table = defineComponent({
             )}
             <TableBody>
               {props.rows.map((row, rowIndex) => (
-                <TableRow key={rowIndex} className="hover:bg-wash">
+                <TableRow key={rowIndex} className="border-rule hover:bg-wash">
                   {props.columns.map((_, cellIndex) => (
                     <TableCell
                       key={cellIndex}
                       className={cn(
                         BODY,
-                        "min-w-24 px-3.5 py-2.5 align-top break-words whitespace-normal @panel-sm:px-4",
+                        "min-w-24 px-3 py-2.5 align-top break-words whitespace-normal @panel-sm:px-4",
                         numeric[cellIndex] && !toned(row, cellIndex) && "min-w-0 text-end whitespace-nowrap tabular-nums",
                         muted && "text-muted-foreground",
                         cellIndex === 0 && !muted && "font-semibold"
                       )}
                     >
-                      <ToneCell raw={row[cellIndex]} tones={props.tones} />
+                      <ToneCell raw={row[cellIndex]} tones={props.tones} verdicts={props.verdicts} />
                     </TableCell>
                   ))}
                 </TableRow>

@@ -12,6 +12,8 @@ import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/
 import { VIEWER } from "@/components/ui/responsive-dialog"
 import { Box, META, PAD } from "@/lib/openui/kit"
 import { InteractiveFlowchart } from "@/lib/openui/interactive-flowchart"
+import { FLOW_ICONS, iconNames } from "@/lib/openui/icons"
+import { TONES } from "@/lib/openui/kit"
 import { useCoarsePointer } from "@/hooks/use-device"
 
 const graphProps = z.object({
@@ -20,6 +22,10 @@ const graphProps = z.object({
       id: z.string(),
       label: z.string().optional(),
       shape: z.enum(["box", "round", "diamond", "circle"]).optional(),
+      icon: z.enum(iconNames(FLOW_ICONS)).optional(),
+      text: z.string().optional(),
+      items: z.array(z.string()).optional(),
+      tone: z.enum(TONES).optional(),
     })
   ),
   edges: z.array(
@@ -28,6 +34,7 @@ const graphProps = z.object({
       to: z.string(),
       label: z.string().optional(),
       dashed: z.boolean().optional(),
+      tone: z.enum(TONES).optional(),
     })
   ),
   direction: z.enum(["down", "right"]).optional(),
@@ -38,14 +45,16 @@ function GraphFigure({ props }: { props: z.infer<typeof graphProps> }) {
   const coarse = useCoarsePointer()
   /* No key on the content: the chart rebuilds itself as a streamed program
      grows, where a remount per chunk flashed the whole canvas. */
+  /* A generated node's `tone` is a tint, the chart's `accent`; the chart's own
+     `tone` is a run step's state and is never the model's to set. */
   const chart = {
-    nodes: props.nodes,
+    nodes: props.nodes.map(({ tone, ...node }) => ({ ...node, accent: tone })),
     edges: props.edges,
     direction: props.direction ?? "down",
   } as const
   return (
     <Box
-      className={cn("col-span-full w-full self-stretch space-y-1", PAD)}
+      className={cn("col-span-full w-full self-stretch space-y-1.5", PAD)}
       style={{ gridColumn: "1 / -1", width: "100%", minWidth: 0 }}
     >
       <Dialog>
@@ -63,8 +72,8 @@ function GraphFigure({ props }: { props: z.infer<typeof graphProps> }) {
           <InteractiveFlowchart {...chart} fill />
         </DialogContent>
       </Dialog>
-      {props.caption && <p className={cn(META, "px-1")}>{props.caption}</p>}
-      <p className={cn(META, "px-1")}>
+      {props.caption && <p className={cn(META, "text-pretty px-1")}>{props.caption}</p>}
+      <p className={cn(META, "text-pretty px-1")}>
         {coarse
           ? "Open full screen to move, connect or delete nodes."
           : "Drag nodes to move them, or from a node's dot to connect. Delete removes the selection; the reset button restores the layout."}
@@ -75,7 +84,8 @@ function GraphFigure({ props }: { props: z.infer<typeof graphProps> }) {
 
 export const Flowchart = defineComponent({
   name: "Flowchart",
-  description: "A flowchart from nodes and edges: each node has an id and a label, each edge joins two ids.",
+  description:
+    "A flowchart from nodes and edges: each node has an id and a label, each edge joins two ids. A node with an icon, text, items or tone is drawn as a card: a glyph tile, a bold label, a muted sentence and a checklist, tinted by its tone; an edge's tone colours its label as a pill.",
   props: graphProps,
   component: GraphFigure,
 })

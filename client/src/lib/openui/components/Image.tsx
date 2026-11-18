@@ -45,14 +45,14 @@ export function GeneratedImage({ src, alt, caption }: { src: string; alt: string
             alt={alt}
             referrerPolicy="no-referrer"
             onError={() => setFailed(true)}
-            className="mx-auto block max-h-96 max-w-full object-contain"
+            className="mx-auto block max-h-96 max-w-full bg-muted/40 object-contain"
           />
         ) : (
           <button
             type="button"
             onClick={() => setShown(true)}
             className={cn(
-              "flex w-full flex-col items-start gap-0.5 text-start outline-none hover:bg-wash-strong focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset",
+              "flex w-full flex-col items-start gap-1 text-start outline-none transition-colors hover:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset",
               PAD
             )}
           >
@@ -70,38 +70,34 @@ export function GeneratedImage({ src, alt, caption }: { src: string; alt: string
 
 export const Image = defineComponent({
   name: "Image",
-  description: "An image from an https or data: URL, with alt text and an optional caption.",
+  description:
+    "An image from an https or data: URL, with alt text and an optional caption. With `images` it is a carousel of them instead, each with src, alt and optional caption.",
   props: z.object({
-    src: z.string(),
-    alt: z.string(),
+    src: z.string().optional(),
+    alt: z.string().optional(),
     caption: z.string().optional(),
+    /** Several images, one at a time. Takes the place of `src`. */
+    images: z.array(z.object({ src: z.string(), alt: z.string(), caption: z.string().optional() })).optional(),
   }),
-  component: ({ props }) => <GeneratedImage {...props} />,
-})
-
-/** Several images, one at a time. The arrows sit inside the frame, which a
-    transcript column has room for and shadcn's `-left-12` does not. */
-export const Gallery = defineComponent({
-  name: "Gallery",
-  description: "A carousel of images, each with src, alt and optional caption.",
-  props: z.object({
-    images: z.array(z.object({ src: z.string(), alt: z.string(), caption: z.string().optional() })),
-  }),
-  component: ({ props }) => (
-    <Carousel className="w-full min-w-0">
-      <CarouselContent>
-        {props.images.map((image, index) => (
-          <CarouselItem key={index}>
-            <GeneratedImage {...image} />
-          </CarouselItem>
-        ))}
-      </CarouselContent>
-      {props.images.length > 1 && (
-        <>
-          <CarouselPrevious className="left-2" />
-          <CarouselNext className="right-2" />
-        </>
-      )}
-    </Carousel>
-  ),
+  component: ({ props }) => {
+    const images = (props.images ?? []).filter((image) => image?.src)
+    if (images.length === 0) {
+      if (!props.src) return null
+      return <GeneratedImage src={props.src} alt={props.alt ?? ""} caption={props.caption} />
+    }
+    if (images.length === 1) return <GeneratedImage {...images[0]} />
+    return (
+      <Carousel className="w-full min-w-0">
+        <CarouselContent>
+          {images.map((image, index) => (
+            <CarouselItem key={index}>
+              <GeneratedImage {...image} />
+            </CarouselItem>
+          ))}
+        </CarouselContent>
+        <CarouselPrevious className="left-2" />
+        <CarouselNext className="right-2" />
+      </Carousel>
+    )
+  },
 })
