@@ -55,7 +55,6 @@ import {
   FormActions,
   FormPageHeader,
   FormSection,
-  FormShell,
   INSET,
   LogoUpload,
   PageForm,
@@ -63,7 +62,8 @@ import {
   PageHeader,
   Row,
   Section,
-  StatStrip,
+  TabBar,
+  type TabItem,
 } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
@@ -340,6 +340,15 @@ export function ProjectForm({
      draw from, so it costs no request of its own. */
   const ruleCount = useProjectRules(project?.id ?? null).length
   const knowledgeCount = useProjectKnowledge(project?.id ?? null).data?.length
+  const [tab, setTab] = React.useState<ProjectTab>("workspace")
+  /* Counts ride the tabs, from the same cached queries the panels draw from.
+     A project being created has nothing to count yet. */
+  const tabs: TabItem[] = [
+    { id: "workspace", label: "Workspace" },
+    { id: "rules", label: "Rules", count: project ? ruleCount : undefined },
+    { id: "helpers", label: "Helper commands", count: project ? (project.helpers?.length ?? 0) : undefined },
+    { id: "knowledge", label: "Knowledge base", count: knowledgeCount },
+  ]
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -479,36 +488,36 @@ export function ProjectForm({
         description="Configure the workspace, linked capabilities, and project knowledge."
         onBack={() => onDone(null)}
       />
-      <FormShell sections={SECTIONS}>
-        {project && (
-          <StatStrip
-            stats={[
-              { label: "Rules", value: ruleCount },
-              { label: "Helpers", value: project.helpers?.length ?? 0 },
-              { label: "Knowledge", value: knowledgeCount ?? 0, loading: knowledgeCount === undefined },
-            ]}
-          />
-        )}
+      <TabBar
+        label="Project sections"
+        items={tabs}
+        value={tab}
+        onChange={(id) => setTab(id as ProjectTab)}
+      />
+      {/* All four stay mounted and the others are hidden, so an unsaved
+          workspace edit or a half-typed helper survives a flip. */}
+      <div hidden={tab !== "workspace"}>
         <PageForm onSubmit={save}>
           <FormSection id="workspace" label="Workspace" hint="Name, where it lives on the server, and how it looks in the sidebar.">
             {fields}
           </FormSection>
           <FormActions busy={busy} onCancel={() => onDone(null)} error={saveError} />
         </PageForm>
+      </div>
+      <div hidden={tab !== "rules"}>
         <RulesSection project={project} />
+      </div>
+      <div hidden={tab !== "helpers"}>
         <HelpersSection project={project} />
+      </div>
+      <div hidden={tab !== "knowledge"}>
         <KnowledgeSection project={project} />
-      </FormShell>
+      </div>
     </>
   )
 }
 
-const SECTIONS = [
-  { id: "workspace", label: "Workspace" },
-  { id: "rules", label: "Rules" },
-  { id: "helpers", label: "Helper commands" },
-  { id: "knowledge", label: "Knowledge base" },
-]
+type ProjectTab = "workspace" | "rules" | "helpers" | "knowledge"
 
 /**
  * Standing instructions for threads started in this project, spawned after the
