@@ -41,3 +41,29 @@ export function configCost(setting: ConfigSetting, live: boolean): ConfigCost {
 
 /** Whether a change is worth warning about at a glance. */
 export const isCostly = (cost: ConfigCost) => cost.restarts !== false || cost.cache !== "kept"
+
+/** One reading for several settings changed together — what a steered patch
+    carries when a model and its effort land at once. Worst case wins on each
+    axis, and the sentence is built from the axes rather than concatenated, so
+    two picks never say "Restarts the agent." twice. */
+export function combineCosts(costs: ConfigCost[]): ConfigCost | null {
+  if (costs.length === 0) return null
+  const restarts: ConfigCost["restarts"] = costs.some((c) => c.restarts === true)
+    ? true
+    : costs.some((c) => c.restarts === "maybe")
+      ? "maybe"
+      : false
+  const cache: ConfigCost["cache"] = costs.some((c) => c.cache === "lost")
+    ? "lost"
+    : costs.some((c) => c.cache === "maybe")
+      ? "maybe"
+      : "kept"
+  const first = restarts === true ? "Restarts the agent." : restarts === "maybe" ? "May restart the agent." : "No restart."
+  const second =
+    cache === "lost"
+      ? "The prompt cache starts over."
+      : cache === "maybe"
+        ? "Some providers may drop the cached history."
+        : "The prompt cache is kept."
+  return { restarts, cache, text: `${first} ${second}` }
+}

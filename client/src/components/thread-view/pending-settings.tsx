@@ -28,6 +28,7 @@ import {
   ClockIcon,
   CpuIcon,
   GaugeIcon,
+  RefreshCwIcon,
   LayoutGridIcon,
   PlugIcon,
   ShieldIcon,
@@ -43,9 +44,10 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Actions } from "@/lib/actions"
 import { configChanges, type ConfigChange } from "@/lib/actions"
-import { useCommands, useMcpServers, usePersonas, useProfiles, useSkills } from "@/lib/queries/catalog"
+import { useAgents, useCommands, useMcpServers, usePersonas, useProfiles, useSkills } from "@/lib/queries/catalog"
+import { combineCosts, configCost, isCostly, type ConfigCost, type ConfigSetting } from "@/lib/config-cost"
 import { reportError } from "@/lib/errors"
-import type { ThreadState } from "@/lib/store"
+import { useSessionMeta, type ThreadState } from "@/lib/store"
 
 /** The ids a tool patch names, resolved against the catalog that lists them.
     `undefined` is a field the patch did not touch; `[]` is a set emptied. */
@@ -77,6 +79,27 @@ const LINK_ICONS = {
   commandIds: SquareTerminalIcon,
 } as const
 
+/** The settings a change kind is priced as (`lib/config-cost.ts`). The agent's
+    own mode and options are not ours to know and carry no cost. */
+const COST_SETTINGS: Partial<Record<ConfigChange["kind"], ConfigSetting>> = {
+  profile: "profile",
+  model: "model",
+  effort: "effort",
+  persona: "persona",
+  suggestions: "suggestions",
+  ui: "ui",
+  helpers: "helpers",
+}
+
+/** Whether a running turn can take this change as it is — the client's mirror of
+    `steerStaged` (server/src/sessions.ts): the agent's own selectors always, a
+    model/effort/profile move only where the agent row takes it live. Everything
+    else is spawn text or a tool link, read once at `session/new`, so it waits
+    for the next send. */
+function steerable(kind: ConfigChange["kind"], takesLive: boolean): boolean {
+  return kind === "mode" || kind === "option" || (takesLive && (kind === "profile" || kind === "model" || kind === "effort"))
+}
+
 function ChangeTile({ icon: Icon, label, value }: { icon: typeof CpuIcon; label: string; value: string }) {
   return (
     <div
@@ -107,6 +130,8 @@ export function PendingSettings({
   const skills = useSkills()
   const commands = useCommands()
   const personas = usePersonas()
+  const agents = useAgents()
+  const meta = useSessionMeta(sessionId)
   const pending = thread.pendingConfig
   const held = thread.stagedConfig
   /* "Apply now" is a request this device is waiting on — and, until it lands,
@@ -120,8 +145,33 @@ export function PendingSettings({
   const patch = pending ?? held
   if (!patch) return null
   const applying = pending !== null || applyingNow
-  const action = thread.turnActive ? "Steer now" : "Apply now"
   const changes = configChanges(patch, profiles, thread, personas)
+  const takesLive = !!agents.find((a) => a.id === meta?.agentId)?.liveConfig
+  /* A running turn is steered, never restarted: only `steerable` changes are
+     taken and the rest stay staged. A *held* turn is different — the server
+     flushes the whole patch there, restart included — so it is not a steer. */
+  const steering = thread.turnActive && !thread.paused
+  const tools = [
+    ...(patch.mcpServerIds !== undefined ? ["MCP"] : []),
+    ...(patch.skillIds !== undefined ? ["Skills"] : []),
+    ...(patch.commandIds !== undefined ? ["Commands"] : []),
+  ]
+  const now = steering ? changes.filter((change) => steerable(change.kind, takesLive)) : changes
+  const later = steering ? [...changes.filter((change) => !steerable(change.kind, takesLive)).map((c) => c.label), ...tools] : []
+  const action = steering ? "Steer now" : "Apply now"
+  const canAct = !steering || now.length > 0
+  /* What taking it costs, said here and not in the settings menu: the pick is
+     made mid-turn, and the card is where the reader sees what it did. Only what
+     this button takes is priced — a steer never restarts for the rest. */
+  const cost: ConfigCost | null = thread.turnActive
+    ? combineCosts([
+        ...now.flatMap((change) => {
+          const setting = COST_SETTINGS[change.kind]
+          return setting ? [configCost(setting, takesLive)] : []
+        }),
+        ...(!steering && patch.mcpServerIds !== undefined ? [configCost("mcp", false)] : []),
+      ])
+    : null
   const links = [
     { icon: LINK_ICONS.mcpServerIds, label: "MCP", value: toolNames(mcpServers, patch.mcpServerIds) },
     { icon: LINK_ICONS.skillIds, label: "Skills", value: toolNames(skills, patch.skillIds) },
@@ -158,27 +208,45 @@ export function PendingSettings({
         </div>
         <p className="mt-1.5 text-xs text-muted-foreground">
           {applying
-            ? "Nothing is lost — the conversation comes back through a load."
+            ? steering
+              ? "Placing it on the running agent."
+              : "Nothing is lost — the conversation comes back through a load."
             : thread.turnActive
-              ? `Held until the turn ends. ${action} takes what the agent can take as it is now.`
+              ? steering
+                ? now.length === 0
+                  ? "Nothing here can be taken mid-turn. It applies on your next send."
+                  : `${action} takes ${now.map((c) => c.label).join(", ")} on the running agent.${later.length > 0 ? ` ${later.join(", ")} wait${later.length === 1 ? "s" : ""} for your next send.` : ""}`
+                : `Applies when the held turn continues. ${action} takes it now.`
               : `Applies on the next send. ${action} takes it now.`}
         </p>
+        {cost && (
+          <p className="mt-1 flex items-start gap-1.5 text-xs text-muted-foreground">
+            {isCostly(cost) ? (
+              <RefreshCwIcon className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+            ) : (
+              <CheckIcon className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+            )}
+            <span>{cost.text}</span>
+          </p>
+        )}
         {!applying && (
           <div className="mt-2 flex gap-2">
-            <Button
-              size="xs"
-              className="flex-1"
-              onClick={() => {
-                setApplyingNow(true)
-                void actions
-                  .applyStagedConfig(sessionId)
-                  .catch((err) => reportError(err, "Couldn't apply that change"))
-                  .finally(() => setApplyingNow(false))
-              }}
-            >
-              <CheckIcon data-icon="inline-start" />
-              {action}
-            </Button>
+            {canAct && (
+              <Button
+                size="xs"
+                className="flex-1"
+                onClick={() => {
+                  setApplyingNow(true)
+                  void actions
+                    .applyStagedConfig(sessionId)
+                    .catch((err) => reportError(err, "Couldn't apply that change"))
+                    .finally(() => setApplyingNow(false))
+                }}
+              >
+                <CheckIcon data-icon="inline-start" />
+                {action}
+              </Button>
+            )}
             <Button
               size="xs"
               variant="outline"

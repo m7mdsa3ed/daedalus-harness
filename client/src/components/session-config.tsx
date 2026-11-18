@@ -16,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { levelOf, withEffortIcons, withModeIcons } from "@/components/composer/option-icons"
-import { configCost } from "@/lib/config-cost"
+import { configCost, type ConfigCost, type ConfigSetting } from "@/lib/config-cost"
 import { type ChoicePick, HelperModelsSub, MenuRow, MenuRowSkeleton, modelChoiceDetails, PersonaRow, PILL, PillLabel, RecentConfigsGroup, SessionSettingsSub, selectChoices, useRecentSetups } from "@/components/config-menu"
 import { nextRecentSetup, recordConfig, sameConfig, type RecentConfig } from "@/lib/config-recents"
 import { DEFAULT_SUGGEST_KINDS } from "@/lib/suggestions"
@@ -226,9 +226,13 @@ export function SessionConfigPopover({
      harness pick restarts unless the agent row takes it live; the agent's own
      selector never restarts. */
   const takesLive = !!agent?.liveConfig
+  /* While a turn runs, a pick is a steer, and what it costs is said on the
+     card the transcript draws for it (`pending-settings.tsx`) — not twice. */
+  const costFor = (setting: ConfigSetting, live: boolean): ConfigCost | undefined =>
+    thread.turnActive ? undefined : configCost(setting, live)
   const profilePick: ChoicePick = {
     label: "Profile",
-    cost: configCost("profile", takesLive),
+    cost: costFor("profile", takesLive),
     value: profile.id,
     choices: agentProfiles.map((p) => ({
       value: p.id,
@@ -245,7 +249,7 @@ export function SessionConfigPopover({
   const effortPick: ChoicePick | null = profileEffort
     ? {
         label: "Effort",
-        cost: configCost("effort", takesLive),
+        cost: costFor("effort", takesLive),
         value: meta.effort || DEFAULT_CHOICE,
         choices: withEffortIcons([
           { value: DEFAULT_CHOICE, name: "Default" },
@@ -257,7 +261,7 @@ export function SessionConfigPopover({
     : liveEffort
       ? {
           label: "Effort",
-          cost: configCost("effort", true),
+          cost: costFor("effort", true),
           value: liveEffort.type === "select" ? liveEffort.currentValue : "",
           choices: withEffortIcons(selectChoices(liveEffort)),
           onSelect: (value) => set(liveEffort, value),
@@ -269,7 +273,7 @@ export function SessionConfigPopover({
   const modelPick: ChoicePick | null = overridden
     ? {
         label: "Model",
-        cost: configCost("model", takesLive),
+        cost: costFor("model", takesLive),
         value: meta.model || DEFAULT_CHOICE,
         choices: [
           { value: DEFAULT_CHOICE, name: "Profile default" },
@@ -301,7 +305,7 @@ export function SessionConfigPopover({
     : options.model
       ? {
           label: "Model",
-          cost: configCost("model", true),
+          cost: costFor("model", true),
           value: options.model.type === "select" ? options.model.currentValue : "",
           /* Agent-driven options carry no art — every row gets the neutral
              glyph so the list reads like the catalog one. */
@@ -419,11 +423,11 @@ export function SessionConfigPopover({
           {/* What it answers with and what it carries are the same kind of
               decision — spawn inputs, picked in one place — so the servers sit
               with the pair rather than on a chip of their own beside it. */}
-          <McpSection meta={meta} actions={actions} cost={configCost("mcp", false)} />
+          <McpSection meta={meta} actions={actions} cost={costFor("mcp", false)} />
           <PersonaRow
             value={meta.personaId}
             onSelect={(personaId) => actions.changeThreadPersona(row, personaId)}
-            cost={configCost("persona", takesLive)}
+            cost={costFor("persona", takesLive)}
           />
           <AskAgentsSub
             value={meta.askProfiles ?? {}}
@@ -439,7 +443,7 @@ export function SessionConfigPopover({
               roles={modelRoles}
               models={modelPick?.choices.filter((c) => c.value !== DEFAULT_CHOICE) ?? []}
               onChange={(helperModels) => actions.changeHelperModels(row, helperModels)}
-              cost={configCost("helpers", false)}
+              cost={costFor("helpers", false)}
             />
           )}
         </DropdownMenuGroup>
@@ -463,7 +467,7 @@ export function SessionConfigPopover({
             groups: meta.uiGroups ?? DEFAULT_UI_GROUPS,
             onChange: (groups) => actions.changeThreadUiGroups(row, groups),
           }}
-          cost={configCost("ui", false)}
+          cost={costFor("ui", false)}
         />
         {(modes || options.rest.length > 0) && (
           <>
