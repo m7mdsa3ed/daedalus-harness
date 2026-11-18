@@ -208,6 +208,10 @@ export default defineConfig({
          is: the composer's badge and any server reading of one schedule must
          not be two implementations. */
       "@daedalus/peak": path.resolve(import.meta.dirname, "../server/src/peak.ts"),
+      /* The browser panel's socket contract: the frame header's encode/decode
+         runs at both ends, so the server's writer and the panel's reader are
+         one implementation of one byte layout. */
+      "@daedalus/browser-protocol": path.resolve(import.meta.dirname, "../server/src/browser-protocol.ts"),
     },
   },
 });

@@ -6,6 +6,7 @@ import {
   AppWindowIcon,
   BellIcon,
   BotIcon,
+  GlobeIcon,
   MessageSquareIcon,
   NetworkIcon,
   SquareKanbanIcon,
@@ -30,6 +31,7 @@ export const PANEL_ICONS: Record<PanelKind, LucideIcon> = {
   web: AppWindowIcon,
   tasks: SquareKanbanIcon,
   page: AppWindowIcon,
+  browser: GlobeIcon,
 }
 
 /** A page tab wears the mark its sidebar row wears — the section's icon for a

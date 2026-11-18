@@ -34,6 +34,9 @@ import { RoutineEngine } from "./routines.js";
 import { TaskTailer } from "./tasks.js";
 import { stopWatching } from "./workspace-watch.js";
 import { attachTerminal, killProjectTerminals } from "./terminals.js";
+import { attachBrowserViewer, killProjectBrowsers } from "./browsers.js";
+import { BROWSER_CLOSE, BROWSER_SOCKET_PATH } from "./browser-protocol.js";
+import { getProject } from "./projects.js";
 import { configureGatewayShim } from "./gateway-shim.js";
 import { configureMcpShim } from "./mcp-shim.js";
 import { configurePauseHooks } from "./pause-hooks.js";
@@ -56,6 +59,7 @@ import { sessionRoutes } from "./routes/sessions.js";
 import { prewarmRoutes } from "./routes/prewarm.js";
 import { taskRoutes } from "./routes/tasks.js";
 import { mentionRoutes } from "./routes/mentions.js";
+import { browserRoutes } from "./routes/browser.js";
 
 mark("modules loaded");
 const config = loadConfig();
@@ -308,7 +312,7 @@ app.use("/api/sessions/:id/earlier", compress());
 
 /* The routes, by domain (src/routes/). Registered after the middleware so
    everything under /api is behind the token; /api/health exempts itself above,
-   and /gw/* + /mx/* + /wf/* + /hm/* + /rt/* are outside /api with the key-in-path
+   and /gw/* + /mx/* + /wf/* + /hm/* + /bm/* + /rt/* are outside /api with the key-in-path
    rule — as is /oauth/mcp/callback, which is unauthenticated by necessity
    (an authorization server redirects a browser there and no bearer survives
    that hop; its `state` is the credential instead, see routes/library.ts)
@@ -335,6 +339,10 @@ workflowRoutes(app, { engine: workflows, sessions });
 harnessRoutes(app, { runner: workflows });
 sqlRoutes(app);
 routineRoutes(app, { engine: routines });
+browserRoutes(app, {
+  runner: workflows,
+  announce: (sessionId, projectId, tabId) => sessions.browserActivity(sessionId, projectId, tabId),
+});
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
   console.log(`daedalus server on http://${info.address}:${info.port}`);
@@ -416,7 +424,7 @@ const heartbeat = setInterval(() => {
 heartbeat.unref();
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", "http://localhost");
-  if (url.pathname !== "/ws" && url.pathname !== "/terminal") {
+  if (url.pathname !== "/ws" && url.pathname !== "/terminal" && url.pathname !== BROWSER_SOCKET_PATH) {
     // Destroying the socket leaves the browser with a bare "connection failed".
     // An HTTP response at least names the problem in the network panel.
     socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
@@ -437,6 +445,24 @@ server.on("upgrade", (req, socket, head) => {
         ws,
       );
       if (refused) ws.close(4004, refused);
+      return;
+    }
+    if (url.pathname === BROWSER_SOCKET_PATH) {
+      const projectId = url.searchParams.get("projectId") ?? "";
+      const sessionId = url.searchParams.get("sessionId") || null;
+      void getProject(projectId).then(
+        (project) => {
+          if (!project) {
+            ws.close(BROWSER_CLOSE.notFound, "no such project");
+            return;
+          }
+          return attachBrowserViewer(projectId, sessionId, ws);
+        },
+        (error: unknown) => {
+          console.error(`[browser] attach failed for project ${projectId}:`, error);
+          if (ws.readyState === WebSocket.OPEN) ws.close(1011, "Browser attach failed; see server logs");
+        },
+      );
       return;
     }
     const sessionId = url.searchParams.get("sessionId") ?? "";
@@ -487,12 +513,17 @@ async function shutdown(code: number): Promise<never> {
     routineGitTriggers?.stop();
     stopWatching();
     killProjectTerminals();
+    // Started here, awaited after the sessions: Chrome's graceful close is
+    // what writes tabs.json, and it runs beside the agents' retirement.
+    const browsersClosed = killProjectBrowsers();
     stopScheduler();
     clearInterval(heartbeat);
     workflows?.shutdown();
     routines?.shutdown();
     await sessions.shutdown();
     lap("sessions shut down");
+    await browsersClosed;
+    lap("browsers closed");
   } catch (error) {
     console.error("[shutdown]", error);
   }

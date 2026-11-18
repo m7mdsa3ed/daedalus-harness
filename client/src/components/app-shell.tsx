@@ -350,7 +350,7 @@ export function AppShell({
       (panel) =>
         panel.kind === "chat"
           ? elsewhere(live.find((session) => session.id === panel.sessionId)?.projectId)
-          : panel.kind === "terminal" || panel.kind === "web"
+          : panel.kind === "terminal" || panel.kind === "web" || panel.kind === "browser"
             ? elsewhere(panel.projectId)
             : null
     )
@@ -436,7 +436,7 @@ export function AppShell({
          its own dock (`thread-dock.tsx`), rooted in its worktree. The outer
          kinds below are what is left for a page in front — a $HOME shell. */
       const inThread = threadDock(routeRef.current.sessionId)
-      if (inThread && kind === "terminal") {
+      if (inThread && (kind === "terminal" || kind === "browser")) {
         inThread.open(kind, reuse)
         return
       }
@@ -482,6 +482,20 @@ export function AppShell({
           .find((entry) => entry.panel.kind === "terminal" && entry.panel.projectId === projectId)
         if (existing && reuse) dock.openPanel(existing.panel)
         else void openTerminal(dock, projectId, into)
+        return
+      }
+      if (kind === "browser") {
+        /* A window onto the project's one browser: the first keeps the plain
+           id, a pick beside it is a second view of the same tabs. */
+        const existing = dock
+          .listPanels()
+          .find((entry) => entry.panel.kind === "browser" && entry.panel.projectId === projectId)
+        if (existing && reuse) dock.openPanel(existing.panel)
+        else
+          dock.openPanel(
+            { kind: "browser", projectId, viewId: existing ? uuid().slice(0, 8) : "default" },
+            { direction: "right", into }
+          )
       }
     },
     [dock, projects]

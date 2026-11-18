@@ -20,6 +20,7 @@
    face of `@/components/tool-views`: everything the transcript imports is
    either declared or re-exported here. */
 import * as React from "react"
+import { BrowserDetail } from "@/components/tool-views/browser"
 import { CodeRunDetail, EditDetail, ReadDetail, RunDetail, SearchDetail, TerminalDetail } from "@/components/tool-views/files"
 import { HarnessDetail } from "@/components/tool-views/harness"
 import { GenericDetail, McpDetail } from "@/components/tool-views/mcp"
@@ -75,6 +76,7 @@ const TOOL_VIEWS: Record<ToolView, ToolViewSpec> = {
   terminal: { Detail: TerminalDetail, opensByDefault: false },
   mcp: { Detail: McpDetail, opensByDefault: false },
   harness: { Detail: HarnessDetail, opensByDefault: false },
+  browser: { Detail: BrowserDetail, opensByDefault: false },
   subagent: { Detail: SubagentDetail, opensByDefault: false },
   message: { Detail: AgentMessageDetail, opensByDefault: false },
   websearch: { Detail: WebSearchDetail, opensByDefault: false },

@@ -1380,6 +1380,13 @@ export type ThreadEvent =
       turn is. Background work is neither an error nor a hold; it is why a
       thread with nothing in flight is not idle. */
   | { ev: "background"; active: boolean }
+  /** This thread's agent started driving its project's browser
+      (`builtin:browser`, docs/plans/browser.md): said once per thread per
+      server boot, on its first tool call, by the `/bm` route — the harness's
+      own code, never read off a `session/update`. Absolute and live-only like
+      `background`: nothing journals it and a replay never redraws it. To every
+      peer; the client opens the thread's browser panel on `tabId`. */
+  | { ev: "browser_activity"; projectId: string; tabId: string }
   /** The thread moved to another provider, model or effort *without* being
       restarted (`SessionManager.applyConfig`). Absolute, like `session_config`,
       but live-only and not journaled: it is the session row's own state, and a

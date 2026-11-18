@@ -696,13 +696,81 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
   durability, an openable thread and a cap. Blocking also becomes background: a run longer
   than the wait comes back as a later message, which is the bargain asks already made.
 
-## Driving the preview
+## Driving the browser
 
-- **There is nothing to drive.** The harness ships no browser MCP and Electron opens no
-  debugging port (`chrome-devtools-mcp` never worked reliably against the shell's webviews,
-  and the CDP relay and `builtin:browser` before it are gone). The Preview panel only draws a
-  project's files and diffs (`docs/client.md`). A user who wants an agent to drive a browser
-  adds their own MCP row in the library like any other server.
+The Preview panel still only draws files and diffs (`docs/client.md`). What an agent drives is
+the project's **browser**: the same headless Chrome a person uses in the Browser panel. Plan and
+decisions: `docs/plans/browser.md`.
+
+- **`builtin:browser` is a library row like `harness`** (`BUILTIN_MCP.browser` in `library.ts`),
+  linked to a profile or picked on a thread. It is thread-scoped (`THREAD_SCOPED_BUILTINS`): its
+  stdio child is synthesized per thread by `browserServer` in `sessions.ts`, so Settings can
+  neither connect to it nor list its tools. **No Chrome, no server**: the spawn asks
+  `locateChrome()` (`browser-status.ts`, `DAEDALUS_CHROME` or puppeteer's stable-Chrome lookup)
+  and leaves the server out when there is none, because a tool that cannot answer is not
+  advertised. Boot no longer deletes the row: the `DELETE ... 'builtin:browser'` left from the
+  old relay's removal is gone from `retitleBuiltinMcp`.
+- **One Chrome per project, shared** (`browsers.ts`): launched lazily on the first panel open or
+  tool call, headless, with a persistent profile in `data/browsers/<projectId>` so logins
+  survive. Bounded like terminals: `MAX_BROWSERS` (4) server-wide with eviction of the least
+  recently active idle one, idle close after 15 min with no viewer and no activity, a minute
+  sweep, every browser closed on shutdown. Open tabs are written to `tabs.json` and reopened on
+  launch, because Chrome's own session restore does nothing headless. **Deleting a project
+  deletes its profile** (`killProjectBrowsers(id, { deleteProfile: true })`), logins included.
+- **Why our own server and not `chrome-devtools-mcp`.** That server is 30 tools and ~6.6k tokens
+  in every thread that links it (`--slim` is too thin to click anything), it would be a second
+  CDP client the panel cannot see or coordinate with, it reports usage to Google by default, and
+  it would need a debugging port behind a key. Ours goes through the server, which already holds
+  the only CDP connection: one input path, one tab model, and the panel draws what the agent
+  does. What we give up is traces, Lighthouse and heap snapshots.
+- **`--remote-debugging-pipe`, never a port** (puppeteer `pipe: true`). No TCP listener exists,
+  so nothing else on the machine can attach. This is the property the removed CDP relay lacked.
+- **The tools** (`browser-mcp-tools.ts`, one catalogue read by the stdio child and by the route,
+  so what the model is told and what the server accepts cannot disagree; flat schemas, the whole
+  list held under ~2k tokens by `test/browser-mcp.test.ts`):
+  `tabs` (list/new/select/close), `navigate` (url, back, forward, reload), `snapshot` (the
+  accessibility tree, one `[uid] role "name"` line per node), `act` (click, dblclick, hover,
+  fill, type, press, select, scroll, drag, dialog on a uid), `screenshot` (the tab or one uid,
+  JPEG at most 1280px wide), `evaluate` (JavaScript in the page, JSON result), `wait_for` (text
+  or uid), `logs` (console or network since a cursor, or one request's detail) and `viewport`
+  (size, `mobile`, or `reset`). `navigate` and `act` wait for the page to settle (navigation,
+  network quiet, a frame; capped at 10 s and said when the cap was hit) and return a snapshot.
+- **A uid names one snapshot.** Each node's element handle is kept under a uid that embeds the
+  snapshot generation (`browser-agent.ts`), so a stale uid fails loudly ("snapshot again")
+  instead of clicking the wrong element.
+- **Input is real and serialised per tab.** Agent actions go through puppeteer's
+  `ElementHandle` methods, which dispatch real `Input.*` events, inside the tab's queue
+  (`runExclusive`) that the panel's own mouse, wheel, key and text input share. A person and an
+  agent on one tab are serialised, not prevented; Pause agent on the panel is the control.
+  Navigation and dialog answers skip the queue on purpose.
+- **A dialog never freezes a tab.** An action that opens `alert()`/`confirm()`/`prompt()` blocks
+  in Chrome until the dialog is answered, and the answer would wait behind it in the queue.
+  `untilDialog` returns the moment a dialog opens, so `act`, `evaluate` and the panel's input
+  answer at once; the result reports the dialog, `act {action: "dialog"}` answers it, and
+  `screenshot`/`wait_for` refuse while one is open.
+- **Each thread has its own tab.** The default is the tab in front of a panel in that thread's
+  dock, else the last one it selected, else a new one; `tabId` is accepted everywhere, so
+  several threads share one browser without stealing focus. **Subagents and workflow steps get
+  the browser too**, on the parent's project browser with a tab of their own: unlike `agents`
+  and `harness` it is a capability, not delegation.
+- **The `/bm` loopback.** The child holds no CDP state and no browser: it POSTs each call to
+  `BROWSER_URL` = `/bm/<key>/<sessionId>/<tool>` (`engine.browserUrlFor`, beside
+  `harnessUrlFor`), and `routes/browser.ts` resolves the key and the thread with `resolveCaller`
+  **before reading the body or doing any work** (a wrong key is a 404), then maps the thread to
+  its project's browser. A server restart costs nothing to reconnect: the next call relaunches
+  the browser and old uids are simply stale.
+- **`browser_activity` opens the panel.** The first call a thread makes (per thread, per server
+  boot) fans a live-only, absolute `browser_activity {projectId, tabId}` to that thread's peers
+  through `SessionManager.browserActivity`. It is not in `JOURNALED_EVENTS` and is never
+  replayed, and it comes from the route, which is the harness's own code, never from
+  interpreting a `session/update`. The client opens the thread dock's Browser panel on that tab
+  (`docs/client.md`, "The Browser panel"). Each action also fans an `agent` activity frame
+  (action and element rect) to the panel's viewers, for the overlay.
+- **Gated by feature names**: `browserMcp` in `compat.ts` (this server and the event),
+  `browserPanel` for the panel and its routes.
+- **The browser browses from the server's network.** `localhost` is the server's, which suits a
+  dev server running there. This adds no reach the bearer token does not already give: the same
+  token opens a terminal on that machine.
 
 ## Managing the harness
 

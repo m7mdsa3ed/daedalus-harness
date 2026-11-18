@@ -601,9 +601,9 @@ export interface RegistryPage {
 export interface McpServerBuiltin {
   type: "builtin"
   name: string
-  builtin: "web-search" | "knowledge" | "agents" | "harness"
+  builtin: "web-search" | "knowledge" | "agents" | "harness" | "browser"
   /** Only ever present on the rows whose server is synthesized from a *thread*
-      (`agents`, `harness`): its connection is the
+      (`agents`, `harness`, `browser`): its connection is the
       calling thread's own, so no session means nothing to connect to — the
       settings list explains that rather than reading a server that is not
       there. Absent on `web-search` and `knowledge`, which resolve without one. */

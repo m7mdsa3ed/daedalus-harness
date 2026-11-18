@@ -152,8 +152,6 @@ const BUILTIN_MCP_MARKS = {
    lightness and chroma live in index.css (`.mcp-hue-mark`, `[data-mcp-disc]`)
    — one rule per mode — because a hue is data and how strongly it is said at
    14px is not.
-   `browser` keeps a mark but has no declared hue: the built-in was removed and
-   a row an old server still sends should look like the placeholder it is.
 
    A server the user added takes a hue hashed off its *name* (`hueOf`), which is
    the other half of the same problem: an http row usually resolves a favicon,
@@ -167,6 +165,7 @@ const BUILTIN_MCP_HUES: Record<McpServerBuiltin["builtin"], number> = {
   knowledge: 152,
   agents: 38,
   harness: 330,
+  browser: 195,
 }
 
 /** The hue a server's mark wears: the declared one for a built-in, a hash of the

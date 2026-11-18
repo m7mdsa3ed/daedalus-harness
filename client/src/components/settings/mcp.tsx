@@ -13,6 +13,7 @@ import {
   mcpSubtitle,
   type McpAuthProbe,
   type McpCheckResult,
+  type McpServerBuiltin,
   type McpServerDef,
   type RegistryEntry,
   type RegistryDetail,
@@ -59,6 +60,7 @@ import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-tab
 import type { ColumnDef } from "@/lib/table"
 import { useCatalogState, useInvalidateCatalog, useMcpServers } from "@/lib/queries/catalog"
 import { mcpCatalogKey } from "@/lib/queries/keys"
+import { useFeature } from "@/lib/queries/surfaces"
 import { useQueries, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
 import { useTableFilter } from "@/lib/use-table-filter"
@@ -91,7 +93,7 @@ import { captureError, inlineFromQuery, reportError, type InlineError } from "@/
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
 
-type BuiltinKind = "web-search" | "knowledge" | "agents" | "harness"
+type BuiltinKind = McpServerBuiltin["builtin"]
 
 /* `hint` is the sentence the Add menu needs to make a choice; `detail` is the
    phrase the list needs to identify a row already there. */
@@ -105,6 +107,7 @@ const BUILTINS: {
   { kind: "knowledge", label: "Knowledge base", detail: "per-project knowledge base", hint: "A per-project knowledge base the agent can read and write" },
   { kind: "agents", label: "Agents", detail: "agents and workflows", hint: "Let the agent hand work to another worker: a subagent on its own model, another profile and agent pair (Codex, Claude Code, Daedalus), or a multi-step workflow — each drawn as a subagent in the calling thread" },
   { kind: "harness", label: "Harness", detail: "manage the harness", hint: "Let the agent manage the harness itself — read and write tasks on the board, list projects, and add profiles" },
+  { kind: "browser", label: "Browser", detail: "drive the project browser", hint: "Let the agent drive the project's browser, the one in the Browser panel — snapshots, real clicks and typing, screenshots, console and network logs. Needs Chrome on the server" },
 ]
 
 const builtinOf = (kind: BuiltinKind) => BUILTINS.find((b) => b.kind === kind)
@@ -210,7 +213,9 @@ export function McpPage() {
       reportError(err, `Couldn't add the ${kind} server`)
     }
   }
-  const missing = BUILTINS.filter((b) => !has(b.kind))
+  /* The browser row is only offered by a server that serves it. */
+  const browserMcp = useFeature("browserMcp")
+  const missing = BUILTINS.filter((b) => !has(b.kind) && (b.kind !== "browser" || browserMcp))
 
   /* The same key and fetch `useMcpCatalog` makes, so a row's own read (the
      mark's) and this one are a single cache entry and a single request — the

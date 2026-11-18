@@ -40,6 +40,7 @@ import {
   Keyboard,
   LogOut,
   FolderTreeIcon,
+  GlobeIcon,
   MessageSquarePlusIcon,
   Maximize,
   Minus,
@@ -99,6 +100,7 @@ import { recordPaletteCommand, usePaletteRecents } from "@/lib/palette-recents"
 import { usePins } from "@/lib/pins"
 import { emptyDefaults, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { useAutomations } from "@/lib/queries/automations"
+import { useBrowserAvailable } from "@/lib/queries/browser"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
 import { usePrompt } from "@/components/prompt-dialog"
@@ -153,6 +155,7 @@ export function RootPage() {
   // The chords these rows advertise are the reader's own (lib/keybindings), so
   // a rebinding in settings reaches the palette without a second table.
   const binds = useKeybindings()
+  const browserAvailable = useBrowserAvailable()
 
   // localStorage, so read once per open rather than per keystroke.
   const servers = React.useMemo(loadServers, [])
@@ -538,6 +541,29 @@ export function RootPage() {
           })
       }),
   })
+  /* The project's browser, one per project and shared by every view of it. */
+  if (browserAvailable)
+    items.push({
+      id: "dock:browser",
+      group: "Workspace",
+      title: "Open the browser",
+      keywords: "browser chrome web page url tab site",
+      icon: <GlobeIcon />,
+      onSelect: () =>
+        palette.run(() => {
+          const inThread = threadDock(meta?.id)
+          if (inThread) inThread.open("browser", true)
+          else {
+            const projectId = meta?.projectId ?? HOME_PROJECT_ID
+            const existing = palette.dock
+              .listPanels()
+              .find((entry) => entry.panel.kind === "browser" && entry.panel.projectId === projectId)
+            palette.dock.openPanel(existing?.panel ?? { kind: "browser", projectId, viewId: "default" }, {
+              direction: "right",
+            })
+          }
+        }),
+    })
   /* Outside the `meta` block above: a board is the server's, not a project's,
      so this row is offered whether or not a thread is routed. */
   items.push({

@@ -40,6 +40,8 @@
       /* Peak / off-peak pricing windows: the same parser the server reads,
          so the badge and any server-side reading agree (`server/src/peak.ts`). */
       "@daedalus/peak": ["../server/src/peak.ts"],
+      /* The browser panel's socket contract and frame codec (docs/plans/browser.md). */
+      "@daedalus/browser-protocol": ["../server/src/browser-protocol.ts"],
       /* The ACP vocabulary the protocol is written in, through the server's
          one barrel over the SDK (server/src/acp.ts) — so the vendor package is
          named in one place per half. Type-only for the same reason as above. */

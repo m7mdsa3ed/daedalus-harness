@@ -10,7 +10,7 @@ import type * as acp from "./acp.js";
 import { db, sessions as sessionsTable } from "./db/index.js";
 import { SESSION_LINKS, emptyLinks, linksOf, readLinks, unionLinks, writeLinks, type LinkSet } from "./db/links.js";
 import { ensureProjectDir, materializeModelAllowlist, materializeWorkspace, sweepSubagentRoles } from "./materialize.js";
-import { commands as commandLibrary, mcpServers as mcpLibrary, personas as personaLibrary, skills as skillLibrary } from "./library.js";
+import { BUILTIN_MCP, commands as commandLibrary, mcpServers as mcpLibrary, personas as personaLibrary, skills as skillLibrary } from "./library.js";
 import { isConnected as isMcpConnected } from "./mcp-oauth.js";
 import { mcpProxyUrlFor } from "./mcp-shim.js";
 import {
@@ -58,6 +58,8 @@ import { checkInstalled } from "./agent-status.js";
 import { SessionQueue } from "./session-queue.js";
 import type { AutonomyPolicy } from "./autonomy.js";
 import { AGENTS_SERVER_NAME, HARNESS_SERVER_NAME } from "./workflows/types.js";
+import { BROWSER_SERVER_NAME } from "./browser-mcp-tools.js";
+import { locateChrome } from "./browser-status.js";
 import { deleteSearchIndex } from "./search.js";
 import { getQuota, invalidateQuota, planReadable, setRuntimeLiveCheck } from "./quota.js";
 import { profileUsage } from "./usage-api.js";
@@ -495,6 +497,9 @@ export async function mcpServersFor(
   /** The `harness` server — the agent managing this harness. Top-level threads
       only, like `agents`. */
   harness: StdioMcpServer | null = null,
+  /** The `browser` server — the project's browser. Children get it too: it is
+      a capability, not delegation. Null with no thread or no Chrome. */
+  browser: StdioMcpServer | null = null,
 ): Promise<{ servers: acp.McpServer[]; skipped: string[] }> {
   const linked = new Set(links.mcpServerIds);
   const servers: acp.McpServer[] = [];
@@ -513,7 +518,9 @@ export async function mcpServersFor(
             ? knowledgeServer(project)
             : s.builtin === "agents"
               ? agents
-              : harness;
+              : s.builtin === "browser"
+                ? browser
+                : harness;
       if (built) servers.push(built);
     } else if (s.type === "http") {
       /* An OAuth row is handed to the agent as the shim's loopback URL, never
@@ -638,6 +645,12 @@ export function harnessServer(session: Pick<Session, "id">, source: HarnessUrlSo
   return harnessMcpServer(HARNESS_SERVER_NAME, "harness-mcp", [{ name: "HARNESS_URL", value: source.harnessUrlFor(session) }]);
 }
 
+/** The harness's own `browser` MCP server: the thread's project browser
+    (`browsers.ts`), driven over the `/bm` loopback that names the thread. */
+export function browserServer(session: Pick<Session, "id">, source: BrowserUrlSource): StdioMcpServer {
+  return harnessMcpServer(BROWSER_SERVER_NAME, "browser-mcp", [{ name: "BROWSER_URL", value: source.browserUrlFor(session) }]);
+}
+
 export interface SessionEvents {
   /** Fired only while no client is attached — used for push notifications. */
   onPermissionRequest?: (session: Session) => void;
@@ -675,6 +688,11 @@ export interface HarnessUrlSource {
   harnessUrlFor(session: Pick<Session, "id">): string;
 }
 
+/** The same key under `/bm`, for the `browser` MCP server. */
+export interface BrowserUrlSource {
+  browserUrlFor(session: Pick<Session, "id">): string;
+}
+
 /** A turn's outcome as `whenTurnSettled` reports it. */
 export interface TurnOutcome {
   error?: WireError;
@@ -709,7 +727,7 @@ export class SessionManager {
   /** One-shot waiters for a turn to settle, by session — see `whenTurnSettled`. */
   private turnWaiters = new Map<string, { turnId: string; settle: (outcome: TurnOutcome) => void; fail: (error: Error) => void }[]>();
   /** Injected at boot; null means no thread is handed the workflow server. */
-  private workflowRunner: (WorkflowUrlSource & HarnessUrlSource) | null = null;
+  private workflowRunner: (WorkflowUrlSource & HarnessUrlSource & BrowserUrlSource) | null = null;
   /** The event-journal concern — the buffered writes, the reads that flush
       first, the turn-boundary math and the replay framing — extracted to
       session-journal.ts. The manager decides when; the journal knows the table. */
@@ -1594,8 +1612,15 @@ export class SessionManager {
     return [...this.sessions.values()].filter((s) => s.parentSessionId === id);
   }
 
-  setWorkflowRunner(runner: WorkflowUrlSource & HarnessUrlSource): void {
+  setWorkflowRunner(runner: WorkflowUrlSource & HarnessUrlSource & BrowserUrlSource): void {
     this.workflowRunner = runner;
+  }
+
+  /** The `/bm` route saying this thread's agent is driving its project's
+      browser. Live-only (not in `JOURNALED_EVENTS`), to every peer. */
+  browserActivity(id: string, projectId: string, tabId: string): void {
+    const session = this.sessions.get(id);
+    if (session) this.emit(session, { ev: "browser_activity", projectId, tabId });
   }
 
   /** A server-side subsystem (the task tailer) telling a thread's live peers
@@ -2395,6 +2420,14 @@ export class SessionManager {
        it would change nothing. One level still wins — a child gets neither the
        row nor the server, whatever its runtime requires. */
     const links = this.effectiveLinks(session, profile);
+    /* The browser is a capability, not delegation, so a subagent or a workflow
+       step gets it too — on its parent's project browser (it is a thread of
+       that project), with a tab of its own. No Chrome, no server: a tool that
+       cannot answer is not advertised. */
+    const browser =
+      this.workflowRunner && links.mcpServerIds.includes(BUILTIN_MCP.browser.id) && "path" in (await locateChrome())
+        ? browserServer(session, this.workflowRunner)
+        : null;
     const required = session.parentSessionId ? [] : (agent?.requiredMcp ?? []).filter((id) => !links.mcpServerIds.includes(id));
     const withRequired: LinkSet = required.length
       ? { ...links, mcpServerIds: [...links.mcpServerIds, ...required] }
@@ -2405,6 +2438,7 @@ export class SessionManager {
       getConfig(),
       agents,
       harness,
+      browser,
     );
     if (skipped.length) {
       console.log(

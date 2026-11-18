@@ -2209,6 +2209,50 @@ double-click on a divider evens out the views it separates — in the main dock 
   thread's header, the palette's Projects group and the settings row — settings keeps the
   *form*, this is the workspace as a thing with a history.
 
+## The Browser panel
+
+A window onto the project's headless Chrome, which is the server's (`server/src/browsers.ts`,
+one per project, shared by every panel, device and agent). The agent half is
+`docs/mcp-and-workflows.md`, "Driving the browser"; the plan is `docs/plans/browser.md`.
+
+- **Panel kind `browser`** (`lib/workspace/panels.ts`): `{ kind: "browser"; projectId; viewId;
+  tabId? }`, not a singleton. `viewId` tells two panels on one browser apart; the tabs are the
+  server's, so the panel owns only which tab it looks at. It has a `PANEL_SPECS` entry, so it is
+  in every "open a panel" menu and ⌘K (`dock:browser`, shown only when the server has a Chrome),
+  and a thread dock opens one with `open("browser", true)`. Gated twice: the `browserPanel`
+  feature and `GET /api/browser/status`. A panel restored onto a server with neither says which,
+  rather than drawing a dead canvas.
+- **Its own socket, not the thread's** (`lib/workspace/browser-socket.ts`, one per panel):
+  `/browser?projectId=&token=[&sessionId=]`, beside `/terminal`, because a frame stream is not a
+  journal. Binary messages are screencast frames (a small header plus a JPEG), decoded with
+  `createImageBitmap` onto a canvas; while one decodes only the newest arrival is kept. JSON
+  state (tabs, front tab, dialog, agent activity, viewport) is absolute, so a late viewer is
+  right after the next message. The wire contract is `@daedalus/browser-protocol`, compiled into
+  both halves. Close codes 4003 (no Chrome) and 4004 (no project) are not retried; anything
+  else reconnects on its own.
+- **Input mapping is pure** (`lib/workspace/browser-input.ts`, checked under Node by
+  `browser-input.check.mjs`): every coordinate the server sees is in CSS pixels of the tab's
+  viewport. A pointer is placed in the letterboxed frame box, scaled to the frame's
+  `deviceWidth`/`deviceHeight`, shifted by `offsetTop` and divided by `pageScaleFactor`, the
+  conversion DevTools' screencast makes; `pageToElement` is the inverse, for the agent overlay.
+  Keys map to CDP `key` commands (key, code, modifiers, text). While the canvas has focus every
+  key goes to the page **except the harness's own chorded shortcuts**; IME and paste go through
+  a hidden textarea as `text`. Touch: tap is a click, a one-finger drag is a wheel, a 500 ms
+  hold is a right click, and the soft keyboard is raised by the toolbar's keyboard button, never
+  by a tap.
+- **The viewport follows the panel that last had input**; an agent's `viewport` call wins until
+  a person resizes or resets, and the panel letterboxes rather than fighting it.
+- **The agent overlay**: a ring on the element the agent acted on and a "<agent> is driving"
+  badge, whose **Pause agent** is the composer's own pause (`canPause` and a turn open or held),
+  and is not drawn where the runtime cannot pause.
+- **Auto-open**: on `browser_activity` (live-only, folded into `ThreadState.browserTab`) the
+  thread dock opens its Browser panel on the agent's tab (`useBrowserAutoOpen` in
+  `thread-dock.tsx`), once per mount, so a panel the reader closed is not reopened by the same
+  event. The View option `browserAutoOpen` (device-local, `lib/layout-options.ts`) turns it off.
+- **Tool views**: `lib/tools/browser.ts` is the one place the server's leaf names are matched;
+  `tool-views/browser.tsx` draws `act`/`navigate` as one line (verb, element, resulting URL),
+  folds a snapshot to its first lines and draws a screenshot's image.
+
 ## Automations pages
 
 `/automations` is one place for what used to be two (routines, which start a thread per

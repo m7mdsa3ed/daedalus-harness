@@ -216,7 +216,7 @@ const McpServerRow = z.object({
      its three tools moved under the `agents` server, so a bundle written before
      that carries a library entry this install can no longer have. Reading it is
      the difference between an old backup restoring and an old backup failing. */
-  builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness"]).nullish(),
+  builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness", "browser"]).nullish(),
   /** Absent in a bundle written before OAuth existed, which read as "none". */
   auth: z.enum(["none", "oauth"]).default("none"),
   url: optStr,

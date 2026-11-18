@@ -23,11 +23,17 @@ export type ThreadPanelKind =
   | "trace"
   | "terminal"
   | "web"
+  | "browser"
+
+export interface ThreadPanelOptions {
+  /** For a browser: the tab to show. A reused panel is pointed at it. */
+  browserTab?: string
+}
 
 export interface ThreadDockHandle {
   /** Show the one there is (`reuse`) or open one — a fresh shell for a
       terminal, the only kind a thread holds more than one of. */
-  open: (kind: ThreadPanelKind, reuse?: boolean) => void
+  open: (kind: ThreadPanelKind, reuse?: boolean, options?: ThreadPanelOptions) => void
   jump: (id?: string, turn?: { turnId: string; seq: number }) => void
 }
 

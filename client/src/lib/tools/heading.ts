@@ -1,6 +1,7 @@
 /* ── Targets and headings ── the strings a step row prints about a call. */
 import type * as acp from "@daedalus/acp"
 import type { ToolItem } from "../store"
+import { browserHeading, extractBrowserCall } from "./browser"
 import { describeCommand } from "./describe"
 import { asRecord, str, vendorMeta } from "./helpers"
 import { extractHarnessCall, harnessOperationLabel, harnessSubject } from "./harness"
@@ -329,6 +330,11 @@ export function toolHeading(
       prose: true,
     }
   }
+  /* The project browser's tools say what they did to the page — "Click",
+     "Open example.com" — rather than "Browser · Act". Before the web rules,
+     which would read `navigate {url}` as a fetch. */
+  const browser = extractBrowserCall({ ...item, title: item.title ?? "", content: item.content ?? [], status: "" })
+  if (browser) return { ...browserHeading(browser), prose: true }
   /* A skill load leads with its name: the call is "load this skill", and which
      skill is the whole fact — so it goes in the title rather than the caption,
      which the reader can turn off. */

@@ -35,6 +35,7 @@ import {
 import { stopWatching, watchProject, type WatchBatch } from "../workspace-watch.js";
 import * as git from "../git.js";
 import { createTerminal, killProjectTerminals, killTerminal, listTerminals } from "../terminals.js";
+import { killProjectBrowsers } from "../browsers.js";
 import {
   HelperInputSchema,
   addHelper,
@@ -83,6 +84,8 @@ export function workspaceRoutes(app: Hono): void {
     // handle held until the process exits.
     stopWatching(id);
     killProjectTerminals(id);
+    // The profile goes with the project: its logins were the project's.
+    await killProjectBrowsers(id, { deleteProfile: true });
     return c.json({ ok: true });
   });
 

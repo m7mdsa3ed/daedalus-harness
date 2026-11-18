@@ -103,6 +103,9 @@ export type Action =
       Absolute, from the `background` event and the `background` field of
       `caught_up`. */
   | { type: "background"; id: string; active: boolean }
+  /** The thread's agent is on this tab of its project's browser
+      (`browser_activity`). Live-only: never journaled, never replayed. */
+  | { type: "browser-activity"; id: string; projectId: string; tabId: string }
   /** How the turn that just ended went, onto the *session* row rather than the
       thread: it is what a list draws about a thread nothing is looking at, and
       the server records the same verdict on its own row. `error` is the
@@ -729,6 +732,10 @@ export function reducer(state: State, action: Action): State {
          `caught_up` says it every attach. */
       return t.background === action.active ? state : withThread(state, action.id, { background: action.active })
     }
+    case "browser-activity":
+      return withThread(state, action.id, {
+        browserTab: { projectId: action.projectId, tabId: action.tabId, at: Date.now() },
+      })
     case "mode": {
       const t = thread(state, action.id)
       return t.modes

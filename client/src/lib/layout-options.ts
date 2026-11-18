@@ -225,6 +225,10 @@ export interface LayoutOptions {
    *  Off, a tab starts at its title. The key keeps its old name so a stored
    *  choice survives. */
   tabAgentIcon: boolean
+  /** Bring a thread's Browser panel forward, on the agent's tab, the first
+   *  time its agent drives the project browser (`browser_activity`). Off, the
+   *  panel opens only when asked for. */
+  browserAutoOpen: boolean
   /** Hairline rule above each user turn. */
   stepDividers: boolean
   /** Tick marks across the top of the composer, one per user turn, to jump between them. */
@@ -347,6 +351,7 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   hideWorkspaceTabs: false,
   showTabDetails: true,
   tabAgentIcon: true,
+  browserAutoOpen: true,
   turnRail: true,
   showSources: true,
   showToolSourcesOnFirstRow: false,

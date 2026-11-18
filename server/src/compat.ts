@@ -83,6 +83,14 @@ export const FEATURES = [
       type declares the same two for old journals and the older-adapter
       translation). Absent means the child inherits its parent's. */
   "subagentCwd",
+  /** The browser panel: `GET /api/browser/status`, `GET/POST
+      /api/projects/:id/browser/tabs`, `DELETE …/browser/tabs/:tabId` and the
+      `/browser` viewer socket (`browser-protocol.ts`). Present does not mean a
+      Chrome is installed; the status route says that. */
+  "browserPanel",
+  /** `builtin:browser`, the harness's own browser MCP, and the live-only
+      `browser_activity` thread event that opens a thread's browser panel. */
+  "browserMcp",
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];

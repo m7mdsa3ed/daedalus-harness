@@ -660,7 +660,7 @@ export const projects = pgTable("projects", {
     row stores no command, env or credentials — those are synthesized at spawn
     (`sessions.ts`: config.json's search backend, the project's id) so a config
     edit is live and a token is never cached in a row. */
-export type BuiltinMcp = "web-search" | "knowledge" | "agents" | "harness";
+export type BuiltinMcp = "web-search" | "knowledge" | "agents" | "harness" | "browser";
 
 export const mcpServers = pgTable("mcp_servers", {
   id: text("id").primaryKey(),
@@ -669,7 +669,7 @@ export const mcpServers = pgTable("mcp_servers", {
   /** Optional registry-provided logo for the library list. */
   logoUrl: text("logo_url"),
   // builtin
-  builtin: text("builtin", { enum: ["web-search", "knowledge", "agents", "harness"] }).$type<BuiltinMcp>(),
+  builtin: text("builtin", { enum: ["web-search", "knowledge", "agents", "harness", "browser"] }).$type<BuiltinMcp>(),
   // http
   url: text("url"),
   headers: jsonb("headers").$type<NameValue[]>(),

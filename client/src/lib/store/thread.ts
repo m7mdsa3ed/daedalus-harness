@@ -61,6 +61,10 @@ export interface ThreadState {
       journaled, because the run's own journaled beats are the thing that would
       keep saying `running` after the run died. */
   background: boolean
+  /** The project-browser tab this thread's agent last landed on
+      (`browser_activity`), or null. Live-only like `background`, and read by
+      the thread dock alone: the first one opens its browser panel there. */
+  browserTab: { projectId: string; tabId: string; at: number } | null
   /** Whether the runtime takes pause at all (`session_config.canPause`) —
       the harness's own agent; every other runtime has only Stop. */
   canPause: boolean
@@ -229,6 +233,7 @@ export const emptyThread: ThreadState = {
   pausedError: null,
   retry: null,
   background: false,
+  browserTab: null,
   canPause: false,
   canCompact: false,
   permissions: [],

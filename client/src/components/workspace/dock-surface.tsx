@@ -46,6 +46,10 @@ const TerminalPanel = React.lazy(async () => ({
   default: (await import("@/components/workspace/terminal-panel"))
     .TerminalPanel as React.FC<IDockviewPanelProps>,
 }))
+const BrowserPanel = React.lazy(async () => ({
+  default: (await import("@/components/workspace/browser-panel"))
+    .BrowserPanel as React.FC<IDockviewPanelProps & { actions: Actions }>,
+}))
 const TasksPanel = React.lazy(async () => ({
   default: (await import("@/components/workspace/tasks-panel"))
     .TasksPanel as React.FC<IDockviewPanelProps & { actions: Actions }>,
@@ -380,6 +384,7 @@ export function WorkspaceDock({
     ))
     map.web = contained(WebPanel as React.FC<IDockviewPanelProps>)
     map.page = contained(PagePanel as React.FC<IDockviewPanelProps>)
+    map.browser = contained((props) => <BrowserPanel {...props} actions={actions} />)
     return map
   }, [actions])
 

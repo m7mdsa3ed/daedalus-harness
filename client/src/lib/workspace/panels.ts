@@ -11,7 +11,7 @@
    server restart. `parsePanel` is the other half of that contract — anything
    restored has to come back through it before the dock will trust it. */
 
-export type PanelKind = "chat" | "terminal" | "web" | "tasks" | "page"
+export type PanelKind = "chat" | "terminal" | "web" | "tasks" | "page" | "browser"
 
 /** The project id of a terminal or IDE opened with no thread routed: the
     server roots it at $HOME (`projectRoot`). */
@@ -61,6 +61,12 @@ export type PanelDescriptor =
       unpinned one rather than adding another (`openPage` in dock.tsx), so its
       id says nothing about where it is pointed. */
   | { kind: "page"; path: string }
+  /** A view of the project's headless browser (docs/plans/browser.md). The
+      browser and its tabs are the server's, one per project, so the panel is a
+      *window onto* it: `viewId` tells two panels on the same browser apart, and
+      `tabId` is the CDP target it was last looking at - a hint, since the tab
+      may be gone by the time a layout is restored. */
+  | { kind: "browser"; projectId: string; viewId: string; tabId?: string }
 
 export interface PanelSpec {
   /** One per resource *by default* — opening it again focuses what is there,
@@ -80,6 +86,7 @@ export const PANEL_SPECS: Record<PanelKind, PanelSpec> = {
   web: { singleton: false, defaultTitle: "Preview", implemented: true },
   tasks: { singleton: true, defaultTitle: "Tasks", implemented: true },
   page: { singleton: false, defaultTitle: "Page", implemented: true },
+  browser: { singleton: false, defaultTitle: "Browser", implemented: true },
 }
 
 export const PANEL_KINDS = Object.keys(PANEL_SPECS) as PanelKind[]
@@ -106,6 +113,8 @@ export function panelId(panel: PanelDescriptor): string {
       /* Never looked up by — a page tab is found by `pageKey`, never by id
          (see `openPage`). This is only the *base* of a fresh tab's id. */
       return `page:${pageKey(panel.path)}`
+    case "browser":
+      return `browser:${panel.projectId}:${panel.viewId}`
   }
 }
 
@@ -185,6 +194,11 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
         ...(str(p.taskId) ? { taskId: str(p.taskId) } : {}),
         ...(str(p.viewId) ? { viewId: str(p.viewId) } : {}),
       }
+    }
+    case "browser": {
+      const viewId = str(p.viewId)
+      const tabId = str(p.tabId)
+      return projectId && viewId ? { kind: "browser", projectId, viewId, ...(tabId ? { tabId } : {}) } : null
     }
     case "web": {
       /* A layout saved when the panel was a browser is dropped rather than

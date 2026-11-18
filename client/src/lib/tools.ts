@@ -124,6 +124,17 @@ export {
   readableStep,
 } from "./tools/subagents"
 
+export type { BrowserCall, BrowserPage, BrowserTool } from "./tools/browser"
+export {
+  extractBrowserCall,
+  browserElementName,
+  browserHeading,
+  browserInput,
+  browserNodeLabel,
+  browserSummary,
+  browserVerb,
+} from "./tools/browser"
+
 export type { WebResult, WebSearchCall, WebFetchCall } from "./tools/web"
 export {
   displayUrl,

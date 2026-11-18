@@ -88,11 +88,12 @@ import { usePanelPinned } from "@/lib/workspace/panel-pins"
 import { usePanelStatus } from "@/lib/workspace/panel-status"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { PANEL_SPECS, isPanelKind, parsePanel } from "@/lib/workspace/panels"
+import { useBrowserAvailable } from "@/lib/queries/browser"
 import { cn } from "@/lib/utils"
 
 /** What a tab can open beside itself in its tab group — everything the +
     offers but a thread, which the composer's own doors open. */
-const GROUPABLE = ["terminal", "web", "tasks"] as const
+const GROUPABLE = ["terminal", "web", "tasks", "browser"] as const
 
 type PanelApi = IDockviewPanelHeaderProps["api"]
 type ContainerApi = IDockviewPanelHeaderProps["containerApi"]
@@ -581,6 +582,9 @@ function useTabMenuItems({
   /* The same opener the header menu and the chords call, so "open it with this
      tab" and "open it" differ in where it lands and in nothing else. */
   const { onOpenPanel } = useDockOpeners()
+  /* The browser is offered only where the server can run one. */
+  const browser = useBrowserAvailable()
+  const groupable = GROUPABLE.filter((kind) => kind !== "browser" || browser)
 
   return [
     ...([
@@ -727,7 +731,7 @@ function useTabMenuItems({
             type: "sub",
             label: "Open with this tab",
             items: [
-              ...GROUPABLE.map(
+              ...groupable.map(
                 (kind): MenuItemSpec => ({
                   label: PANEL_SPECS[kind].defaultTitle,
                   onClick: () =>
@@ -738,7 +742,7 @@ function useTabMenuItems({
                 ? []
                 : ([
                     { type: "separator" },
-                    ...GROUPABLE.map(
+                    ...groupable.map(
                       (kind): MenuItemSpec => ({
                         label: `${PANEL_SPECS[kind].defaultTitle} ${kind === "terminal" ? "below" : "to the right"}`,
                         onClick: () =>

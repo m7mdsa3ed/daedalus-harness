@@ -415,6 +415,9 @@ export function makeThreadCallbacks(
     onBackground: (active) => {
       send({ type: "background", id, active })
     },
+    onBrowserActivity: (projectId, tabId) => {
+      send({ type: "browser-activity", id, projectId, tabId })
+    },
     onCaughtUp: (...args) => foldCaughtUp(ctx, ...args),
     onRewind: (...args) => foldRewind(ctx, ...args),
     onRewound: (...args) => foldRewound(ctx, ...args),

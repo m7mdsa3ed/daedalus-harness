@@ -2,6 +2,7 @@
    one-line story its closed row tells. Imports every other module; nothing
    here is imported back. */
 import type { ToolItem } from "../store"
+import { browserSummary, extractBrowserCall } from "./browser"
 import { codeRunSummary, extractCodeRun } from "./code"
 import { diffStats, extractEdits } from "./edits"
 import { extractHarnessCall, harnessSummary } from "./harness"
@@ -49,6 +50,11 @@ export function toolSummary(item: ToolItem, active: boolean): string | null {
   /* The harness meta-tools reach every part of the harness, so their row says
      which operation ran, not the first line of its JSON result. */
   if (extractHarnessCall(item)) return harnessSummary(item)
+
+  /* The browser's answers lead with a page line and a snapshot dump; the row
+     says where the page ended up instead. */
+  const browser = extractBrowserCall(item)
+  if (browser) return browserSummary(browser)
 
   /* A message's story is whether it landed — Claude Code answers a JSON
      status, never a line worth freezing on the row. */
@@ -125,6 +131,7 @@ export type ToolView =
   | "terminal"
   | "mcp"
   | "harness"
+  | "browser"
   | "subagent"
   | "message"
   | "websearch"
@@ -176,6 +183,8 @@ function computeToolView(item: ToolItem): ToolView {
   // The harness server's two tools are MCP calls, but they reach the harness
   // itself, so they get their own layout before the generic MCP one.
   if (extractHarnessCall(item)) return "harness"
+  // The project browser's server: its answers are a page, not a result blob.
+  if (extractBrowserCall(item)) return "browser"
   if (extractMcpCall(item)) return "mcp"
   // Only after the specialised views: Codex files a terminal under `execute`
   // and an MCP call under `execute` too, and both want their own layout.

@@ -321,6 +321,10 @@ export interface ThreadCallbacks {
       Absolute and live-only like `onPaused`, and the reading that keeps a
       thread from looking done between a workflow's launch and its end. */
   onBackground: (active: boolean) => void
+  /** This thread's agent drove the project browser and landed on `tabId`.
+      Live-only, said once per thread per server boot (the `/bm` route), so
+      the thread dock can bring its browser panel forward on that tab. */
+  onBrowserActivity: (projectId: string, tabId: string) => void
   /** The journal position this device has folded up to, as it moves — so the
       cursor a reconnect resumes from describes what is actually on screen and
       not merely what was there when this socket attached. Raised on every
@@ -681,6 +685,9 @@ export class ThreadSocket {
         return
       case "background":
         this.callbacks.onBackground(event.active)
+        return
+      case "browser_activity":
+        this.callbacks.onBrowserActivity(event.projectId, event.tabId)
         return
       /* The replay, arriving whole. Unrolled through this same switch so there
          is no second parser: `catchingUp` is already true (the `attached` that

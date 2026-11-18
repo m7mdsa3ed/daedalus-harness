@@ -560,6 +560,13 @@ const INTERFACE_GROUPS: Category[] = [
         description:
           "Each tab's own mark at its start: a thread's agent (the same one its sidebar row wears), a page's section, a terminal's kind. Off, a tab starts at its title.",
       },
+      {
+        key: "browserAutoOpen",
+        icon: Globe,
+        title: "Open the browser when an agent uses it",
+        description:
+          "The first time a thread's agent drives the project browser, its Browser panel opens beside the transcript on the tab the agent is on. Off, the panel opens only when you ask for it.",
+      },
     ],
   },
   {

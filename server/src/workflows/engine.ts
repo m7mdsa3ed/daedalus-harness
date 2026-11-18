@@ -308,6 +308,11 @@ export class WorkflowEngine {
     return `http://127.0.0.1:${this.opts.port}/hm/${this.key}/${session.id}`;
   }
 
+  /** The same loopback key under `/bm`, for the `browser` MCP server. */
+  browserUrlFor(session: Pick<Session, "id">): string {
+    return `http://127.0.0.1:${this.opts.port}/bm/${this.key}/${session.id}`;
+  }
+
   /** The thread a `/wf/<key>/<sessionId>` path speaks for, or null. */
   resolveCaller(key: string, sessionId: string): Session | null {
     if (!safeKeyEqual(key, this.key)) return null;

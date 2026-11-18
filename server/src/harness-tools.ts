@@ -339,7 +339,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
     description: "Put one of the harness's own MCP servers in the library (idempotent).",
     method: "POST",
     path: "/api/mcp-servers/builtin/:kind",
-    params: { kind: z.enum(["web-search", "knowledge", "workflow", "agents", "harness"]) },
+    params: { kind: z.enum(["web-search", "knowledge", "workflow", "agents", "harness", "browser"]) },
   },
   {
     name: "mcp_registry_search",

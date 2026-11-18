@@ -16,8 +16,12 @@
     "electron:dist": "pnpm build && node scripts/electron-dist.mjs",
     "electron:dist:win": "pnpm build && node scripts/electron-dist.mjs --win",
     "icons": "node scripts/render-icons.mjs",
-    "test": "tsc -b && pnpm test:subagents",
+    "test": "tsc -b && pnpm test:subagents && pnpm test:browser-input && pnpm test:browser-tools && pnpm test:code && pnpm test:openui-args",
+    "test:code": "pnpm exec tsx src/lib/tools/code.check.mjs",
+    "test:openui-args": "pnpm exec tsx --tsconfig tsconfig.app.json src/lib/openui/named-args.check.mjs",
     "test:subagents": "pnpm exec tsx src/lib/tools/subagents.check.mjs",
+    "test:browser-input": "pnpm exec tsx --tsconfig tsconfig.app.json src/lib/workspace/browser-input.check.mjs",
+    "test:browser-tools": "pnpm exec tsx --tsconfig tsconfig.app.json src/lib/tools/browser.check.mjs",
     "openui": "node scripts/gen-openui.mjs",
     "openui:check": "node scripts/gen-openui.mjs --check"
   },

@@ -35,6 +35,7 @@ import {
   BotIcon,
   FolderTreeIcon,
   GitCompareIcon,
+  GlobeIcon,
   ActivityIcon,
   InfoIcon,
   Maximize2Icon,
@@ -70,7 +71,9 @@ import { reportError } from "@/lib/errors"
 import { InspectorContext, ThreadJumpContext, type InspectorTab } from "@/lib/inspector"
 import { useProjects } from "@/lib/queries/catalog"
 import { useFeature } from "@/lib/queries/surfaces"
-import { useSessionMeta, useThread } from "@/lib/store"
+import { useBrowserAvailable } from "@/lib/queries/browser"
+import { useLayoutOptions } from "@/lib/layout-options"
+import { useSessionMeta, useStoreSelect, useThread } from "@/lib/store"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 import { uuid } from "@/lib/uuid"
@@ -93,6 +96,11 @@ const TerminalPanel = React.lazy(async () => ({
 const WebPanel = React.lazy(async () => ({
   default: (await import("@/components/workspace/web-panel")).WebPanel as React.FC<IDockviewPanelProps>,
 }))
+const BrowserPanel = React.lazy(async () => ({
+  default: (await import("@/components/workspace/browser-panel")).BrowserPanel as React.FC<
+    IDockviewPanelProps & { actions: Actions }
+  >,
+}))
 
 const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }> = {
   transcript: { title: "Thread", icon: null },
@@ -102,6 +110,7 @@ const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }>
   trace: { title: "Trace", icon: ActivityIcon },
   terminal: { title: "Terminal", icon: SquareTerminalIcon },
   web: { title: "Preview", icon: AppWindowIcon },
+  browser: { title: "Browser", icon: GlobeIcon },
 }
 
 /** The readings — one panel each, the id is the kind. */
@@ -118,6 +127,7 @@ const SLOT: Record<Exclude<ThreadPanelKind, "transcript">, Slot> = {
   details: "side",
   trace: "side",
   web: "beside",
+  browser: "beside",
   terminal: "below",
 }
 
@@ -237,7 +247,7 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
         apiRef.current?.getPanel("transcript")?.api.setActive()
         jumpRef.current?.(id, turn)
       },
-      open(kind, reuse) {
+      open(kind, reuse, options) {
         const api = apiRef.current
         const current = metaRef.current
         if (!api || !current) return
@@ -274,6 +284,27 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
           add(panelId(panel), "web", panel)
           return
         }
+        if (kind === "browser") {
+          /* The project's browser is one per project and shared, so a thread
+             holds one view of it: asking again shows that view. A fresh one
+             (`reuse` false) is a second window onto the same browser. */
+          const open = api.panels.find((panel) => panel.api.component === "browser")
+          const tabId = options?.browserTab
+          if (open && reuse) {
+            /* Pointing a view at a tab is a parameter, like any reload's: the
+               panel `watch`es whatever its descriptor names. */
+            if (tabId) open.api.updateParameters({ ...(open.params ?? {}), tabId })
+            return open.api.setActive()
+          }
+          const panel: PanelDescriptor = {
+            kind: "browser",
+            projectId,
+            viewId: open ? uuid().slice(0, 8) : "default",
+            ...(tabId ? { tabId } : {}),
+          }
+          add(panelId(panel), "browser", panel)
+          return
+        }
         add(kind, kind)
       },
     }
@@ -287,7 +318,7 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
     return {
       ...outer,
       openPanel: (panel, options) => {
-        if (panel.kind === "terminal" || panel.kind === "web") {
+        if (panel.kind === "terminal" || panel.kind === "web" || panel.kind === "browser") {
           if (apiRef.current) place(apiRef.current, panelId(panel), panel.kind, panel, stackedRef.current)
           return
         }
@@ -312,6 +343,7 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
   }, [outer])
 
   React.useEffect(() => registerThreadDock(sessionId, handle), [sessionId, handle])
+  useBrowserAutoOpen(sessionId, handle)
   /* A window narrowed past the phone's width folds its splits the same way. */
   React.useEffect(() => {
     if (stacked && apiRef.current) stack(apiRef.current)
@@ -407,6 +439,7 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
       )),
       terminal: contained(TerminalPanel),
       web: contained(WebPanel),
+      browser: contained((props) => <BrowserPanel {...props} actions={actions} />),
     }
     for (const section of SECTIONS)
       map[section] = contained(() => <SectionPanel section={section} sessionId={sessionId} />)
@@ -454,6 +487,25 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
       </ThreadDockContext.Provider>
     </DockContext.Provider>
   )
+}
+
+/* ── Auto-open on an agent's first browser call ──
+   `browser_activity` is said once per thread per server boot, the first time
+   the agent's call leaves it on a tab. Once per *mount* too: a thread whose
+   panel the reader closed is not reopened by the same event folding again,
+   and a later one (after a server restart) is a new first time. Device-local
+   off switch: how a thread is laid out is the reader's. */
+function useBrowserAutoOpen(sessionId: string, handle: ThreadDockHandle) {
+  const enabled = useFeature("browserMcp")
+  const { browserAutoOpen } = useLayoutOptions()
+  const activity = useStoreSelect((state) => state.threads[sessionId]?.browserTab ?? null)
+  const seen = React.useRef<number | null>(null)
+  React.useEffect(() => {
+    if (!activity || seen.current === activity.at) return
+    seen.current = activity.at
+    if (!enabled || !browserAutoOpen) return
+    handle.open("browser", true, { browserTab: activity.tabId })
+  }, [activity, enabled, browserAutoOpen, handle])
 }
 
 function SectionPanel({
@@ -585,6 +637,7 @@ function ThreadPanelsMenu() {
   const ctx = React.useContext(ThreadDockContext)
   /* The Trace reading needs a server that records model calls. */
   const modelCalls = useFeature("modelCalls")
+  const browser = useBrowserAvailable()
   if (!ctx) return null
   const row = (kind: ThreadPanelKind, label = KINDS[kind].title) => {
     const Icon = KINDS[kind].icon
@@ -621,6 +674,7 @@ function ThreadPanelsMenu() {
           <DropdownMenuItem onClick={() => ctx.handle.open("web", true)}>
             <FolderTreeIcon /> Files
           </DropdownMenuItem>
+          {browser && row("browser")}
           {row("terminal", "New terminal")}
         </DropdownMenuContent>
       </DropdownMenu>

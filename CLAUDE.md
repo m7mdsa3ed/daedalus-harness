@@ -449,9 +449,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   speaks the rest — media, instructions, `list_changed`, elicitation, sampling (behind a
   permission), roots, progress — and joins a tool's images to the next step as a user message,
   because an OpenAI-compatible tool message is text only.
-- **There is no browser and no CDP.** The Preview panel draws a project's files and diffs and
-  nothing else (`web-panel.tsx`); Electron opens no debugging port, runs no `<webview>`, and no
-  `chrome-devtools-mcp` row is shipped. Boot still deletes any leftover `builtin:browser` row.
+- **The browser is the server's: one headless Chrome per project, over a pipe, never a port**
+  (`browsers.ts`). The Browser panel (`/browser` socket) and the agent's `builtin:browser`
+  (our own MCP, not `chrome-devtools-mcp`, over the `/bm` loopback) are both clients of it, so
+  input is serialised per tab and the panel draws what the agent does; `browser_activity` is
+  live-only. Preview still only draws files and diffs; Electron opens no debugging port.
+  → `docs/mcp-and-workflows.md` "Driving the browser", `docs/client.md` "The Browser panel".
 - **The marketplace indexes nothing** (`server/src/mcp-registry.ts`): Browse proxies an MCP
   Registry's `GET /v0/servers` (`config.mcpRegistryUrl`, the official one by default) and maps
   `server.json` onto `McpServerInput` — `version=latest` or a search is twenty copies of one

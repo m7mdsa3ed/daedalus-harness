@@ -47,19 +47,25 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
     description:
       "Manage this harness from the agent — projects, spaces, profiles and agents, the task board, the library (MCP servers, skills, commands, model prompts), rules, themes, knowledge, routines, schedules and threads, on the same routes the app itself calls.",
   },
+  browser: {
+    id: "builtin:browser",
+    name: "Browser",
+    description:
+      "Drive the project's own browser — the one in the Browser panel — by accessibility snapshot, real clicks and typing, screenshots, console and network logs; needs Chrome on the server.",
+  },
 };
 
 /**
  * The built-ins whose stdio server is synthesized from a *thread*: its env
- * names the calling session's own loopback URL (`workflow`, `agents`, `harness`)
- * or the desktop preview that thread is driving (`browser`). There is no such
+ * names the calling session's own loopback URL (`agents`, `harness`, and
+ * `browser`, whose loopback maps the thread to its project's browser). There is no such
  * server without a thread, so a settings screen — or any caller with no session
  * behind it — can neither connect to one nor list its tools. The two that
  * resolve without a thread are `web-search` (on `data/config.json`) and
  * `knowledge` (on the project). Kept here, beside `BUILTIN_MCP`, in the module
  * that owns the built-in kinds and low enough that nothing imports it upward.
  */
-const THREAD_SCOPED_BUILTINS = new Set<BuiltinMcp>(["agents", "harness"]);
+const THREAD_SCOPED_BUILTINS = new Set<BuiltinMcp>(["agents", "harness", "browser"]);
 
 /** Whether a built-in only exists as a thread's own server — see above. */
 export function isThreadScopedBuiltin(kind: BuiltinMcp): boolean {
@@ -72,8 +78,6 @@ export function isThreadScopedBuiltin(kind: BuiltinMcp): boolean {
  * chose is theirs. Cheap enough to run on every boot.
  */
 export async function retitleBuiltinMcp(): Promise<void> {
-  // `builtin:browser` was removed (chrome-devtools-mcp is a plain stdio row now); its links cascade.
-  await db.delete(mcpServersTable).where(eq(mcpServersTable.id, "builtin:browser"));
   // `builtin:video` (video-mcp) was removed too; its links cascade.
   await db.delete(mcpServersTable).where(eq(mcpServersTable.id, "builtin:video"));
   /* `builtin:workflow` is the same removal one release on: its three tools moved
@@ -96,7 +100,7 @@ export const McpServerInputSchema = z.union([
   z.object({
     type: z.literal("builtin"),
     name: z.string().min(1),
-    builtin: z.enum(["web-search", "knowledge", "agents", "harness"]),
+    builtin: z.enum(["web-search", "knowledge", "agents", "harness", "browser"]),
   }),
   z.object({
     type: z.literal("http"),
