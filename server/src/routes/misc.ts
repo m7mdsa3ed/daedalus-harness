@@ -28,6 +28,7 @@ import { clearNotifications, listNotifications, markNotificationsRead, unreadNot
 import { addComposerHistory, clearComposerHistory, listComposerHistory } from "../composer-history.js";
 import type { SessionManager } from "../sessions.js";
 import { appVersion, changelog } from "../meta.js";
+import { dbAvailable, dbStatus } from "../db/index.js";
 import { API, FEATURES, MIN_CLIENT_API } from "../compat.js";
 import { resolveLinkPreview } from "../link-preview.js";
 import { CATEGORIES, PROFILES, mapsConfig, nearby, placePhoto, route, searchPlaces } from "../geo.js";
@@ -112,14 +113,15 @@ export function miscRoutes(
     return c.json({ photo: await placePhoto(query, near.success ? near.data : undefined) });
   });
 
-  app.get("/api/health", (c) => {
+  app.get("/api/health", async (c) => {
+    await dbAvailable();
     const token = bearerToken(c.req.header("authorization"), c.req.query("token"));
     // `webSearch` is only whether the search API is configured — never the token.
     // The contract numbers ride the unauthenticated route because the gate must be able to
     // say "too old" before a token is known good (`compat.ts`).
     return c.json({
       ok: true, name: "daedalus", authorized: token === config.token, webSearch: Boolean(readWebSearch()),
-      api: API, minClientApi: MIN_CLIENT_API,
+      api: API, minClientApi: MIN_CLIENT_API, database: dbStatus(),
     });
   });
 

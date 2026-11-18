@@ -22,6 +22,13 @@ line: keep each bullet on a single line.
 
 - **`@openuidev/react-lang` is 1.1.1** (from 1.0.1): streamed views skip re-rendering elements whose props did not change, and `@Round`/`@Abs`/`@Floor`/`@Ceil` also map over arrays, which the generated prompt now says.
 
+### 2026-11-14
+
+
+
+
+- **The server survives the database going away and says so while it reconnects.** Boot waits for Postgres with backoff instead of crashing into a pm2 restart loop; once it has failed a query on a connection error, every `/api` route answers `503 { error: "database unavailable — reconnecting" }` at once instead of waiting out the 10s connect timeout, a request arriving while down re-probes it (at most every 2s, on its own short-timeout client) and the first success marks it back up, and `/api/health` carries `database: {up, since?, error?}`.
+
 ### 2026-11-04
 
 - **The server logs which door each persona took on a handshake request.** `describePersonaDoor` (`acp-bridge.ts`) names the path — `systemPrompt` with its mode and length, the spawn env, AIR `customInstructions` or `_meta.systemPrompt` — and the bridge logs it as `[acp:<agent>] persona door: …` whenever a thread has a persona, the positive half of the existing warning for a runtime that never advertised its door.

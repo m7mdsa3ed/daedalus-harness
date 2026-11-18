@@ -52,7 +52,106 @@ const pool = new pg.Pool({
    surfaces as an 'error' on the pool with nobody awaiting it, which is an
    unhandled error event and therefore a dead process. The pool discards the
    connection itself; this only has to keep the event from being fatal. */
-pool.on("error", (error) => console.error("[db] idle connection error", error));
+pool.on("error", (error) => {
+  console.error("[db] idle connection error", error);
+  if (isDbConnectionError(error)) markDbDown(error);
+});
+
+/*
+ * Is the database there? The pool already reconnects by itself — every query
+ * takes a fresh connection once Postgres is back — so what is missing is only
+ * *knowing* it is gone, so a route can say "reconnecting" at once instead of
+ * every request waiting out the 10s connect timeout to throw a bare 500.
+ *
+ * Down is learned from a failed query (`markDbDown`, called by the route error
+ * handler and the pool's idle error); up is learned by `dbAvailable`, which a
+ * request arriving while down runs — one short probe on its own client,
+ * coalesced, at most once per PROBE_EVERY_MS.
+ * ponytail: no background heartbeat, so a down database is only noticed by a
+ * query that fails; add a timer if /api/health must notice with no traffic.
+ */
+const PROBE_EVERY_MS = 2_000;
+let down: { since: number; error: string } | null = null;
+let probing: Promise<boolean> | null = null;
+let lastProbe = 0;
+
+const CONNECTION_CODES = new Set([
+  "ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "ETIMEDOUT", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "EPIPE",
+  // SQLSTATE class 08 (connection exception) and the shutdown / starting-up codes.
+  "08000", "08001", "08003", "08004", "08006", "57P01", "57P02", "57P03",
+]);
+
+/** A failure that means the database cannot be reached, as opposed to a query
+    it refused. Walks `cause`, because drizzle wraps the driver's error. */
+export function isDbConnectionError(error: unknown): boolean {
+  for (let e = error as { code?: unknown; message?: unknown; cause?: unknown } | undefined, i = 0; e && i < 5; e = e.cause as typeof e, i++) {
+    if (typeof e.code === "string" && CONNECTION_CODES.has(e.code)) return true;
+    if (typeof e.message === "string" && /Connection terminated|timeout exceeded when trying to connect|connection error/i.test(e.message)) return true;
+  }
+  return false;
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function markDbDown(error: unknown): void {
+  if (down) return;
+  down = { since: Date.now(), error: messageOf(error) };
+  console.error(`[db] database unreachable (${down.error}); reconnecting`);
+}
+
+/** One `SELECT 1` on a client of its own with a short timeout — never the pool,
+    whose 10s connect timeout is what this is here to avoid waiting out. */
+async function probe(): Promise<void> {
+  const client = new pg.Client({ connectionString: CONNECTION_STRING, connectionTimeoutMillis: 3_000 });
+  client.on("error", () => {});
+  try {
+    await client.connect();
+    await client.query("SELECT 1");
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+/** True when the database is up; while it is down, re-checks (throttled). */
+export async function dbAvailable(): Promise<boolean> {
+  if (!down) return true;
+  if (probing) return probing;
+  if (Date.now() - lastProbe < PROBE_EVERY_MS) return false;
+  lastProbe = Date.now();
+  probing = probe().then(
+    () => {
+      console.log(`[db] reconnected after ${Math.round((Date.now() - down!.since) / 1000)}s`);
+      down = null;
+      return true;
+    },
+    (error) => {
+      down!.error = messageOf(error);
+      return false;
+    },
+  ).finally(() => { probing = null; });
+  return probing;
+}
+
+/** What `/api/health` says about the database. */
+export function dbStatus(): { up: true } | { up: false; since: number; error: string } {
+  return down ? { up: false, ...down } : { up: true };
+}
+
+/** Boot waits for the database instead of crashing into a restart loop. */
+async function waitForDb(): Promise<void> {
+  for (let attempt = 1, delay = 1_000; ; attempt++, delay = Math.min(delay * 2, 30_000)) {
+    try {
+      await probe();
+      if (attempt > 1) console.log("[db] database reachable; continuing boot");
+      return;
+    } catch (error) {
+      console.error(`[db] database unreachable at boot (attempt ${attempt}: ${messageOf(error)}); retrying in ${delay / 1000}s`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
 
 /*
  * `bigint` (int8) comes back from pg as a *string*, because 2^63 does not fit
@@ -73,6 +172,7 @@ export const db = drizzle(pool, { schema });
  * database that is ready — which is the same guarantee the old file gave, by
  * different means.
  */
+await waitForDb();
 await ensureSchema();
 await migrateSqlite();
 await importLegacyJson();

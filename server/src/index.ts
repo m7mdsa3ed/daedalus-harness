@@ -7,6 +7,9 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { WebSocket, WebSocketServer } from "ws";
 import { loadConfig } from "./config.js";
 import { HttpError } from "./http-error.js";
+import { dbAvailable, isDbConnectionError, markDbDown } from "./db/index.js";
+
+const DB_UNAVAILABLE = "database unavailable — reconnecting";
 import { migrateLegacyPrompts } from "./legacy-prompts.js";
 import { backfillPeakSchedules } from "./peak-schedules.js";
 import { migrateScheduledMessages } from "./scheduled-migration.js";
@@ -251,6 +254,12 @@ app.use("*", cors());
  */
 app.onError((err, c) => {
   console.error(`[${c.req.method} ${c.req.path}]`, err);
+  /* The database went away under this request: say so as the same 503 the
+     gate below answers while it is down, and let the next request re-check. */
+  if (isDbConnectionError(err)) {
+    markDbDown(err);
+    return c.json({ error: DB_UNAVAILABLE }, 503);
+  }
   const message = err instanceof Error ? err.message : String(err);
   /* An HttpError named its own status when it was thrown (every domain module's
      refusal class extends it — see http-error.ts); a JSON body that would not
@@ -268,6 +277,14 @@ app.use("/api/*", async (c, next) => {
   const token = bearerToken(c.req.header("authorization"), c.req.query("token"));
   if (token !== config.token) return c.json({ error: "unauthorized" }, 401);
   return next();
+});
+
+/* While the database is unreachable every /api route answers at once with a
+   503 rather than each one waiting out the pool's connect timeout; the check
+   is also what notices it is back (db/index.ts `dbAvailable`). */
+app.use("/api/*", async (c, next) => {
+  if (c.req.path === "/api/health" || (await dbAvailable())) return next();
+  return c.json({ error: DB_UNAVAILABLE }, 503);
 });
 
 /**
