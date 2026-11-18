@@ -7,7 +7,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - `server/` — Node 22 + Hono + ws. **The ACP client lives here.** It spawns an agent
   process per thread (agent registry, `{apiKey}`/`{baseUrl}`/`{model}`/`{cwd}` placeholders
   filled from profile + project) and drives the protocol over its stdio with
-  `@agentclientprotocol/sdk` (2.4.0, through the `/unstable` entry, via the `src/acp.ts`
+  `@agentclientprotocol/sdk` (2.7.0, through the `/unstable` entry, via the `src/acp.ts`
   barrel only — see `docs/protocol.md` "The SDK seam") — one `AcpBridge` (`src/acp-bridge.ts`) per process, owning the
   handshake, `session/new`-vs-`session/load`, prompts, config, and the permission and
   elicitation requests the agent blocks on. What reaches the browser is *derived state*: the

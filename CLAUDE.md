@@ -49,8 +49,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   and `session/archive`. Claude's `workflow_progress` passthrough and its `SendMessage` resume
   fixes (a resumed child is keyed on its launch id, not the SendMessage's, and a load
   registers the replayed children) are `server/scripts/patch-claude-acp.mjs` (check:
-  `patch-claude-acp.check.mjs`), re-run per upgrade; **it refuses an adapter below 0.100.0**
-  (it anchors on `dist/subagent-replay.js`) and repairs an install the older script patched.
+  `patch-claude-acp.check.mjs`), re-run per upgrade; **it refuses an adapter below 0.103.0**
+  (it anchors on `dist/v1/acp-agent.js`) and repairs an install the older script patched.
   Seeding backfills new fields but **never** replaces name/command/args/env — those are the
   user's, and so are `install`/`icon` (descriptive, not protocol).
 - **What the harness believes about a runtime is a column on its row, never a comparison
@@ -122,7 +122,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   self-updates. → `docs/protocol.md` "Versioning".
 - **The ACP SDK is named in one file per half** — `server/src/acp.ts`, `agent/src/acp.ts`,
   the client's `@daedalus/acp` — and both barrels are over **`@agentclientprotocol/sdk/unstable`**
-  (2.4.0, pinned exactly in all three manifests; the entry that types `subagents`/`plan` and
+  (2.7.0, pinned exactly in all three manifests; the entry that types `subagents`/`plan` and
   carries `subagent_update`, `session/resume`, `fork`, `archive`, `auth/status`, `systemPrompt`).
   Import `acp` from there, never from the package. **The SDK's `SessionUpdate` union is closed
   and the reroute is derived from it, never hand-kept**: the server barrel reads the tag set

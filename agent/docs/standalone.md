@@ -79,7 +79,7 @@ Any other ACP client is the same three fields — a command, its args, and an en
 With the ACP SDK, in process or over a spawned pipe:
 
 ```ts
-import * as acp from "@agentclientprotocol/sdk/unstable" // 2.4.0; the entry that types `subagents`, `subagent_update`, `systemPrompt`, `session/archive`
+import * as acp from "@agentclientprotocol/sdk/unstable" // 2.7.0; the entry that types `subagents`, `subagent_update`, `systemPrompt`, `session/archive`
 
 await acp.client({ name: "my-client" })
   .onRequest("session/request_permission", ({ params }) => {

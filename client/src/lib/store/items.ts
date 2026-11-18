@@ -215,8 +215,9 @@ export interface SubagentItem {
  * ACP carries plans two ways and we accept both. The original `plan`
  * notification is always a list of entries and there is only ever one of them,
  * so it keeps the fixed id `"plan"`. The newer `plan_update` carries a `planId`
- * and one of three shapes — structured entries, raw markdown, or a URI pointing
- * at a file — which is why this is a union of optional fields rather than an
+ * and one of two shapes — structured entries, or raw markdown with an optional
+ * file path (old journals also carry a third, a bare file URI) — which is why
+ * this is a union of optional fields rather than an
  * entry list: a markdown plan has no entries to show, and inventing some by
  * parsing its headings would be the client guessing at the agent's meaning.
  */
@@ -229,7 +230,8 @@ export interface PlanItem {
   entries: acp.PlanEntry[]
   /** A plan the agent wrote as prose (`plan_update` type `markdown`). */
   markdown?: string
-  /** A plan that lives in a file (`plan_update` type `file`). */
+  /** Where the plan lives: a markdown plan's `path` (schema v1.32+), or the
+      `uri` of the legacy `plan_update` type `file` that old journals replay. */
   uri?: string
   /** A subagent's own plan — see ToolItem.parentId. The id carries the owner
       too (`plan@<parentId>`), so a child's plan can never replace the thread's. */

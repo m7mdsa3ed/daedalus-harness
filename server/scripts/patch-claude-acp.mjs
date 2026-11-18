@@ -88,10 +88,11 @@ if (!dir) {
   process.exit(0);
 }
 
-/** The oldest adapter these anchors fit: 0.100 moved the replay's reader into
-    `dist/subagent-replay.js`, so an older install would fail on a missing file
-    rather than say what it needs. */
-const MIN_VERSION = "0.100.0";
+/** The oldest adapter these anchors fit: 0.103 moved the v1 agent into
+    `dist/v1/acp-agent.js` (0.100 had already moved the replay's reader into
+    `dist/subagent-replay.js`), so an older install would fail on a missing
+    file rather than say what it needs. */
+const MIN_VERSION = "0.103.0";
 const version = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version;
 const numeric = (v) => String(v).split(/[.-]/, 3).map((n) => Number.parseInt(n, 10) || 0);
 const olderThanMin = (() => {
@@ -107,7 +108,8 @@ if (olderThanMin) {
   process.exit(1);
 }
 
-const AGENT_FILE = join(dir, "dist", "acp-agent.js");
+// 0.103 split the agent by protocol version; this harness speaks ACP v1.
+const AGENT_FILE = join(dir, "dist", "v1", "acp-agent.js");
 const TASKS_FILE = join(dir, "dist", "async-tasks.js");
 const NATIVE_FILE = join(dir, "dist", "native-subagents.js");
 // 0.100 moved the replay's terminal-state reader out of acp-agent.js into here.
@@ -132,20 +134,23 @@ const edits = [
   {
     file: TASKS_FILE,
     what: "async-tasks.js: read workflowProgress off the progress message",
-    needle: `        const lastToolName = nonBlankString(field(message, "lastToolName", "last_tool_name"));`,
-    replacement: `        const lastToolName = nonBlankString(field(message, "lastToolName", "last_tool_name"));
-        const rawWorkflowProgress = field(message, "workflowProgress", "workflow_progress");
-        const workflowProgress = Array.isArray(rawWorkflowProgress) ? rawWorkflowProgress : undefined;`,
+    // 0.103+: the read is the module-level `taskProgressFields`, one indent shallower.
+    needle: `    const lastToolName = nonBlankString(field(message, "lastToolName", "last_tool_name"));`,
+    replacement: `    const lastToolName = nonBlankString(field(message, "lastToolName", "last_tool_name"));
+    const rawWorkflowProgress = field(message, "workflowProgress", "workflow_progress");
+    const workflowProgress = Array.isArray(rawWorkflowProgress) ? rawWorkflowProgress : undefined;`,
     done: 'const rawWorkflowProgress = field(message,',
   },
   {
     file: TASKS_FILE,
     what: "async-tasks.js: publish it on async_task_progress",
-    needle: `            ...(lastToolName ? { lastToolName } : {}),
-            ...(usage ? { usage } : {}),`,
-    replacement: `            ...(lastToolName ? { lastToolName } : {}),
-            ...(usage ? { usage } : {}),
-            ...(workflowProgress ? { workflowProgress } : {}),`,
+    // `publishProgress` sends only the fields that changed (`changedFields`
+    // walks whatever keys it is given), so this rides along without a list.
+    needle: `        ...(lastToolName ? { lastToolName } : {}),
+        ...(usage ? { usage } : {}),`,
+    replacement: `        ...(lastToolName ? { lastToolName } : {}),
+        ...(usage ? { usage } : {}),
+        ...(workflowProgress ? { workflowProgress } : {}),`,
     done: "...(workflowProgress ? { workflowProgress } : {}),",
   },
   /*
@@ -245,11 +250,15 @@ const edits = [
     // The replay runs while the CLI starts, into the pending state; the session
     // record is built from it. Created up front so both hold the same maps
     // whichever finishes first.
+    // 0.103 put `subagentChecklists` between taskState and forwardSubagentText;
+    // ours go after it so the `done` sentinel is the same block as before.
     needle: `                cwd: params.cwd,
                 taskState: new Map(),
+                subagentChecklists: new Set(),
                 forwardSubagentText: this.forwardsSubagentText(params._meta),`,
     replacement: `                cwd: params.cwd,
                 taskState: new Map(),
+                subagentChecklists: new Set(),
                 nativeSubagentsByTaskId: new Map(),
                 resumableSubagents: new Map(),
                 forwardSubagentText: this.forwardsSubagentText(params._meta),`,

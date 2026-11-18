@@ -367,8 +367,8 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 ## The SDK seam
 
 - **The ACP SDK is named in one file per half**: `server/src/acp.ts` and `agent/src/acp.ts`
-  are barrels over **`@agentclientprotocol/sdk/unstable`** (SDK 2.4.0, which speaks ACP v1 on
-  the wire — `protocolVersion` 1 — with the v1.29 schema), and the client reaches the same
+  are barrels over **`@agentclientprotocol/sdk/unstable`** (SDK 2.7.0, which speaks ACP v1 on
+  the wire — `protocolVersion` 1 — with the v1.32 schema), and the client reaches the same
   vocabulary through the `@daedalus/acp` tsconfig path onto the server's. **The `/unstable`
   entry is forced, not preferred**: it is the one whose `ClientCapabilities` types
   `subagents`, `plan`, `elicitation`, `session`, `auth` and `_meta` (so the `CLIENT_CAPABILITIES`
@@ -387,7 +387,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   one the reroute below is derived from. The version is **pinned exactly** in all three
   manifests, because the behaviour below is version-sensitive and the three installs are
   separate. `test:acp-units` asserts the runtime surface, the method-name table and the tag
-  set (19 tags in 2.4.0, `subagent_update` in, the draft pair and `_daedalus/*` out), so an
+  set (20 tags in 2.7.0, `subagent_update` and `prompt_suggestions_update` in, the draft pair and `_daedalus/*` out), so an
   SDK release that moves a symbol or a tag fails there rather than in a spawn.
 - **A revive resumes when the journal is whole, and loads when it is not.** ACP
   `session/resume` (stable 2026-04) reattaches a session **without replaying it**, which is

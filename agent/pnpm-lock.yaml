@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@agentclientprotocol/sdk':
-        specifier: 2.4.0
-        version: 2.4.0(zod@4.5.4)
+        specifier: 2.7.0
+        version: 2.7.0(zod@4.5.4)
       '@ai-sdk/anthropic':
         specifier: ^4.0.87
         version: 4.0.87(zod@4.5.4)
@@ -45,8 +45,8 @@ importers:
 
 packages:
 
-  '@agentclientprotocol/sdk@2.4.0':
-    resolution: {integrity: sha512-7qJ8nnyj7WesC5ve185ioTpB2/svQoeGV4HA4nLEhgDUrcmBe54/08VcXc/oL4p14tDbxxECZzdYmUYQ+4l+Wg==}
+  '@agentclientprotocol/sdk@2.7.0':
+    resolution: {integrity: sha512-oXdQq0plWv3iOg01zJghNZRSuyWeMYxOgWIaSdwg1BZe2ZAC9LRhNDi023lNYxXq1zVIpQjIp8P6AfsxpvxF6g==}
     peerDependencies:
       '@modelcontextprotocol/server': ^2.4.0
       zod: ^3.25.76 || ^4.0.0
@@ -782,7 +782,7 @@ packages:
 
 snapshots:
 
-  '@agentclientprotocol/sdk@2.4.0(zod@4.5.4)':
+  '@agentclientprotocol/sdk@2.7.0(zod@4.5.4)':
     dependencies:
       zod: 4.5.4
 

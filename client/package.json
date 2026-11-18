@@ -71,7 +71,7 @@
     "@fontsource/newsreader": "^5.3.0",
     "@hugeicons/core-free-icons": "^4.3.5",
     "@hugeicons/react": "^1.1.10",
-    "@openuidev/react-lang": "1.0.1",
+    "@openuidev/react-lang": "1.1.1",
     "@shadcn/react": "^0.3.1",
     "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.3.3",
@@ -130,10 +130,9 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@agentclientprotocol/sdk": "2.4.0",
+    "@agentclientprotocol/sdk": "2.7.0",
     "@eslint/js": "^10.0.1",
     "@shadcn/lint": "^0.2.0",
-    "@types/google.maps": "^3.66.7",
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

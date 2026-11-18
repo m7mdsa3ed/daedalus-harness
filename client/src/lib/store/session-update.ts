@@ -430,13 +430,17 @@ export function applySessionUpdate(
         entries: [],
         parentId: owner,
       }
+      /* Schema v1.32 (SDK 2.7) folded `type: "file"` into `markdown` + `path`,
+         but a journal written before it still replays the old variant, so its
+         reader stays — on a widened view, since the union no longer names it. */
+      const legacy = content as { type: string; uri?: unknown }
       const plan: PlanItem | null =
         content.type === "items"
           ? { ...base, entries: content.entries }
           : content.type === "markdown"
-            ? { ...base, markdown: content.content }
-            : content.type === "file"
-              ? { ...base, uri: content.uri }
+            ? { ...base, markdown: content.content, ...(content.path ? { uri: content.path } : {}) }
+            : legacy.type === "file" && typeof legacy.uri === "string"
+              ? { ...base, uri: legacy.uri }
               : null
       if (!plan) return items
       /* Except one: an AIR client that declared `planContentDelta` is sent a
