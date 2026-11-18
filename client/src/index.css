@@ -2808,11 +2808,15 @@ html .dock-nested {
   background-color: var(--background);
 }
 
-/* Dockview writes `visibility` on every overlay itself (hidden / visible), so a
-   nested dock's overlay in a tab that is not in front still says "visible" and
-   paints through its hidden parent - over whichever panel was added or opened
-   beside it. A hidden overlay hides everything nested in it. */
-html .dv-render-overlay[style*="visibility: hidden"] .dv-render-overlay {
+/* Dockview hides a tab that is not in front with `visibility: hidden` on its
+   overlay, and `visibility` is the one way to hide that a descendant can undo:
+   anything that writes `visible` itself paints through, over the tab in front.
+   A nested dock's overlay does (dockview writes it on every overlay), and so
+   does every `@xyflow/react` node (inline `visibility: visible` once measured)
+   — a Thread graph in a background tab drew its project pills and thread cards
+   over the chat beside it, edges and canvas still hidden. A hidden overlay
+   hides everything in it. */
+html .dv-render-overlay[style*="visibility: hidden"] * {
   visibility: hidden !important;
   pointer-events: none !important;
 }
@@ -3299,6 +3303,93 @@ html .dock-tab[data-active] {
     box-shadow:
       inset 0 0 0 1px color-mix(in oklch, var(--foreground) var(--app-edge), transparent),
       var(--shadow-glass);
+  }
+}
+
+/* ── Tabs in the flush layout ──
+   The three-weights rule above was written for the inset layout, where the
+   strip stands on the shell's ground and the card starts under it, so "the tab
+   you are on is the card's own `--background`" reads as a piece of that card.
+   Flush has no such card: the strip is a transparent overlay ON the page, and
+   `--background` on a tab over `--background` is nothing — the tab you were on
+   disappeared, while the ones you were not on kept a wash and a hairline, so
+   the row said the opposite of the truth.
+
+   So here the weights are turned the right way up, still one material:
+     · the tab in front wears the shell's own ground (`--composer` — the colour
+       the rail, the composer box and the phone's tabs already are) with the
+       composer's edge and depth: a raised shape on the page, readable in light
+       (a step of grey on white) and in dark (the lighter tone) alike;
+     · every other tab is **bare** — a title on the page, no wash, no ring — and
+       what tells one from the next is a short hairline between them, the
+       browser's answer. A 5% wash on every tab was tried here: six grey pills
+       of one weight, with the one in front only a shade apart from the rest,
+       so the row read as six buttons and the selection was the hardest thing
+       in it to find;
+     · the hairline steps aside wherever a shape is drawn — either side of the
+       tab in front, either side of the one under the pointer, and before the
+       first — so a line never runs into a ground;
+     · pointing at a bare tab raises a foreground scrim, short of the one in
+       front, so hover still never reads as selected.
+   Wide strips only: below `md` every tab already wears `--dock-mobile-tab-ground`
+   (the block above) and a phone draws one of them. The thread dock's own title
+   bar (`.dock-nested`) is its own design and is excluded, as it is everywhere. */
+@media (width >= 48rem) {
+  html:not([data-sidebar-layout="inset"]) .dock-tab:not(.dock-nested *):not([data-active]) {
+    background-color: transparent;
+    box-shadow: none;
+  }
+
+  html:not([data-sidebar-layout="inset"]) .dock-tab:not(.dock-nested *):not([data-active]):hover {
+    background-color: color-mix(in oklch, var(--foreground) 7%, transparent);
+  }
+
+  /* The divider: centred in the 4px two chips' `mx-0.5` leave between them,
+     and on the chip rather than dockview's `.dv-tab`, whose `::after` is its
+     own focus and reorder marks. */
+  html:not([data-sidebar-layout="inset"]) .dock-tab:not(.dock-nested *)::before {
+    content: "";
+    position: absolute;
+    left: -2.5px;
+    top: 30%;
+    bottom: 30%;
+    width: 1px;
+    border-radius: 1px;
+    background-color: color-mix(in oklch, var(--foreground) 14%, transparent);
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+
+  html:not([data-sidebar-layout="inset"]) .dv-tab:first-child .dock-tab:not(.dock-nested *)::before,
+  html:not([data-sidebar-layout="inset"]) .dv-tab.dv-active-tab .dock-tab:not(.dock-nested *)::before,
+  html:not([data-sidebar-layout="inset"]) .dv-tab.dv-active-tab + .dv-tab .dock-tab:not(.dock-nested *)::before,
+  html:not([data-sidebar-layout="inset"]) .dv-tab:hover .dock-tab:not(.dock-nested *)::before,
+  html:not([data-sidebar-layout="inset"]) .dv-tab:hover + .dv-tab .dock-tab:not(.dock-nested *)::before,
+  html:not([data-sidebar-layout="inset"]) .dv-tab--dragging + .dv-tab .dock-tab:not(.dock-nested *)::before {
+    opacity: 0;
+  }
+
+  /* The ⋮ and ✕ hover wash (`hover:bg-foreground/10`) is the same step as the
+     tab's own hover here, so a control pointed at on a hovered tab would vanish
+     into it. A step up on the tab that is not in front keeps it a button. */
+  html:not([data-sidebar-layout="inset"]) .dock-tab:not(.dock-nested *):not([data-active]) [data-tab-action]:hover {
+    background-color: color-mix(in oklch, var(--foreground) 14%, transparent);
+  }
+
+  html:not([data-sidebar-layout="inset"]) .dock-tab:not(.dock-nested *)[data-active] {
+    background-color: var(--composer);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in oklch, var(--foreground) var(--app-edge), transparent),
+      var(--shadow-glass);
+  }
+
+  /* The tab in the hand keeps its lift (the ghost rule above is outranked here). */
+  html:not([data-sidebar-layout="inset"]) .dv-tab-ghost-drag .dock-tab:not(.dock-nested *) {
+    background-color: var(--composer);
+    box-shadow: 0 10px 24px -6px oklch(0 0 0 / 0.35);
+  }
+  html:not([data-sidebar-layout="inset"]) .dv-tab-ghost-drag .dock-tab:not(.dock-nested *)::before {
+    opacity: 0;
   }
 }
 
