@@ -20,7 +20,7 @@
    face of `@/components/tool-views`: everything the transcript imports is
    either declared or re-exported here. */
 import * as React from "react"
-import { EditDetail, ReadDetail, RunDetail, SearchDetail, TerminalDetail } from "@/components/tool-views/files"
+import { CodeRunDetail, EditDetail, ReadDetail, RunDetail, SearchDetail, TerminalDetail } from "@/components/tool-views/files"
 import { HarnessDetail } from "@/components/tool-views/harness"
 import { GenericDetail, McpDetail } from "@/components/tool-views/mcp"
 import {
@@ -46,6 +46,7 @@ export { TodoList, ToolAnswers } from "@/components/tool-views/structured"
 export { McpServerChip, useMcpMark } from "@/components/tool-views/mcp"
 export { AskAgentChip, BriefSection, SubagentBrief, SubagentReport } from "@/components/tool-views/subagent"
 export { ToolSources } from "@/components/tool-views/web"
+export { CodeRunTools } from "@/components/tool-views/files"
 export type { McpToolView, McpToolViewProps } from "@/components/tool-views/mcp-registry"
 
 // ─── Dispatch ────────────────────────────────────────────────────────────────
@@ -83,6 +84,9 @@ const TOOL_VIEWS: Record<ToolView, ToolViewSpec> = {
   plan: { Detail: PlanProposalDetail, opensByDefault: true },
   skill: { Detail: SkillDetail, opensByDefault: false },
   toolsearch: { Detail: ToolSearchDetail, opensByDefault: false },
+  /* Folded, as Claude Code folds its own: the calls the script made are the
+     rows beside it, and the code is there for whoever wants to read it. */
+  code: { Detail: CodeRunDetail, opensByDefault: false },
   execute: { Detail: RunDetail, opensByDefault: false },
   read: { Detail: ReadDetail, opensByDefault: false },
   search: { Detail: SearchDetail, opensByDefault: false },

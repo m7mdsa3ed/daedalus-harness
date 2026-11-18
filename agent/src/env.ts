@@ -69,6 +69,12 @@ export interface AgentEnv {
   holdOnError: boolean;
   /** Name a thread from its first message with the small model (`title.ts`). Off with `0`/`false`. */
   autoTitle: boolean;
+  /** Whether a new session starts with the `repl` tool (`tools/repl.ts`) —
+      only the *default*: each session carries its own `codeMode`, switched as
+      the `codeMode` agent option (`session.ts`). **Off unless
+      `1`/`true`/`on`**, the one switch that defaults off, because a weaker
+      model's broken script costs the step it was meant to save. */
+  codeMode: boolean;
   /**
    * How this process hands work to another worker (`DAEDALUS_AGENT_SUBAGENTS`,
    * written by the harness at spawn):
@@ -201,6 +207,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
       (str(env.DAEDALUS_AGENT_HOLD_ON_ERROR) ?? "").toLowerCase(),
     ),
     autoTitle: !["0", "false", "off"].includes((str(env.DAEDALUS_AGENT_TITLES) ?? "").toLowerCase()),
+    codeMode: ["1", "true", "on"].includes((str(env.DAEDALUS_AGENT_CODE_MODE) ?? "").toLowerCase()),
     subagents: (["harness", "off", "local"] as const).find((v) => v === str(env.DAEDALUS_AGENT_SUBAGENTS)) ?? "local",
     home: str(env.DAEDALUS_AGENT_HOME) ?? join(homedir(), ".daedalus-agent"),
   };

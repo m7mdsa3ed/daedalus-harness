@@ -75,6 +75,9 @@ export {
 export type { TerminalState } from "./tools/terminal"
 export { applyTerminalMeta, hasTerminalContent } from "./tools/terminal"
 
+export type { CodeRun } from "./tools/code"
+export { codeRunSummary, extractCodeRun, parseCodeResult } from "./tools/code"
+
 export type { TodoEntry } from "./tools/todos"
 export { extractTodos } from "./tools/todos"
 

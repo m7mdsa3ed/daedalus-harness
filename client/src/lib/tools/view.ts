@@ -2,6 +2,7 @@
    one-line story its closed row tells. Imports every other module; nothing
    here is imported back. */
 import type { ToolItem } from "../store"
+import { codeRunSummary, extractCodeRun } from "./code"
 import { diffStats, extractEdits } from "./edits"
 import { extractHarnessCall, harnessSummary } from "./harness"
 import { extractMcpCall } from "./mcp"
@@ -54,6 +55,11 @@ export function toolSummary(item: ToolItem, active: boolean): string | null {
   const message = extractAgentMessage(item)
   if (message?.delivered === false) return "not delivered"
   if (message?.resumed) return `resumed ${agentLabel(message.resumed)}`
+
+  /* A script's output is its return value — often one line of JSON, whose
+     first line would be a bare `{`. */
+  const run = extractCodeRun(item)
+  if (run) return codeRunSummary(run)
 
   const diffs = item.content.filter(
     (block): block is Extract<typeof block, { type: "diff" }> => block.type === "diff"
@@ -128,6 +134,7 @@ export type ToolView =
   | "plan"
   | "skill"
   | "toolsearch"
+  | "code"
   | "execute"
   | "read"
   | "search"
@@ -163,6 +170,7 @@ function computeToolView(item: ToolItem): ToolView {
   if (extractAgentMessage(item)) return "message"
   if (extractSkill(item)) return "skill"
   if (extractToolSearch(item)) return "toolsearch"
+  if (extractCodeRun(item)) return "code"
   if (extractWebSearch(item)) return "websearch"
   if (extractWebFetch(item)) return "webfetch"
   // The harness server's two tools are MCP calls, but they reach the harness

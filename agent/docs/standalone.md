@@ -36,6 +36,7 @@ template works either way).
 | `DAEDALUS_AGENT_API_KEY` | Sent as `Authorization: Bearer …`. | a placeholder, for gateways that want the header but ignore it |
 | `DAEDALUS_AGENT_SMALL_MODEL` | Model used for compaction summaries and thread titles. | the main model |
 | `DAEDALUS_AGENT_TITLES` | Name a thread from its first message. `0`/`false` keeps the first line. | on |
+| `DAEDALUS_AGENT_CODE_MODE` | Whether a new session starts with the `repl` tool: one JavaScript script that calls the other tools, each call still asking permission, run under `unshare -rn` + `node --permission` (no network, filesystem or env). Each session can switch it with the `codeMode` boolean config option. Linux with unprivileged user namespaces only; elsewhere neither the tool nor the option is offered. `1`/`true`/`on` turns the default on. | off |
 | `DAEDALUS_AGENT_EFFORT` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` — the AI SDK's unified reasoning level. | provider default |
 | `DAEDALUS_AGENT_CONTEXT_WINDOW` | Token window of the model spawned on, used for the usage readout and the compaction threshold. Reported as an estimate when unset — see `DAEDALUS_AGENT_MODEL_WINDOWS`. | 200000 (flagged estimated) |
 | `DAEDALUS_AGENT_MAX_OUTPUT_TOKENS` | Per-response cap. Also the room reserved out of the compaction threshold, so a prompt never grows into the space the answer needs. | provider default |

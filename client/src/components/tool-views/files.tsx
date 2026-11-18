@@ -9,6 +9,8 @@ import { CopyButton } from "@/components/ui/copy-button"
 import { DiffView } from "@/components/ui/diff-view"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
 import {
+  CodeBlock,
+  DetailSection,
   Highlighted,
   LABEL,
   PANE,
@@ -25,12 +27,14 @@ import {
   useShowAll,
 } from "@/components/tool-parts"
 import {
+  extractCodeRun,
   extractEdits,
   searchFlags,
   shortPath,
   toolLanguage,
   toolOutputText,
   toolPrimaryText,
+  toolLeafName,
   toolTarget,
 } from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
@@ -52,6 +56,60 @@ export function RunDetail({ item, active }: { item: ToolItem; active: boolean })
       failed={item.status === "failed"}
       running={active}
     />
+  )
+}
+
+/**
+ * The tools a `repl` script called, as a strip under its row — drawn whether
+ * the row is open or not, because which tools a script reached for is the one
+ * thing about it worth seeing without opening it. The calls themselves are the
+ * rows beside it; this is the count.
+ */
+export function CodeRunTools({ item }: { item: ToolItem }) {
+  const calls = extractCodeRun(item)?.calls ?? []
+  if (calls.length === 0) return null
+  return (
+    <div className="flex flex-wrap gap-1 pt-1" aria-label="Tools the script called">
+      {calls.map((call) => (
+        <Badge key={call.name} variant="secondary" className="gap-1 font-mono" title={call.name}>
+          {toolLeafName(call.name)}
+          <span className="tabular-nums text-muted-foreground">×{call.count}</span>
+        </Badge>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * A script that made tool calls (`repl`). The calls themselves are rows of
+ * their own beside this one, so the step holds what only it knows: the code,
+ * highlighted, and what the script handed back — its value, its console, or
+ * why it stopped.
+ */
+export function CodeRunDetail({ item }: { item: ToolItem }) {
+  const run = extractCodeRun(item)
+  if (!run) return null
+  return (
+    <div className="space-y-2">
+      <DetailSection label="Script">
+        <CodeBlock language={run.language}>{run.code}</CodeBlock>
+      </DetailSection>
+      {run.error !== null && (
+        <DetailSection label={run.stopped ? "Stopped" : "Threw"}>
+          <CodeBlock tone="error">{run.error}</CodeBlock>
+        </DetailSection>
+      )}
+      {run.result !== null && run.result.trim() && (
+        <DetailSection label="Returned">
+          <SmartBlock text={run.result} />
+        </DetailSection>
+      )}
+      {run.logs.length > 0 && (
+        <DetailSection label="Console">
+          <CodeBlock>{run.logs.join("\n")}</CodeBlock>
+        </DetailSection>
+      )}
+    </div>
   )
 }
 

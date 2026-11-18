@@ -730,6 +730,13 @@ const BEHAVIOR: Record<string, AgentBehaviorSwitch[]> = {
         "Name a thread from its first message with the helper model. Off, a thread keeps the name it was given and never costs an extra call.",
       fallback: true,
     },
+    {
+      key: "DAEDALUS_AGENT_CODE_MODE",
+      label: "Run tool calls from code (default for new threads)",
+      description:
+        "Whether a new thread starts with the `repl` tool: the model writes one JavaScript script that calls its tools, so a rename across files is one step and only the answer enters the context. Each thread can switch it itself under Agent options > Code mode, live. Every call still asks permission like a direct one; the script runs with no network, filesystem or env of its own (Linux user namespaces — a host without them offers neither the tool nor the option).",
+      fallback: false,
+    },
   ],
 };
 

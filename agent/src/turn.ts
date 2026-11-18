@@ -1420,6 +1420,11 @@ ${
     ? `- Prefer the specialized tool over a shell equivalent: read_file over cat/head/tail, edit_file over sed/awk, write_file over a heredoc or echo redirection, glob and grep over find and grep. Reserve bash for what genuinely needs a shell.
 - Explain a non-trivial bash command as you run it — what it does and why — especially one that changes the user's system.`
     : `- Read with read_file and search with glob and grep. There is no shell this turn, so anything you would have reached for a command line to learn has to come from those three.`
+}${
+  toolNames.includes("repl")
+    ? `
+- When a task takes many tool calls that code can decide — a rename across files, checking which of many paths exist, filtering search results — write one repl script instead of a run of calls, and return only what you need from it. When you must read content to judge it, or it is a single call, use the tools directly.`
+    : ""
 }
 ${
   delegate === HARNESS_AGENT_TOOL

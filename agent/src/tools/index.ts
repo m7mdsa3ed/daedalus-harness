@@ -11,6 +11,7 @@ import { makePlanTool, planMeta } from "./plan.js";
 import { makeTaskTool, taskMeta } from "./task.js";
 import { makeAgentMessageTools } from "./agent-messages.js";
 import { SEARCH_TOOL, searchToolsMeta } from "./tool-search.js";
+import { makeReplTool, NOT_IN_REPL, REPL_TOOL, replAvailable, replMeta } from "./repl.js";
 
 export type { ToolMeta, ToolRuntime } from "./context.js";
 
@@ -67,6 +68,7 @@ export function buildTools(rt: ToolRuntime, opts: BuildToolsOptions = {}): Built
     task: taskMeta,
     [SEARCH_TOOL]: searchToolsMeta,
     list_agents: { kind: "other", title: () => "List subagents" },
+    [REPL_TOOL]: replMeta,
     send_message: {
       kind: "other",
       title: (input) => `Message subagent: ${String(inputOf(input).agent ?? "agent")}`,
@@ -111,6 +113,14 @@ export function buildTools(rt: ToolRuntime, opts: BuildToolsOptions = {}): Built
      right place to defend it. */
   for (const name of Object.keys(tools)) {
     tools[name] = withOutputClamp(tools[name] as Tool);
+  }
+  /* After the clamp, so every call a script makes is clamped like a direct
+     one, and over the finished set so it reaches MCP tools too. Not in plan
+     mode (it would be a door to nothing the mode allows) and not for a
+     subagent — one level of looping inside another is enough. */
+  if (rt.session.codeMode && !planOnly && !opts.subagent && replAvailable()) {
+    const callable = Object.fromEntries(Object.entries(tools).filter(([n]) => !NOT_IN_REPL.has(n)));
+    tools[REPL_TOOL] = withOutputClamp(makeReplTool(rt, callable, (n) => metaFor(meta, n)));
   }
   return { tools, meta };
 }

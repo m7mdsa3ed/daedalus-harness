@@ -62,6 +62,7 @@ import {
   SubagentBrief,
   SubagentReport,
   ToolDetail,
+  CodeRunTools,
   ToolSources,
   toolHasDetail,
   toolOpensByDefault,
@@ -1870,6 +1871,8 @@ const ToolStep = React.memo(function ToolStep({
       below={
         isHarnessTool
           ? <HarnessPreview item={item} />
+          : toolView === "code"
+            ? <CodeRunTools item={item} />
           : !view.showToolSourcesOnFirstRow
             ? <ToolSources item={item} />
             : undefined

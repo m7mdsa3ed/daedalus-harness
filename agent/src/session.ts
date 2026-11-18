@@ -7,6 +7,7 @@ import { EFFORTS, type AgentEnv, type Effort } from "./env.js";
 import type { McpHandle } from "./mcp.js";
 import type { CommandDef, SkillDef } from "./commands.js";
 import type { ErrorHold, Release } from "./hold.js";
+import { replAvailable } from "./tools/repl.js";
 
 export type ModeId = "default" | "acceptEdits" | "bypassPermissions" | "plan";
 
@@ -40,6 +41,11 @@ export class Session {
   models: string[];
   effort: Effort | null;
   autoCompact: boolean;
+  /** Whether this thread is offered the `repl` tool (`tools/repl.ts`). Starts
+      at the runtime's `DAEDALUS_AGENT_CODE_MODE` and is the thread's own from
+      then on — an agent option, read by `buildTools` every turn, so a switch
+      lands on the next step without a respawn. */
+  codeMode: boolean;
   messages: ModelMessage[];
   /** Prompts that arrived mid-turn; drained into the next model step. */
   steerQueue: SteerEntry[];
@@ -111,6 +117,7 @@ export class Session {
     this.models = readModelAllowlist(cwd, env.model);
     this.effort = env.effort;
     this.autoCompact = true;
+    this.codeMode = env.codeMode;
     this.messages = [];
     this.steerQueue = [];
     this.abort = null;
@@ -170,6 +177,17 @@ export class Session {
         description: "Summarize the conversation when it nears the context window",
         currentValue: this.autoCompact,
       });
+      /* Only where the sandbox can run: a switch that turns on nothing is a
+         setting that lies. */
+      if (replAvailable()) {
+        options.push({
+          type: "boolean",
+          id: "codeMode",
+          name: "Code mode",
+          description: "Let the model run many tool calls from one JavaScript script (repl). Each call still asks permission. Switching it changes the tool list, so the next request misses the prompt cache once.",
+          currentValue: this.codeMode,
+        });
+      }
     }
     return options;
   }
@@ -192,6 +210,10 @@ export class Session {
     }
     if (request.configId === "autoCompact" && typeof request.value === "boolean") {
       this.autoCompact = request.value;
+      return true;
+    }
+    if (request.configId === "codeMode" && typeof request.value === "boolean" && replAvailable()) {
+      this.codeMode = request.value;
       return true;
     }
     return false;
