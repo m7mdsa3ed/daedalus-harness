@@ -927,6 +927,12 @@ export class AcpBridge implements ConnectionRoute {
   private toolTimeLost = false;
   private toolWindowStartedAt: number | null = null;
   private ttftSent = false;
+  /** Where time to first token counts from: the turn's start, moved to the end
+      of a compaction that ran before the model was asked anything — the
+      summary is the runtime's work, not the model's latency on this prompt.
+      ponytail: a retry's backoff before the first output still counts; the
+      notice says when it began, not when the next attempt went out. */
+  private ttftFrom: number | null = null;
   /** The runtime's own generation reading for the turn in flight, if any answer
       has carried one (see `settleTurn`). */
   private reportedGeneration: TurnGeneration | null | undefined;
@@ -1721,10 +1727,20 @@ export class AcpBridge implements ConnectionRoute {
       !this.historyReplay &&
       this.turnStartedAt !== null &&
       !this.ttftSent &&
+      update.sessionUpdate === "compaction_update" &&
+      (update as { status?: unknown }).status !== "in_progress"
+    ) {
+      this.ttftFrom = performance.now();
+    }
+    if (
+      own &&
+      !this.historyReplay &&
+      this.turnStartedAt !== null &&
+      !this.ttftSent &&
       isModelOutput(update)
     ) {
       this.ttftSent = true;
-      const ms = Math.round(performance.now() - this.turnStartedAt);
+      const ms = Math.round(performance.now() - (this.ttftFrom ?? this.turnStartedAt));
       this.host.emit({ ev: "ttft", ms });
     }
     /* The step boundary a held steer is waiting for. ACP has no "step ended"
@@ -2017,6 +2033,7 @@ export class AcpBridge implements ConnectionRoute {
       this.turnToolDurationMs = 0;
       this.toolWindowStartedAt = null;
       this.ttftSent = false;
+      this.ttftFrom = null;
     }
     /* The turn is in flight from **here**, not from the dispatch below, and the
        gap between the two is an `await`.

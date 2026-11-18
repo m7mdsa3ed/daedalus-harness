@@ -449,7 +449,7 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
             <Metric label="Output / cached input" value={thread.usage ? `${formatTokens(thread.usage.outputTokens)} / ${formatTokens(cachedIn)}` : "—"} />
             <Metric label="Turn / tool time" value={`${elapsed ? formatDuration(elapsed) : "—"} / ${toolTime ? formatDuration(toolTime) : "—"}`} />
             <Metric
-              label={average?.kind === "throughput" ? "Avg. throughput / first response" : "Avg. speed / first response"}
+              label={average?.kind === "throughput" ? "Avg. throughput / last first token" : "Avg. speed / last first token"}
               value={`${(average && formatTps(average.rate)) ?? "—"} / ${thread.ttftMs === null ? "—" : `${thread.ttftMs}ms`}`}
             />
             <Metric label="Cache hit rate" value={cacheRate === null ? "—" : `${cacheRate}%`} />

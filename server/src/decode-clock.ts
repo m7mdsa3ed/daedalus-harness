@@ -33,25 +33,41 @@ export function isModelOutput(update: SessionUpdate): boolean {
   );
 }
 
+/* A decode under a tenth of the wait before it measured delivery, not
+   writing — the agent's `BURST_RATIO` (metering.ts) and `stepRate`'s (tps.ts),
+   applied to this clock too: a gateway that holds the answer until it is whole
+   hands it over in one burst, and 683 tokens over the 60ms that burst took was
+   drawn as 11k tok/s. */
+const BURST_RATIO = 10;
+
 export class DecodeClock {
   private running = false;
   private decodeMs = 0;
+  private openedAt = 0;
+  /** When the turn's first chunk landed — the end of its lead. */
+  private leadEndedAt: number | null = null;
   private firstChunkAt: number | null = null;
   private sawToolCall = false;
+  private sawThought = false;
 
   /** A turn opened: start from nothing. A steer joining it does not call. */
   start(): void {
     this.running = true;
     this.decodeMs = 0;
+    this.openedAt = Date.now();
+    this.leadEndedAt = null;
     this.firstChunkAt = null;
     this.sawToolCall = false;
+    this.sawThought = false;
   }
 
   /** One update of the thread's own stream (never a subagent's). */
   onUpdate(update: SessionUpdate): void {
     if (!this.running) return;
     if (update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk") {
+      if (update.sessionUpdate === "agent_thought_chunk") this.sawThought = true;
       this.firstChunkAt ??= Date.now();
+      this.leadEndedAt ??= this.firstChunkAt;
     } else if (update.sessionUpdate === "tool_call") {
       this.sawToolCall = true;
       this.close();
@@ -59,14 +75,19 @@ export class DecodeClock {
   }
 
   /** The turn settled: the output it wrote over the decode time seen, or
-      nothing when no generation was timed or the turn's output is not all
-      prose. */
+      nothing when no generation was timed, the turn's output is not all prose,
+      or the prose arrived in one buffered burst. Reasoning the runtime billed
+      but never streamed was written before the first chunk — its time is in
+      the lead, so its tokens are not in the numerator either. */
   end(usage: acp.Usage | null | undefined): TurnGeneration | undefined {
     if (!this.running) return undefined;
     this.close();
     this.running = false;
-    const output = usage?.outputTokens ?? 0;
-    return !this.sawToolCall && output > 0 && this.decodeMs > 0 ? { outputTokens: output, decodeMs: Math.round(this.decodeMs) } : undefined;
+    const hidden = this.sawThought ? 0 : (usage?.thoughtTokens ?? 0);
+    const output = (usage?.outputTokens ?? 0) - hidden;
+    const leadMs = this.leadEndedAt === null ? 0 : this.leadEndedAt - this.openedAt;
+    if (this.sawToolCall || !(output > 0) || !(this.decodeMs > 0) || this.decodeMs * BURST_RATIO < leadMs) return undefined;
+    return { outputTokens: output, decodeMs: Math.round(this.decodeMs) };
   }
 
   private close(): void {

@@ -96,6 +96,24 @@ const usage = (output: number) => ({ totalTokens: output, inputTokens: 0, output
     clock.onUpdate(call);
     now += 5_000;
     assert.equal(clock.end(usage(900)), undefined, "a turn with a tool call has output the clock cannot see");
+
+    clock.start();
+    now += 6_000;
+    clock.onUpdate(chunk);
+    now += 60;
+    assert.equal(clock.end(usage(683)), undefined, "a burst after a long silence is delivery, not decode");
+
+    clock.start();
+    now += 1_000;
+    clock.onUpdate(chunk);
+    now += 3_000;
+    const reasoned = { totalTokens: 8_300, inputTokens: 0, outputTokens: 8_300, thoughtTokens: 8_000 } as never;
+    assert.deepEqual(clock.end(reasoned), { outputTokens: 300, decodeMs: 3_000 }, "reasoning never streamed is not in the numerator");
+
+    clock.start();
+    clock.onUpdate({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "x" } } as never);
+    now += 4_000;
+    assert.deepEqual(clock.end(reasoned), { outputTokens: 8_300, decodeMs: 4_000 }, "streamed reasoning was written in the decode");
   } finally {
     Date.now = real;
   }

@@ -189,7 +189,9 @@ export interface GatewayTap {
   /** Is this thread's door the shim? Decides whether a request is copied at all. */
   wants(sessionId: string): boolean;
   /** A forwarded reply has ended. `response.body` is the text the child read;
-      `timing.ttftMs` is to its first byte, `ms` to its end, both from `at`. */
+      `timing.ttftMs` is to the first frame that carries output (`OUTPUT_FRAME`),
+      `ms` to its end, both from `at`; no `ttftMs` for a reply that was not
+      streamed, which has no first token to time. */
   ended(
     sessionId: string,
     requestBody: string,
@@ -204,7 +206,17 @@ export function setGatewayTap(next: GatewayTap | null): void {
   tap = next;
 }
 
-/** Drain a tee'd reply to text, timing its first byte. A reply that errors or
+/* A frame that carries model output, in any dialect the shim forwards: a
+   Messages `content_block_delta` (text, thinking or tool arguments), a chat
+   delta with non-empty `content`/`reasoning_content`/`reasoning` or opening a
+   `tool_calls` entry, or a Responses `*.delta` event. Not the first byte: a
+   gateway's keepalive comment (`: OPENROUTER PROCESSING`), a `ping`, a
+   `message_start` and a chat chunk that only says `role` all arrive before the
+   model has written anything, and timing them read prefill as decode. */
+const OUTPUT_FRAME =
+  /content_block_delta|"(?:content|reasoning_content|reasoning)":\s*"[^"]|"tool_calls":\s*\[|"response\.[a-z_.]*delta"/;
+
+/** Drain a tee'd reply to text, timing its first output frame. A reply that errors or
     is cut mid-stream yields nothing — a record needs the usage at its end. */
 /* A copy of the reply taken in passing: every chunk goes on to the child
    unchanged, and `done` is told the whole text once the stream has ended. A
@@ -213,14 +225,19 @@ export function setGatewayTap(next: GatewayTap | null): void {
    mid-stream) no longer stopped the upstream generation, which kept being
    written and billed into a copy nobody would read. A cancelled reply is
    handed to nobody: it never ended. */
-function copyReply(at: number, done: (reply: { text: string; ttftMs?: number }) => void): TransformStream<Uint8Array, Uint8Array> {
+export function copyReply(
+  at: number,
+  streamed: boolean,
+  done: (reply: { text: string; ttftMs?: number }) => void,
+): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder();
   let text = "";
   let ttftMs: number | undefined;
   return new TransformStream({
     transform(chunk, controller) {
-      if (ttftMs === undefined) ttftMs = Date.now() - at;
+      const from = Math.max(0, text.length - 64); // a frame split across two chunks
       text += decoder.decode(chunk, { stream: true });
+      if (streamed && ttftMs === undefined && OUTPUT_FRAME.test(text.slice(from))) ttftMs = Date.now() - at;
       controller.enqueue(chunk);
     },
     flush() {
@@ -799,7 +816,7 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   let stream: ReadableStream<Uint8Array> | null = upstream.body;
   if (tapped && upstream.ok && stream) {
     stream = stream.pipeThrough(
-      copyReply(at, (reply) =>
+      copyReply(at, /text\/event-stream/i.test(contentType), (reply) =>
         setImmediate(() =>
           tapped.ended(parsed.id, requestText, { contentType, body: reply.text }, { at, ms: Date.now() - at, ttftMs: reply.ttftMs }),
         ),
