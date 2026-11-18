@@ -47,7 +47,15 @@ export function UserMessageText({ text }: { text: string }) {
    after mount and grows the body under a fold already decided. */
 const FOLD = "max-h-72"
 
-export function UserMessageFold({ children }: { children: React.ReactNode }) {
+export function UserMessageFold({
+  children,
+  fold = FOLD,
+}: {
+  children: React.ReactNode
+  /** The folded height, as a literal Tailwind `max-h-*` class. The queue's
+      rows sit above the composer and fold much shorter than a bubble. */
+  fold?: string
+}) {
   const [open, setOpen] = React.useState(false)
   const release = useFollowRelease()
   const body = React.useRef<HTMLDivElement>(null)
@@ -67,7 +75,7 @@ export function UserMessageFold({ children }: { children: React.ReactNode }) {
       <div
         ref={body}
         className={cn(
-          !open && FOLD,
+          !open && fold,
           // The bubble's own content is `overflow-hidden` already; the fold reads
           // it as a clip and the fade says there is more under the edge.
           "overflow-hidden",

@@ -342,11 +342,18 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   and effort keep their own columns; a value written twice can disagree with itself.
 - **A message typed into a running turn is queued, not steered — and the queue is the
   server's.** Steering is a composer send action only (`prompt {steer:true}`, ⌘Enter); queued
-  rows wait for the turn to finish unless the user chooses Send now. The `queue` event is
-  absolute and reaches every peer including the origin.
+  rows wait for the turn to finish unless the user chooses Send now. **A steer into a running
+  turn is a queued row for its undo window first** (`STEER_UNDO_MS`, `steerAt` on the row,
+  in memory only — a restart leaves it plainly queued), editable like any row, then goes out
+  through `queue.steer`; into a held turn it goes at once. **A runtime that advertises
+  `InitializeResponse._meta.steering.supported` is steered through `_session/steering`**, never
+  a second `session/prompt` (which claude-agent-acp and codex-acp queue as a turn behind the
+  running one); `promptRequired` or a failure falls back to the plain prompt. The `queue` event
+  is absolute and reaches every peer including the origin.
 - **Escape stops the turn and can take back the newest queued row** (`cancel {reclaim:true}`),
   one only, back into an empty composer. Atomic and server-side, and **the take-back comes
-  before the cancel**: a queued row never left the server. A steer is already on the wire and
+  before the cancel**: a queued row never left the server — a steer still in its undo window
+  is one, so Escape takes it back. A steer past its window is on the wire and
   **the runtime keeps it through a cancel**, so a stop never re-queues one — the cancel's settle
   is its step boundary and it lands as a bubble (re-queueing showed a message waiting that the
   agent already had, then sent it twice). Opt-in, because the

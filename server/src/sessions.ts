@@ -3807,8 +3807,8 @@ export class SessionManager {
    * Dispatch a logical prompt from any source (socket or scheduler).
    *
    * While a turn is running the words are QUEUED, not sent — unless `steer`
-   * is set, which joins the running turn the way every mid-turn prompt used
-   * to. The server decides, not the browser: its `turnActive` is a hint, and
+   * is set, which joins the running turn (after `STEER_UNDO_MS` as an editable
+   * row; at once into a held turn). The server decides, not the browser: its `turnActive` is a hint, and
    * only `bridge.promptActive` knows whether the turn is still open. The
    * scheduler gets the same rule for free — a scheduled message that lands
    * mid-turn waits its turn instead of steering it.
@@ -3836,6 +3836,12 @@ export class SessionManager {
          harmless if the turn ends in between. */
       return await this.queue.add(session, text, attachments);
     }
+    /* A steer into a RUNNING turn waits a few seconds as a queue row first —
+       the undo window, where it can still be edited or taken back — and then
+       goes out through `queue.steer`. A held turn is not reading anything, so
+       a steer there is parked at once, as before, and keeps the staged flush
+       below. */
+    if (bridge.promptActive && !bridge.paused) return await this.queue.steerSoon(session, text, attachments);
     /* A change picked since the last message is taken here, before the turn it
        was picked for. This is the one door every turn comes through — the
        socket's send, the scheduler, routines, autonomy — so nothing runs on

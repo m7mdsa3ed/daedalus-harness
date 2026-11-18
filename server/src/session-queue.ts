@@ -34,11 +34,25 @@ export interface QueueHost {
 
 // ---- the queue ----
 
+/** How long a composer steer into a running turn waits as an ordinary queue
+    row — editable, removable, Escape's to take back — before it goes out. */
+export const STEER_UNDO_MS = 5_000;
+
+/** Rows in their undo window: id -> when it goes out (epoch ms). In memory on
+    purpose — a restart drops the window, and the row is then simply queued.
+    An entry whose row was edited away is harmless: only listed rows read it. */
+const steerDeadlines = new WeakMap<Session, Map<string, number>>();
+
 /** The queue as a peer sees it: the steers the bridge is holding for a step
     boundary first (already sent, flagged `steer`, not editable), then the rows
-    waiting for the turn to end. */
+    waiting for the turn to end — a row in its undo window carrying `steerAt`. */
 export async function queueItems(session: Session): Promise<QueuedMessage[]> {
-  return [...(session.bridge?.heldSteers() ?? []), ...(await listQueue(session.id))];
+  const deadlines = steerDeadlines.get(session);
+  const rows = (await listQueue(session.id)).map((row) => {
+    const steerAt = deadlines?.get(row.id);
+    return steerAt === undefined ? row : { ...row, steerAt };
+  });
+  return [...(session.bridge?.heldSteers() ?? []), ...rows];
 }
 
 /** The newest `emitQueue` read per session — see `emitQueue`. Off to the side
@@ -175,6 +189,40 @@ export class SessionQueue {
     return (await this.drain(session)) ?? { queued: true, itemId: item.id };
   }
 
+  /**
+   * A steer into a running turn, held for `STEER_UNDO_MS` as a queue row and
+   * then sent through `steer`. Everything a queued row can do works on it
+   * meanwhile — Edit takes it back, Steer sends it now, Escape reclaims it —
+   * and whichever of those happened, the timer finds the row gone and stops.
+   * A turn that ended inside the window leaves the row where it is: the drain
+   * sends it in its place in line, as the next turn.
+   */
+  async steerSoon(session: Session, text: string, attachments: AttachmentRef[] = []): Promise<PromptReply> {
+    const deadlines = steerDeadlines.get(session) ?? new Map<string, number>();
+    steerDeadlines.set(session, deadlines);
+    const item = await this.chain(session, async () => {
+      const row = await enqueue(session.id, text, attachments);
+      deadlines.set(row.id, Date.now() + STEER_UNDO_MS);
+      await this.emitQueue(session);
+      return row;
+    });
+    setTimeout(() => {
+      deadlines.delete(item.id);
+      if (!session.bridge?.promptActive || session.exited) {
+        void this.emitQueue(session); // the window is over: it reads as queued
+        return;
+      }
+      this.steer(session, item.id).catch((error: unknown) => {
+        // "gone" is the common case — edited, sent or reclaimed in the window.
+        if (!/is gone/.test(error instanceof Error ? error.message : "")) {
+          console.warn(`[queue] ${session.id.slice(0, 8)}: steer after the undo window failed:`, error);
+        }
+        void this.emitQueue(session);
+      });
+    }, STEER_UNDO_MS).unref();
+    return { queued: true, itemId: item.id };
+  }
+
   /* The three edits need no process: a parked queue on an archived thread is
      edited without spawning an agent to do it. */
   async update(session: Session, itemId: string, text: string, attachmentIds?: string[]): Promise<void> {
@@ -226,8 +274,9 @@ export class SessionQueue {
    * Stop the running turn, and — with `reclaim` — take back the newest QUEUED
    * row, so the caller can put it back in the composer.
    *
-   * A held STEER is not the stop's to touch. Its words went out as a
-   * `session/prompt` the moment they were sent, and the runtimes keep them
+   * A steer still in its undo window IS a queued row, so it is the newest one
+   * and Escape takes it back. A held STEER is not the stop's to touch. Its
+   * words went out when the window closed, and the runtimes keep them
    * through a cancel — ours persists them as context, Claude's SDK runs them
    * as an orphan turn — so re-queueing one showed the user a message waiting
    * that the agent already had, and then sent it a second time. The cancel

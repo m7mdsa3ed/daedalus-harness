@@ -370,6 +370,9 @@ export function parseSessionFailure(meta: unknown): SessionFailure | undefined {
    the `_meta` the spec reserves for exactly this, and offered to the browser
    through `session_config.canPause`. */
 const PAUSE_METHOD = "_daedalus/session/pause";
+/** The ACP steering extension: inject a message into the running turn. A
+    runtime offers it as `InitializeResponse._meta.steering.supported`. */
+const STEER_METHOD = "_session/steering";
 const RESUME_METHOD = "_daedalus/session/resume";
 const PAUSE_CAPABILITY = "daedalus/pause";
 /* The one direction the pair never had. A pause is asked for from this end and
@@ -913,6 +916,11 @@ export class AcpBridge implements ConnectionRoute {
       sent mid-turn) would clear the indicator while the agent is still
       working. */
   private inflight = 0;
+  /** The answer that would have ended the turn but for a count still out —
+      see `releaseJoin`. */
+  private parkedSettle: Parameters<AcpBridge["settleTurn"]> | undefined;
+  /** The runtime answers `_session/steering` (read off `initialize`). */
+  private steering = false;
   private turnStartedAt: number | null = null;
   private turnToolDurationMs = 0;
   /** The turn was adopted from a previous server: its tool time is unknown. */
@@ -1111,6 +1119,8 @@ export class AcpBridge implements ConnectionRoute {
     const initialized = await this.conn.initialized;
     this.handshakeActivity?.(); // initialize answered: the load gets a fresh budget
     this.agentCapabilities = initialized.agentCapabilities ?? {};
+    const steering = (initialized._meta as { steering?: { supported?: unknown } } | null | undefined)?.steering;
+    this.steering = steering?.supported === true;
 
     if (opts.load?.resume && this.agentCapabilities.sessionCapabilities?.resume) {
       await this.resumeSession(opts);
@@ -2032,7 +2042,7 @@ export class AcpBridge implements ConnectionRoute {
     } catch (error) {
       // Nothing was sent, so nothing will answer: give the count back by hand,
       // or the thread reads as busy for as long as it lives.
-      this.inflight--;
+      this.releaseJoin();
       throw error;
     }
     for (const note of attach.notes) {
@@ -2041,7 +2051,37 @@ export class AcpBridge implements ConnectionRoute {
       console.log(`[attachments] ${note.name}: ${note.delivery} — ${note.reason}`);
     }
     const outgoing = text + attach.textSuffix + (opts.suffix ?? "");
-    const blocks = attach.blocks;
+    /* Three kinds of block, and only the first is the prompt.
+
+       The text is what the user typed. The attachment blocks are the bytes
+       they attached, each on the branch `resolveDelivery` picks for it
+       against this runtime's capabilities and this thread's model — which
+       is decided HERE, at send, and never at attach time, because a message
+       queued twenty minutes ago must be resolved against the model it is
+       actually being sent to. And the links are what an `@path` in the text
+       refers to, for an agent that reads the protocol rather than the
+       prose; a link is made for any `@path` that names something that
+       exists, anywhere on the machine — see mentions.ts.
+
+       `attachmentBlocks` may append to the text as well (a materialised
+       path, or `[attached: shot.png]`), for the reason mentions.ts states:
+       the text is what every runtime reads without being taught anything. */
+    const prompt: acp.ContentBlock[] = [
+      { type: "text", text: outgoing },
+      ...attach.blocks,
+      ...mentionLinks(this.cwd, text + attach.textSuffix),
+    ];
+    this.conn.ledger?.noteTurn(sessionId, turnId);
+    /* A runtime with a steering door takes a mid-turn message INTO the running
+       turn; a plain `session/prompt` there is a second turn it queues behind
+       the first (claude-agent-acp, codex-acp). Its answer is not the turn's
+       end — the original prompt's is — so the count taken above is given back
+       here rather than by a settle. `promptRequired` means the runtime's turn
+       ended under us: the plain prompt below opens the next one, as before. */
+    if (deferred && this.steering && (await this.steerInto(sessionId, prompt))) {
+      this.releaseJoin();
+      return { deferred };
+    }
 
     const sent = { text, done: false };
     this.outstanding.add(sent);
@@ -2053,27 +2093,11 @@ export class AcpBridge implements ConnectionRoute {
       this.outstanding.delete(sent);
       return fn(...args);
     };
-    this.conn.ledger?.noteTurn(sessionId, turnId);
     void this.connection.agent
-      .request(acp.methods.agent.session.prompt, {
-        sessionId,
-        /* Three kinds of block, and only the first is the prompt.
-
-           The text is what the user typed. The attachment blocks are the bytes
-           they attached, each on the branch `resolveDelivery` picks for it
-           against this runtime's capabilities and this thread's model — which
-           is decided HERE, at send, and never at attach time, because a message
-           queued twenty minutes ago must be resolved against the model it is
-           actually being sent to. And the links are what an `@path` in the text
-           refers to, for an agent that reads the protocol rather than the
-           prose; a link is made for any `@path` that names something that
-           exists, anywhere on the machine — see mentions.ts.
-
-           `attachmentBlocks` may append to the text as well (a materialised
-           path, or `[attached: shot.png]`), for the reason mentions.ts states:
-           the text is what every runtime reads without being taught anything. */
-        prompt: [{ type: "text", text: outgoing }, ...blocks, ...mentionLinks(this.cwd, text + attach.textSuffix)],
-      }, { cancellationSignal: this.lifetime.signal, stopWaitingOnCancel: true })
+      .request(acp.methods.agent.session.prompt, { sessionId, prompt }, {
+        cancellationSignal: this.lifetime.signal,
+        stopWaitingOnCancel: true,
+      })
       .then(
         once(async (response: acp.PromptResponse) =>
           await this.settleTurn(
@@ -2155,6 +2179,41 @@ export class AcpBridge implements ConnectionRoute {
     );
   }
 
+  /**
+   * Inject a mid-turn message through the runtime's `_session/steering`
+   * extension. True = it joined the running turn; false = the runtime had no
+   * turn to join (`promptRequired`) or the door failed, and the caller sends a
+   * plain `session/prompt` instead.
+   */
+  private async steerInto(sessionId: string, prompt: acp.ContentBlock[]): Promise<boolean> {
+    try {
+      const reply = await this.connection.agent.request<{ outcome?: string }>(
+        STEER_METHOD,
+        { sessionId, prompt, _meta: { steering: { idleBehavior: "promptRequired" } } },
+        { cancellationSignal: this.lifetime.signal, stopWaitingOnCancel: true },
+      );
+      return reply?.outcome !== "promptRequired";
+    } catch (error) {
+      // ponytail: any failure falls back to the plain prompt — a steer the door refused is still the user's words.
+      console.warn(`[acp] ${STEER_METHOD} failed, sending as a prompt:`, toWireError(error).message);
+      return false;
+    }
+  }
+
+  /** Give back an `inflight` count that will never get an answer of its own (a
+      steering join, a prompt that failed before dispatch). If the turn's own
+      answer came while it was out, that answer was parked by `settleTurn`, and
+      settling with it now is what ends the turn. */
+  private releaseJoin(): void {
+    const parked = this.parkedSettle;
+    if (this.inflight === 1 && parked) {
+      this.parkedSettle = undefined;
+      void this.settleTurn(...parked);
+      return;
+    }
+    this.inflight--;
+  }
+
   private async settleTurn(
     usage: acp.Usage | null,
     error: WireError | undefined,
@@ -2176,7 +2235,13 @@ export class AcpBridge implements ConnectionRoute {
     else if (reported === null) this.reportedGeneration ??= null;
     // Steering: a second prompt sent mid-turn keeps the turn open. Only the one
     // that empties the set ends it.
-    if (--this.inflight > 0) return;
+    if (--this.inflight > 0) {
+      /* Kept for `releaseJoin`: a join still out may be all that holds the
+         turn open, and this answer is then the turn's end it has to settle. */
+      this.parkedSettle = [usage, error, text, stopReason, failure, reported];
+      return;
+    }
+    this.parkedSettle = undefined;
     /* The turn is over, so every step in it is: nothing is still running for a
        held steer to wait on, and its bubble must land before `turn_ended`
        rather than never. Ahead of the emit below for exactly that ordering. */

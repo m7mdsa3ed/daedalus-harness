@@ -1,5 +1,6 @@
-/* Messages wait here until the active turn finishes. A composer steer is
-   already on the wire and is shown only until its transcript bubble lands. */
+/* Messages wait here until the active turn finishes. A composer steer waits
+   here for its undo window (`steerAt`) as an editable row, then is on the
+   wire and is shown only until its transcript bubble lands. */
 import * as React from "react"
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core"
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable"
@@ -8,15 +9,19 @@ import {
   CornerDownRightIcon,
   GripVerticalIcon,
   ImageIcon,
+  ListTodoIcon,
   PaperclipIcon,
   PencilIcon,
   SendHorizontalIcon,
+  TriangleAlertIcon,
   XIcon,
 } from "lucide-react"
 import type { QueuedMessage } from "@daedalus/protocol"
 
+import { formatElapsed } from "@/components/step-row"
 import { Timestamp } from "@/components/tool-parts"
-import { UserMessageText } from "@/components/thread-items/user-message"
+import { UserMessageFold, UserMessageText } from "@/components/thread-items/user-message"
+import { parseTaskNotification, type TaskNotification } from "@/lib/tools"
 import type { Actions } from "@/lib/actions"
 import type { ThreadState } from "@/lib/store"
 import { formatBytes } from "@/lib/attachments"
@@ -26,6 +31,7 @@ import { Button } from "@/components/ui/busy-button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
 import { useLayoutOptionsContext } from "@/lib/layout-options"
+import { useNow } from "@/components/composer/agents-indicator"
 import { dominantTextDir } from "@/lib/text-direction"
 
 export function ComposerQueue({
@@ -46,8 +52,10 @@ export function ComposerQueue({
      the answer, or anyone else's edit — is what is drawn, with no effect to
      clear it. */
   const [dragged, setDragged] = React.useState<{ from: QueuedMessage[]; ids: string[] } | null>(null)
-  const steers = thread.queue.filter((item) => item.steer)
-  const queued = thread.queue.filter((item) => !item.steer)
+  /* A steer in its undo window is drawn with the steers (it is one, a few
+     seconds early) but stays editable; it never joins the drag or the picks. */
+  const steers = thread.queue.filter((item) => item.steer || item.steerAt !== undefined)
+  const queued = thread.queue.filter((item) => !item.steer && item.steerAt === undefined)
   const editable =
     dragged?.from === thread.queue
       ? dragged.ids.flatMap((id) => queued.find((item) => item.id === id) ?? [])
@@ -139,8 +147,8 @@ export function ComposerQueue({
                 canEdit={canEdit && !item.steer}
                 running={running}
                 selected={picked.has(item.id)}
-                onToggle={editable.length > 1 && !item.steer ? () => toggle(item.id) : undefined}
-                sortable={sortable && !item.steer}
+                onToggle={editable.length > 1 && !steers.includes(item) ? () => toggle(item.id) : undefined}
+                sortable={sortable && !steers.includes(item)}
               />
             ))}
           </ol>
@@ -202,6 +210,10 @@ function QueuedMessageRow({
   }
 
   const { steerRingGradient } = useLayoutOptionsContext()
+  /* The undo window, counted down: the row is still the reader's until then. */
+  const now = useNow(item.steerAt !== undefined)
+  const steerIn = item.steerAt !== undefined ? Math.max(0, Math.ceil((item.steerAt - now) / 1000)) : null
+  const steering = item.steer || steerIn !== null
   return (
     <li
       ref={setNodeRef}
@@ -214,7 +226,7 @@ function QueuedMessageRow({
            steps, not a click. A steer, the one already on the wire, can wear
            it in the chart colours when the reader asked for that. */
         "group/queued harness-busy-ring harness-busy-ring-slow relative flex min-w-0 flex-col gap-1 rounded-2xl border border-dashed bg-muted/50 p-2",
-        item.steer && steerRingGradient && "harness-busy-ring-gradient",
+        steering && steerRingGradient && "harness-busy-ring-gradient",
         "transition-colors hover:bg-muted",
         busy && "opacity-50",
         isDragging && "z-10 bg-muted"
@@ -244,11 +256,19 @@ function QueuedMessageRow({
           <span
             className={cn(
               "truncate text-xs font-medium",
-              item.steer ? "text-primary" : next ? "text-foreground" : "text-muted-foreground"
+              steering ? "text-primary" : next ? "text-foreground" : "text-muted-foreground"
             )}
-            aria-label={item.steer ? "Steering this turn" : next ? "Up next" : "Queued"}
+            aria-label={
+              steerIn !== null
+                ? `Steering this turn in ${steerIn} seconds`
+                : item.steer
+                  ? "Steering this turn"
+                  : next
+                    ? "Up next"
+                    : "Queued"
+            }
           >
-            {item.steer ? "Steering" : next ? "Next" : "Queued"}
+            {steerIn !== null ? `Steering in ${steerIn}s` : item.steer ? "Steering" : next ? "Next" : "Queued"}
           </span>
           <span aria-hidden className="size-0.5 shrink-0 rounded-full bg-muted-foreground/40" />
           <Timestamp at={item.createdAt} className="shrink-0 text-xs text-muted-foreground" />
@@ -266,21 +286,23 @@ function QueuedMessageRow({
                 onClick={() => run("steer", actions.queueSteer(sessionId, item.id))}
               >
                 <CornerDownRightIcon data-icon="inline-start" />
-                Steer
+                {steerIn !== null ? "Steer now" : "Steer"}
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="xs"
-              className="text-primary hover:text-primary"
-              disabled={!canSend || busy}
-              loading={action === "send"}
-              title={running ? "Stop the running turn and send this now" : "Send this now"}
-              onClick={() => run("send", actions.queueSendNow(sessionId, [item.id]))}
-            >
-              <SendHorizontalIcon data-icon="inline-start" />
-              Send now
-            </Button>
+            {steerIn === null && (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="text-primary hover:text-primary"
+                disabled={!canSend || busy}
+                loading={action === "send"}
+                title={running ? "Stop the running turn and send this now" : "Send this now"}
+                onClick={() => run("send", actions.queueSendNow(sessionId, [item.id]))}
+              >
+                <SendHorizontalIcon data-icon="inline-start" />
+                Send now
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="xs"
@@ -329,6 +351,32 @@ function QueuedMessageRow({
         <UserMessageText text={item.text} />
       </div>
     </li>
+  )
+}
+
+/** A queued `<task-notification>`: its status and summary on one line, with
+    the counts under it. The full result is the transcript card's to show. */
+function QueuedTaskNotification({ task }: { task: TaskNotification }) {
+  const failed = task.failures.length > 0 || task.status === "failed"
+  const stats = [
+    task.agentCount !== undefined && `${task.agentCount} agents`,
+    failed && task.failures.length > 0 && `${task.failures.length} failed`,
+    task.durationMs !== undefined && formatElapsed(task.durationMs),
+  ].filter((entry): entry is string => typeof entry === "string")
+  return (
+    <div className="flex min-w-0 items-start gap-2">
+      {failed ? (
+        <TriangleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+      ) : (
+        <ListTodoIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+      )}
+      <div className="min-w-0">
+        <p className={cn("line-clamp-2 font-medium", failed ? "text-destructive" : "text-foreground")}>
+          {task.summary ?? "Background task finished"}
+        </p>
+        {stats.length > 0 && <p className="text-xs tabular-nums">{stats.join(" · ")}</p>}
+      </div>
+    </div>
   )
 }
 

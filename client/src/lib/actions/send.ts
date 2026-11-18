@@ -191,7 +191,15 @@ export function sendActions(
          reset and puts them back with the replay (lib/thread/carry.ts). That
          is what a draft has relied on since it started drawing early, and it
          was the only thing keeping this send behind the round trip. */
-      if (!queueing) {
+      /* A steer into a running turn draws no bubble of its own: the server
+         holds its `turn_started` for the step boundary (`deferred`) and that
+         event draws it. Drawn here instead, it stood as the newest item while
+         the reply was in flight, so every agent chunk landing meanwhile opened
+         a NEW agent item behind it — and dropping the bubble left the run cut
+         in two, an `openui-lang` fence's opening line in one half and its body
+         drawn as prose in the other, until a reload merged them. */
+      const steering = alreadyRunning && !queueing
+      if (!queueing && !steering) {
         dispatch({ type: "user-message", id: sessionId, text, local: true, sending: true, attachments })
         if (text) dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
         dispatch({ type: "turn-active", id: sessionId, active: true })
@@ -226,7 +234,7 @@ export function sendActions(
       try {
         thread = await conn.ready()
       } catch (error) {
-        if (!queueing) {
+        if (!queueing && !steering) {
           /* Nothing reached the server, so the optimism above comes back off
              — the draft's own create-failure branch, one thread older. A
              bubble left standing here is a message that was never sent,
@@ -277,9 +285,10 @@ export function sendActions(
         })
         if ("queued" in reply) {
           /* The server was busy before this device knew — another peer or
-             the scheduler started a turn. The words are on the queue row
-             now, so the optimistic bubble comes back off. */
-          dispatch({ type: "drop-user-message", id: sessionId })
+             the scheduler started a turn — or this is a steer in its undo
+             window. The words are on the queue row now, so the optimistic
+             bubble comes back off. */
+          if (!steering) dispatch({ type: "drop-user-message", id: sessionId })
           if (!alreadyRunning) dispatch({ type: "turn-active", id: sessionId, active: true })
           return
         }
@@ -287,16 +296,23 @@ export function sendActions(
           /* A steer whose bubble the server is holding until the running
              step ends. The words ARE on the wire — this is not the queued
              case — but where they belong in the transcript is not known yet,
-             and no runtime reads them before that boundary either. So the
-             optimistic bubble comes off exactly as it does for a queue, and
-             the held `turn_started` draws it at the position a reload will
-             agree with. The indicator stays lit: the turn is running. */
-          dispatch({ type: "drop-user-message", id: sessionId })
+             and no runtime reads them before that boundary either. So no
+             bubble is drawn here, and the held `turn_started` draws it at the
+             position a reload will agree with. The indicator stays lit: the
+             turn is running. */
+          if (!steering) dispatch({ type: "drop-user-message", id: sessionId })
+          return
+        }
+        /* A steer the server took as a turn of its own: the turn it was aimed
+           at ended before the server saw it, and the `turn_started` went to
+           every peer but this one — so the bubble is this device's to draw. */
+        if (steering) {
+          dispatch({ type: "user-message", id: sessionId, text, turnId: reply.turnId, attachments })
           return
         }
         dispatch({ type: "tag-user-turn", id: sessionId, turnId: reply.turnId })
       } catch (error) {
-        dispatch({ type: "settle-user-message", id: sessionId })
+        if (!steering) dispatch({ type: "settle-user-message", id: sessionId })
         /* Where alreadyRunning was true, another turn is genuinely active
            and must not be disturbed. */
         if (!alreadyRunning) dispatch({ type: "turn-active", id: sessionId, active: false })

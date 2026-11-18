@@ -289,8 +289,20 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   answered `{queued, itemId}` — only the server knows whether the turn is still open, the
   browser's `turnActive` is a hint (a `{queued}` reply to a prompt the client sent optimistically
   is what `drop-user-message` takes back). Steering is the explicit composer send chord
-  (`prompt {steer:true}`), which joins the active turn. Queued rows always wait for the turn to
-  finish unless the user chooses Send now. The queue travels as the `queue` event — **absolute**
+  (`prompt {steer:true}`), which joins the active turn — after an **undo window**: into a
+  running (not held) turn, `SessionQueue.steerSoon` writes it as an ordinary row, decorates it
+  with `steerAt` (an in-memory deadline, `STEER_UNDO_MS`) and sends it through `queue.steer`
+  when the timer fires. Until then it is the reader's — Edit, Remove, **Steer now**, and
+  Escape's reclaim all work on it, and the timer finds the row gone. A turn that ended inside
+  the window leaves it queued for the drain. On the wire, a runtime that advertises
+  `InitializeResponse._meta.steering.supported` (claude-agent-acp, codex-acp) is sent
+  `_session/steering` with `idleBehavior: "promptRequired"` — a plain mid-turn
+  `session/prompt` is a second turn those adapters queue behind the first — and the join's
+  `inflight` count is given back by `releaseJoin`, which settles the turn with the parked
+  answer if the original prompt answered while the join was out. `promptRequired` or a failed
+  request falls back to `session/prompt`. Our own runtime advertises nothing and takes the plain
+  prompt into `steerQueue`. Queued rows always wait for the turn to finish unless the user
+  chooses Send now. The queue travels as the `queue` event — **absolute**
   like `session_config`, never a delta, fanned to
   every peer *including* the origin because the ids are minted here — and is not journaled: it
   is current state, handed over on `caught_up` the way a pending permission is handed over
@@ -332,7 +344,8 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   Everything older stays parked with its own Edit and ✕.
 
   A **queued** row never left this server, so taking it back is total. A **held steer** is
-  never taken back, by a reclaim or a plain stop: its words went out at send, and the runtimes
+  never taken back, by a reclaim or a plain stop: its words went out when its undo window
+  closed (inside the window it is a queued row, and taken back like one), and the runtimes
   keep them through a cancel (ours persists them as context, Claude's SDK runs them as an
   orphan turn). So the stop leaves `bridge.pendingSteers` alone, the cancel's `settleTurn` is
   its step boundary, and `flushSteers` draws it as the bubble it is. Stopping used to re-queue

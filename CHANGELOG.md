@@ -20,6 +20,8 @@ line: keep each bullet on a single line.
 
 ### 2026-11-17
 
+- **A steer can be edited or taken back for five seconds after it is sent.** A steer into a running turn now waits as a queue row ("Steering in 5s", counting down) with Edit, Remove and **Steer now**, and Escape reclaims it like any queued message; when the window closes the server sends it through `queue.steer` (`SessionQueue.steerSoon`, `STEER_UNDO_MS`, `steerAt` on `QueuedMessage`). A steer into a held turn still goes at once, and a turn that ends inside the window leaves the row queued for the drain.
+- **Claude Code and codex are steered for real, through `_session/steering`.** A runtime advertising `InitializeResponse._meta.steering.supported` gets a mid-turn message injected into the running turn instead of a second `session/prompt`, which claude-agent-acp and codex-acp queued as a turn behind the first; `promptRequired` or a failed request falls back to the plain prompt, and a turn whose own answer arrives while the steer is out is settled with that answer once the steer comes back (`releaseJoin`).
 - **`@openuidev/react-lang` is 1.1.1** (from 1.0.1): streamed views skip re-rendering elements whose props did not change, and `@Round`/`@Abs`/`@Floor`/`@Ceil` also map over arrays, which the generated prompt now says.
 
 ### 2026-11-15

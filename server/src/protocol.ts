@@ -891,6 +891,10 @@ export interface QueuedMessage {
   /** A composer steer whose words are on the wire while its transcript bubble
       waits for the current step to finish. It cannot be edited, removed or sent. */
   steer?: true;
+  /** A composer steer still in its undo window (`STEER_UNDO_MS`): an ordinary
+      queued row — editable, removable — that goes into the running turn at
+      this moment (epoch ms) unless it is taken back first. */
+  steerAt?: number;
 }
 
 /** The answer to `prompt` and `queue_add`. Which shape comes back is the
