@@ -1962,6 +1962,18 @@ double-click on a divider evens out the views it separates — in the main dock 
   answer), and staged work wins when there is any, since that is what a commit would actually
   contain. The button is drawn only where a profile can actually do it — a disabled wand nobody
   can enable is worse than none.
+- **Logical commits are the same draft, split, and reviewed before they land.** `POST
+  …/git/draft-plan` gathers *every* changed file — staged or not, untracked included, as HEAD
+  against the worktree — because what happens to be staged is not a boundary the author drew
+  for this question (`commitMessagePrompt(…, "plan")`), and asks `enhancePrompt` with
+  `kind: "plan"` for JSON (`{commits:[{message, paths}]}`). The route keeps only paths that are
+  really changed and reports the rest as `unplanned`. Nothing is written until the reader
+  presses "Make N commits" in `scm/commit-plan-dialog.tsx` (messages editable, files movable or
+  left out); the `commit-plan` action then lands it through `git.commitPlan`, which refuses an
+  unknown or doubled path before writing anything, and per commit clears the index and
+  `add --all`s exactly that commit's paths (a rename brings its old path), so a deletion and a
+  rename land whole and anything unnamed stays changed. A refusal mid-plan says how many
+  commits it made. `test:git-commit-plan` runs it against a real repository.
 - **The Git half is Sublime Merge's shape** (`thread-view/source-control.tsx`): Locations
   (`scm/locations.tsx` - branches, remotes, tags, stashes) | commit table (`scm/commit-table.tsx`,
   every branch via `GET …/git/log?all=1`, "Working Directory" as its first row) over a detail

@@ -31,6 +31,7 @@
     "test:helpers": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-helpers tsx test/project-helpers.test.ts",
     "test:worktree": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-worktree tsx test/worktree.test.ts",
     "test:git-numstat": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-git-numstat tsx test/git-numstat.test.ts",
+    "test:git-commit-plan": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-git-commit-plan tsx test/git-commit-plan.test.ts",
     "test:turn-revert": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-turn-revert tsx test/turn-revert.test.ts",
     "test:turn-attribution": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-turn-attribution tsx test/turn-attribution.test.ts",
     "test:mcp-registry": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-mcp-registry tsx test/mcp-registry.test.ts",

@@ -614,6 +614,67 @@ export async function commit(
   return { output: [stdout.trim(), stderr.trim()].filter(Boolean).join("\n") };
 }
 
+export interface PlannedCommit {
+  message: string;
+  /** Paths as the status lists them, relative to the repository. */
+  paths: string[];
+}
+
+/**
+ * Land a plan of logical commits, in order, each holding only its own files.
+ *
+ * The plan covers the whole working set, so the index is cleared before every
+ * commit and refilled with exactly that commit's paths (`add --all` stages a
+ * deletion as readily as an edit; a rename brings its old path with it). A
+ * file the plan does not name is left changed and unstaged.
+ *
+ * Validated whole before anything is written — an unknown path or one claimed
+ * twice refuses the plan rather than landing the half of it that was right. A
+ * commit refused mid-plan (a hook, usually) leaves the ones before it made and
+ * says how far it got.
+ */
+export async function commitPlan(
+  projectId: string,
+  commits: PlannedCommit[],
+  repo?: string,
+): Promise<CommitResult> {
+  const { dir } = await repoOrThrow(projectId, repo);
+  const state = await status(projectId, repo);
+  if (state.conflicted.length > 0) throw fail(409, "resolve the conflicts before committing");
+  if (commits.length === 0) throw fail(400, "the plan has no commits");
+
+  const known = new Map<string, string[]>();
+  for (const file of [...state.staged, ...state.unstaged, ...state.untracked]) {
+    const sides = known.get(file.path) ?? [file.path];
+    if (file.from && !sides.includes(file.from)) sides.push(file.from);
+    known.set(file.path, sides);
+  }
+  const claimed = new Set<string>();
+  for (const [index, planned] of commits.entries()) {
+    if (!planned.message.trim()) throw fail(400, `commit ${index + 1} needs a message`);
+    if (planned.paths.length === 0) throw fail(400, `commit ${index + 1} has no files`);
+    for (const path of planned.paths) {
+      if (!known.has(path)) throw fail(400, `${path} has no changes to commit`);
+      if (claimed.has(path)) throw fail(400, `${path} is in more than one commit`);
+      claimed.add(path);
+    }
+  }
+
+  const outputs: string[] = [];
+  for (const [index, planned] of commits.entries()) {
+    try {
+      await run(dir, ["reset", "--quiet", ...pathspec(["."])]);
+      await run(dir, ["add", "--all", ...pathspec(planned.paths.flatMap((path) => known.get(path)!))]);
+      const { stdout, stderr } = await run(dir, ["commit", "--message", planned.message]);
+      outputs.push([stdout.trim(), stderr.trim()].filter(Boolean).join("\n"));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw fail(409, `made ${index} of ${commits.length} commits; commit ${index + 1} failed: ${reason}`);
+    }
+  }
+  return { output: outputs.join("\n") };
+}
+
 export interface BranchList {
   current: string | null;
   branches: string[];
@@ -1297,7 +1358,7 @@ export async function commitMessagePrompt(
      work — so it is the same gathering, and only the headline (and the system
      prompt in `enhance.ts`) differ. A second copy of the untracked-file
      handling below is how the two would drift. */
-  kind: "commit" | "branch" = "commit",
+  kind: "commit" | "branch" | "plan" = "commit",
   /* What the author has already typed into the commit box, when they asked for
      it to be *sharpened* rather than written. The diff is gathered either way —
      a message is only worth rewriting against the work it describes — so this
@@ -1306,6 +1367,23 @@ export async function commitMessagePrompt(
 ): Promise<{ prompt: string; files: string[]; staged: boolean }> {
   const { dir } = await repoOrThrow(projectId, repo);
   const state = await status(projectId, repo);
+
+  /* A plan splits *everything* changed into commits, staged or not — what is
+     staged is not a boundary the author drew for this question. Paths are
+     listed bare, because they come back as the plan's own vocabulary and
+     `commitPlan` matches them exactly. */
+  if (kind === "plan") {
+    const common = ["diff", "--relative", "-M", "--no-color", "--no-ext-diff"];
+    /* HEAD against the worktree; before the first commit there is no HEAD, so
+       the index and the worktree's difference from it are read separately. */
+    const tracked = state.unborn
+      ? (await Promise.all([run(dir, [...common, "--cached"]), run(dir, common)])).map((r) => r.stdout).join("")
+      : (await run(dir, [...common, "HEAD"])).stdout;
+    const untracked = state.untracked.map((file) => file.path);
+    const files = [...new Set([...state.staged, ...state.unstaged].map((file) => file.path)), ...untracked];
+    const added = await untrackedDiff(dir, untracked);
+    return { prompt: buildPrompt(kind, false, files, `${tracked}${added}`), files, staged: false };
+  }
 
   /* Staged work is what a commit would actually contain, so it wins; a tree
      with nothing staged is the "stage everything first" flow, and its draft is
@@ -1334,41 +1412,37 @@ export async function commitMessagePrompt(
      this the draft describes a change whose files it never saw, which is
      exactly the "invent work that is not there" failure the system prompt
      warns against. Read their contents in as added files. */
-  if (!staged && state.untracked.length > 0) {
-    const added: string[] = [];
-    for (const file of state.untracked) {
-      /* `--no-index` against `/dev/null` is what renders a file git does not
-         track as a normal "new file" hunk. It exits 1 whenever there IS a
-         difference — which is every time here — so 1 is an answer, not a
-         failure. */
-      try {
-        const { stdout: one } = await run(
-          dir,
-          ["diff", "--no-index", "--no-color", "--no-ext-diff", "--no-prefix", "/dev/null", file.path],
-          undefined,
-          [1],
-        );
-        if (one.trim()) added.push(one);
-      } catch {
-        /* A binary or unreadable untracked file contributes its name only. */
-      }
-      if (added.join("").length > COMMIT_PROMPT_DIFF_MAX) break;
-    }
-    if (added.length > 0) {
-      return {
-        prompt: buildPrompt(kind, staged, files, `${stdout}${added.join("")}`, draft),
-        files,
-        staged,
-      };
-    }
-  }
+  const added = !staged ? await untrackedDiff(dir, state.untracked.map((file) => file.path)) : "";
+  return { prompt: buildPrompt(kind, staged, files, `${stdout}${added}`, draft), files, staged };
+}
 
-  return { prompt: buildPrompt(kind, staged, files, stdout, draft), files, staged };
+/** Untracked files as new-file hunks, stopping once past the prompt's cap. */
+async function untrackedDiff(dir: string, paths: string[]): Promise<string> {
+  const added: string[] = [];
+  for (const path of paths) {
+    /* `--no-index` against `/dev/null` is what renders a file git does not
+       track as a normal "new file" hunk. It exits 1 whenever there IS a
+       difference — which is every time here — so 1 is an answer, not a
+       failure. */
+    try {
+      const { stdout: one } = await run(
+        dir,
+        ["diff", "--no-index", "--no-color", "--no-ext-diff", "--no-prefix", "/dev/null", path],
+        undefined,
+        [1],
+      );
+      if (one.trim()) added.push(one);
+    } catch {
+      /* A binary or unreadable untracked file contributes its name only. */
+    }
+    if (added.join("").length > COMMIT_PROMPT_DIFF_MAX) break;
+  }
+  return added.join("");
 }
 
 /** The prompt's own shape, in one place so both exits above agree. */
 function buildPrompt(
-  kind: "commit" | "branch",
+  kind: "commit" | "branch" | "plan",
   staged: boolean,
   files: string[],
   diff: string,
@@ -1381,7 +1455,9 @@ function buildPrompt(
   const started = kind === "commit" ? (draft ?? "").trim() : "";
 
   return [
-    kind === "branch"
+    kind === "plan"
+      ? "Split these working-tree changes into logical commits. Every file below must appear in exactly one commit."
+      : kind === "branch"
       ? `Name a git branch for these ${scope} changes.`
       : started
         ? `Rewrite the author's commit message for these ${scope} changes.`

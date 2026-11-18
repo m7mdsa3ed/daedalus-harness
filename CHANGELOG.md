@@ -44,6 +44,7 @@ line: keep each bullet on a single line.
 ### 2026-11-08
 
 - **The Daedalus agent's tool search answers with the names it loaded, not their descriptions, and drops weak keyword matches.** Each description was already in the catalogue and arrives in full as the tool's definition on the next step, so echoing it paid for every one a third time on every later step; a search now returns `{tools: [{name}]}` (with a hint to select from the catalogue when nothing matched), and a keyword match scoring under half of the best one is left out instead of filling the five-result cap (`agent/src/tools/tool-search.ts`, `test:tool-search`).
+- **Source control can split the working set into logical commits.** A layers button beside the commit box's draft wand asks the same AI-helpers profile to cut every changed file (staged or not, untracked included) into ordered conventional commits (`POST …/git/draft-plan`, `kind: "plan"`); a review dialog lets you edit each message, move a file between commits or leave it out, and "Make N commits" lands them in order through the `commit-plan` git action (`git.commitPlan`), which validates the whole plan first, stages only each commit's own files (deletions and renames included) and leaves anything unplanned changed.
 
 ### 2026-11-06
 

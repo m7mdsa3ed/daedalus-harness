@@ -69,6 +69,7 @@ import {
   type GitCommit,
   type GitRepo,
   type GitStatus,
+  type PlannedCommit,
 } from "@/lib/workspace/git-api"
 import { watchProject } from "@/lib/workspace/watch"
 
@@ -250,7 +251,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
     queryClient.setQueryData(projectGitStatusKey(settings, projectId, repoPath), next)
   }
 
-  const LOG_MOVERS = new Set<GitAction["action"]>(["commit", "pull", "push", "fetch", "undo", "checkout", "merge", "rebase", "rename-branch", "delete-branch", "delete-tag"])
+  const LOG_MOVERS = new Set<GitAction["action"]>(["commit", "commit-plan", "pull", "push", "fetch", "undo", "checkout", "merge", "rebase", "rename-branch", "delete-branch", "delete-tag"])
   const DONE: Partial<Record<GitAction["action"], string>> = {
     commit: "Commit created.",
     pull: "Pull complete.",
@@ -270,6 +271,8 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
         const text = result.output?.trim() ?? ""
         setNotice(`Undid “${text.split("\n")[0]}” — its changes are staged.`)
         if (text) setPrefill({ text, id: Date.now() })
+      } else if (action.action === "commit-plan") {
+        setNotice(`Made ${action.commits.length} ${action.commits.length === 1 ? "commit" : "commits"}.`)
       } else if (DONE[action.action]) {
         setNotice(result.output?.split("\n").find((line) => line.trim())?.trim() ?? DONE[action.action]!)
       }
@@ -316,6 +319,9 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
     }
     return act.run("commit", () => write({ action: "commit", message, amend }))
   }
+
+  const commitPlan = (commits: PlannedCommit[]) =>
+    act.run("commit", () => write({ action: "commit-plan", commits }))
 
   /* Soft, so nothing on disk moves — but a commit already on the remote comes
      back as a rewrite the next push has to force, and that is worth saying. */
@@ -543,6 +549,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
             canAmend={remote}
             prefill={prefill}
             onCommit={commitWith}
+            onCommitPlan={commitPlan}
             onError={(message) => setError(message ? { title: message, kind: "unknown", context: "Git operation failed", text: `Git operation failed\n${message}` } : null)}
           />
     </>

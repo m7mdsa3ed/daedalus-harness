@@ -17,24 +17,30 @@
    makes exactly this bargain, and it is why the wand does not simply blank
    what someone has half-written.
 
+   **A third: split it.** The layers button asks the same profile to cut the
+   whole working set into logical commits, drawn for review in
+   `CommitPlanDialog` before anything lands - several writes to history are
+   not something a click should make unseen.
+
    **The call is abortable and the abort is real.** The old draft button fired
    and hoped: switching repository or closing the panel mid-draft left a
    promise that came back and wrote into a box that had moved on. */
 import * as React from "react"
-import { PencilEdit02Icon, SparklesIcon, Tick02Icon } from "@hugeicons/core-free-icons"
+import { Layers01Icon, PencilEdit02Icon, SparklesIcon, Tick02Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/busy-button"
 import { ActionIcon, actionClass, type ActionPhase } from "@/components/ui/action-state"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { CommitPlanDialog } from "@/components/workspace/scm/commit-plan-dialog"
 import { IconAction } from "@/components/workspace/scm/shared"
 import { canUseAi, gitPick } from "@/lib/ai-picks"
 import { describeError } from "@/lib/errors"
 import { useProfiles } from "@/lib/queries/catalog"
 import { useServer } from "@/lib/server-context"
 import { cn } from "@/lib/utils"
-import { draftCommitMessage, gitCommit } from "@/lib/workspace/git-api"
+import { draftCommitMessage, draftCommitPlan, gitCommit, type PlannedCommit } from "@/lib/workspace/git-api"
 
 export function CommitBox({
   projectId,
@@ -52,6 +58,7 @@ export function CommitBox({
   canAmend,
   prefill,
   onCommit,
+  onCommitPlan,
   onError,
 }: {
   projectId: string
@@ -71,6 +78,8 @@ export function CommitBox({
   prefill?: { text: string; id: number } | null
   /** Answers false when the commit did not happen, so the message stays put. */
   onCommit: (message: string, amend: boolean) => Promise<boolean>
+  /** Lands a reviewed plan of logical commits; false keeps the review open. */
+  onCommitPlan: (commits: PlannedCommit[]) => Promise<boolean>
   /** A draft that failed belongs beside the box it was meant to fill, not in a
       toast over a panel the reader is already looking at. */
   onError: (message: string | null) => void
@@ -78,6 +87,8 @@ export function CommitBox({
   const settings = useServer()
   const [message, setMessage] = React.useState("")
   const [drafting, setDrafting] = React.useState(false)
+  const [planning, setPlanning] = React.useState(false)
+  const [plan, setPlan] = React.useState<{ commits: PlannedCommit[]; unplanned: string[] } | null>(null)
   /* Amend rewrites the last commit: with it on, the button needs no staged
      change (a reword is an amend), and the box holds the message being
      replaced — an empty box would amend it to nothing, which git refuses. */
@@ -159,6 +170,35 @@ export function CommitBox({
     }
   }, [draftProfile, settings, projectId, repo, typed, onError])
 
+  /* Shares the draft's abort: one AI question in flight per box, and a new
+     repository cancels either. */
+  const askPlan = React.useCallback(async () => {
+    if (!draftProfile) return
+    abort.current?.abort()
+    const controller = new AbortController()
+    abort.current = controller
+    setPlanning(true)
+    onError(null)
+    try {
+      const drafted = await draftCommitPlan(
+        settings,
+        projectId,
+        { profileId: draftProfile.id, model: gitPick.resolveModelId(draftProfile) || undefined, repo: repo || undefined },
+        controller.signal
+      )
+      if (controller.signal.aborted) return
+      setPlan({ commits: drafted.commits, unplanned: drafted.unplanned })
+    } catch (err) {
+      if (controller.signal.aborted) return
+      onError(describeError(err).title)
+    } finally {
+      if (abort.current === controller) {
+        abort.current = null
+        setPlanning(false)
+      }
+    }
+  }, [draftProfile, settings, projectId, repo, onError])
+
   const submit = async () => {
     if (!summary.trim()) return
     /* Cleared only on a commit that happened — a refused hook or a conflict
@@ -239,8 +279,17 @@ export function CommitBox({
             }
             icon={SparklesIcon}
             loading={drafting}
-            disabled={busy || changeCount === 0}
+            disabled={busy || planning || changeCount === 0}
             onClick={() => void ask()}
+          />
+        )}
+        {draftProfile && (
+          <IconAction
+            label={planning ? "Splitting into commits…" : `Split into logical commits with ${draftProfile.name}`}
+            icon={Layers01Icon}
+            loading={planning}
+            disabled={busy || drafting || amend || changeCount === 0}
+            onClick={() => void askPlan()}
           />
         )}
       </div>
@@ -277,6 +326,13 @@ export function CommitBox({
                 : `Commit to ${branch}`}
         </span>
       </Button>
+      <CommitPlanDialog
+        plan={plan}
+        branch={branch}
+        busy={busy}
+        onOpenChange={(open) => { if (!open) setPlan(null) }}
+        onCommit={onCommitPlan}
+      />
     </form>
   )
 }

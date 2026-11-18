@@ -299,6 +299,9 @@ function writeStatus(
 export type GitAction =
   | { action: "stage" | "unstage" | "discard"; paths: string[] }
   | { action: "commit"; message: string; amend?: boolean }
+  /** A reviewed plan of logical commits, landed in order, each holding only
+      its own paths; whatever no commit names stays changed. */
+  | { action: "commit-plan"; commits: PlannedCommit[] }
   /** One hunk: `cached` stages it, `reverse` alone discards it. */
   | { action: "apply"; patch: string; cached?: boolean; reverse?: boolean }
   /** Switch branches; `create` makes it a `-b`, and `track` means `branch`
@@ -339,6 +342,29 @@ export function draftCommitMessage(
   signal?: AbortSignal
 ): Promise<{ message: string; files: number; staged: boolean }> {
   return api(settings, `${base(projectId)}/draft-message`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    signal,
+  })
+}
+
+export interface PlannedCommit {
+  message: string
+  /** Repository-relative, as the status lists them. */
+  paths: string[]
+}
+
+/** Split the whole working set into logical commits, through the same profile
+    pick as the message draft. Writes nothing: the answer is a plan to review
+    and land with the `commit-plan` action. `unplanned` is what the model left
+    out, which stays uncommitted unless moved into a commit. */
+export function draftCommitPlan(
+  settings: ServerSettings,
+  projectId: string,
+  input: { profileId: string; model?: string; repo?: string },
+  signal?: AbortSignal
+): Promise<{ commits: PlannedCommit[]; files: string[]; unplanned: string[] }> {
+  return api(settings, `${base(projectId)}/draft-plan`, {
     method: "POST",
     body: JSON.stringify(input),
     signal,

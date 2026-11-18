@@ -4,8 +4,8 @@ import type { Profile } from "./profiles.js";
 
 /* ── The harness's house styles ──
  *
- * Three questions the harness asks a model on the user's behalf: rewrite this
- * draft, describe this diff, name this diff. The *call* is not here — every one
+ * The questions the harness asks a model on the user's behalf: rewrite this
+ * draft, describe this diff, split this diff, name this diff. The *call* is not here — every one
  * of them is one `generate()` against a profile's endpoint (`server/src/ai.ts`,
  * the one file that names the AI SDK on this half). What is here is the only
  * thing that actually differs between them: the system prompt, and the input
@@ -60,14 +60,28 @@ Rules: a conventional prefix ("feat/", "fix/", "refactor/", "chore/", "docs/"), 
  */
 const TASK_SYSTEM = `Turn a task's title and rough notes into a clear task description in GitHub-flavoured markdown. Open with one or two sentences on the problem and the goal, then a "## Scope" section of "- [ ]" checklist items, then "## Notes" only when the input has context worth keeping. Keep every fact, link, name and already-ticked "- [x]" item from the input; do not invent requirements, numbers or deadlines. With only a title, write the smallest sensible description and checklist for it. Return only the markdown — no preamble, no code fence around it, and do not repeat the title as a heading.`;
 
-export type EnhanceKind = "prompt" | "commit" | "branch" | "task";
+/**
+ * The commit-plan half: the same diff, split. The answer is parsed, not shown,
+ * so it is JSON and nothing else; `commitPlan` in `git.ts` refuses a plan that
+ * names a file twice or one that is not changed, rather than guessing.
+ */
+const PLAN_SYSTEM = `Split the changes shown into a sequence of logical commits, each one self-contained concern (a feature, a fix, a refactor, docs, config), ordered so each builds on the ones before it. Assign every listed file to exactly one commit, using the paths exactly as listed; a file cannot be split between commits. Prefer few, meaningful commits over one per file; a change that is one concern is one commit.
+
+Each message follows the conventional-commit style: a subject line of at most 72 characters ("feat: …", "fix: …", "refactor: …"), then, only where the change needs it, a blank line and a short body saying why. Describe what the diff actually does; do not invent work that is not there.
+
+Return only JSON, no preamble and no code fences: {"commits":[{"message":"…","paths":["…"]}]}`;
+
+export type EnhanceKind = "prompt" | "commit" | "branch" | "plan" | "task";
 
 /** The style and the words a failure wears, per question. One table, so adding
     a fourth is a row rather than a second `if` chain. */
-const STYLES: Record<EnhanceKind, { system: string; label: string; max: number }> = {
+const STYLES: Record<EnhanceKind, { system: string; label: string; max: number; output?: number }> = {
   prompt: { system: ENHANCE_SYSTEM, label: "rewrite", max: MAX_INPUT_CHARS },
   commit: { system: COMMIT_SYSTEM, label: "commit message draft", max: MAX_DIFF_CHARS },
   branch: { system: BRANCH_SYSTEM, label: "branch name draft", max: MAX_DIFF_CHARS },
+  /* A plan carries a message per commit and every path, so it outgrows the
+     one-message budget on a wide change. */
+  plan: { system: PLAN_SYSTEM, label: "commit plan", max: MAX_DIFF_CHARS, output: 8_192 },
   task: { system: TASK_SYSTEM, label: "task description draft", max: MAX_INPUT_CHARS },
 };
 
@@ -93,5 +107,6 @@ export async function enhancePrompt(profile: Profile, input: EnhanceInput): Prom
     model: input.model,
     signal: input.signal,
     label: style.label,
+    maxOutputTokens: style.output,
   });
 }

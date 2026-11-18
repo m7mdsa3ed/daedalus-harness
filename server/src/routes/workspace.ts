@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { z } from "zod";
 import { enhancePrompt } from "../enhance.js";
+import { HttpError } from "../http-error.js";
 import { profileHasAgent } from "../registry.js";
 import { getProfile } from "../profiles.js";
 import {
@@ -422,6 +423,53 @@ export function workspaceRoutes(app: Hono): void {
     });
   });
 
+  /* Draft a plan of logical commits for the whole working set: the same
+     profile bargain and the same gathering (`kind: "plan"`), answered as
+     commits to review rather than one message. Nothing is written here — the
+     panel shows the plan and lands it through the `commit-plan` action. */
+  const PlanAnswerSchema = z.object({
+    commits: z.array(z.object({ message: z.string(), paths: z.array(z.string()) })),
+  });
+
+  app.post("/api/projects/:projectId/git/draft-plan", async (c) => {
+    const parsed = DraftMessageSchema.pick({ profileId: true, model: true, repo: true })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: "profileId is required" }, 400);
+    const profile = await getProfile(parsed.data.profileId);
+    if (!profile) return c.json({ error: "unknown profile" }, 404);
+    if (!await profileHasAgent(profile)) {
+      return c.json({ error: "unknown agent for this profile" }, 404);
+    }
+    return workspace(c, async () => {
+      const { prompt, files } = await git.commitMessagePrompt(c.req.param("projectId"), parsed.data.repo, "plan");
+      if (files.length === 0) throw new HttpError("nothing to commit", 400);
+      const answer = await enhancePrompt(profile, {
+        text: prompt,
+        model: parsed.data.model || undefined,
+        kind: "plan",
+      });
+      /* A model that fences its JSON anyway is the one repair; anything that
+         still does not parse is the model's failure, said as one. */
+      const json = answer.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+      let plan: z.infer<typeof PlanAnswerSchema>;
+      try {
+        plan = PlanAnswerSchema.parse(JSON.parse(json));
+      } catch {
+        throw new HttpError("the commit plan came back in a shape that could not be read", 502);
+      }
+      /* What the model left out is said, not dropped: the panel shows those
+         files as staying uncommitted so the reader can move them in. */
+      const planned = new Set(plan.commits.flatMap((commit) => commit.paths));
+      return {
+        commits: plan.commits
+          .map((commit) => ({ message: commit.message.trim(), paths: commit.paths.filter((path) => files.includes(path)) }))
+          .filter((commit) => commit.message && commit.paths.length > 0),
+        files,
+        unplanned: files.filter((path) => !planned.has(path)),
+      };
+    });
+  });
+
   app.post("/api/projects/:projectId/git/:action", async (c) => {
     const projectId = c.req.param("projectId");
     const action = c.req.param("action");
@@ -438,6 +486,7 @@ export function workspaceRoutes(app: Hono): void {
       force?: unknown;
       cached?: unknown;
       reverse?: unknown;
+      commits?: unknown;
     };
     const paths = Array.isArray(body.paths)
       ? body.paths.filter((p): p is string => typeof p === "string")
@@ -468,6 +517,20 @@ export function workspaceRoutes(app: Hono): void {
           });
           return { ...result, status: await git.status(projectId, repo) };
         });
+      /* A reviewed plan of logical commits, landed in order (`git.commitPlan`). */
+      case "commit-plan": {
+        const commits = Array.isArray(body.commits)
+          ? body.commits.flatMap((item) => {
+              const { message, paths: files } = (item ?? {}) as { message?: unknown; paths?: unknown };
+              if (typeof message !== "string" || !Array.isArray(files)) return [];
+              return [{ message, paths: files.filter((p): p is string => typeof p === "string") }];
+            })
+          : [];
+        return workspace(c, async () => {
+          const result = await git.commitPlan(projectId, commits, repo);
+          return { ...result, status: await git.status(projectId, repo) };
+        });
+      }
       /* One hunk, cut out of a diff by the review panel: `cached` stages it,
          `reverse` (without `cached`) discards it from the worktree. */
       case "apply":
