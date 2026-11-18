@@ -1165,7 +1165,17 @@ call's, never a sum (one result is re-sent on every later step). **`called`** is
 *response* asked to run, one entry per call: the agent reads its own content, the proxy reads
 the reply's tool-call events (`calledOf`, per dialect), the Claude files door the message's
 `tool_use` blocks. Both are absent where the door could not see that half, and both are ledger
-columns (`tool_use`, `called`), read back whole.
+columns (`tool_use`, `called`), read back whole. **`toolCallIds`** is `called`'s ACP ids, where
+the door can name them (the agent's own content, a proxied reply's tool-use ids via
+`toolCallsOf`, only when every call named one, and Claude Code's OTLP `api_response_body` — the
+reply as an assistant message, read for its `tool_use` blocks and deleted; the OTLP record waits
+for it beside the request body, up to `PAIR_WAIT_MS`); it is what draws a record on the transcript step
+it produced (`callsByStep`, `client/src/lib/trace.ts`): the last of those rows, else the row
+that was last when the record landed (`ThreadCall.tailId`) — a step late for a door that batches,
+which the step's popover says. It rides the journaled record and is not a ledger column, so a
+cold read of the route joins nothing. The proxy door's `ttftMs` is to the first frame carrying
+output (`OUTPUT_FRAME`, `gateway-shim.ts`), never the first byte: a keepalive or a
+`message_start` arrives before the model has written anything.
 
 ### The event
 

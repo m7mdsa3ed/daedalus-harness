@@ -740,6 +740,11 @@ export interface ModelCall {
   /** The tools this response asked to run, in order — one entry per call.
       Absent where the door did not read the reply. */
   called?: string[];
+  /** The ACP `toolCallId` of each call in `called`, when the door can name
+      them (our runtime's own ids; a proxied reply's tool-use ids). What ties a
+      record to the transcript step it produced exactly; without it the client
+      falls back to where the record landed (`ThreadCall.tailId`). */
+  toolCallIds?: string[];
 }
 
 /**

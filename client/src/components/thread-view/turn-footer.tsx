@@ -10,6 +10,7 @@ import { SourcesStrip } from "@/components/thread-cards"
 import { TokenSummary, TurnTime } from "@/components/token-usage"
 import type { TurnSources } from "@/lib/sources"
 import type { SuggestGroup } from "@/lib/suggestions"
+import type { ThreadCall } from "@/lib/trace"
 import { stagger } from "@/lib/utils"
 
 /* Memoised: one per row, and the transcript re-renders on every streamed token. */
@@ -19,6 +20,7 @@ export const TurnFooter = React.memo(function TurnFooter({
   durationMs,
   toolDurationMs,
   generation,
+  calls,
   suggestions,
   onPick,
 }: {
@@ -27,6 +29,8 @@ export const TurnFooter = React.memo(function TurnFooter({
   durationMs?: number
   toolDurationMs?: number
   generation?: TurnGeneration
+  /** The turn's own model calls, for the popover's per-request list. */
+  calls?: ThreadCall[]
   /** One group per kind the answer carried, already filtered to rows that name
       something real (`SuggestKindDef.keep`). */
   suggestions?: SuggestGroup[]
@@ -50,6 +54,7 @@ export const TurnFooter = React.memo(function TurnFooter({
             durationMs={durationMs}
             toolDurationMs={toolDurationMs}
             generation={generation}
+            calls={calls}
           />
         </div>
       )}

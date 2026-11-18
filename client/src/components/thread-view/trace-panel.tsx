@@ -1,32 +1,32 @@
 /* ── Trace ──
-   What a thread's model calls cost and where the tokens went, from whichever
-   door its runtime has (docs/protocol.md "Model calls"). Three readings of the
-   same records, one switch:
+   What a thread's model calls cost, where the tokens went and where the time
+   went, from whichever door its runtime has (docs/protocol.md "Model calls").
+   Laid out as three bands:
 
-   - **Overview** — the totals, one bar of where the prompt went, and the
-     biggest things in it (system sections, tool definitions, MCP servers),
-     every figure in billed tokens (local counts anchored to the bill).
-   - **Tools** — every tool and MCP server the thread carried or called: how
-     often the model asked for it, what its calls and results weigh in the
-     history, and what its definition costs on every call. MCP tools fold under
-     their server, which wears its own mark.
-   - **Calls** — one row per request with the tools it asked to run; the fold is
-     that call's split, bill and prefix.
+   - **The bill** — the thread's total with its cache ring, a strip of figures,
+     and input beside output in full (the reading kit's face, the one a turn's
+     and a step's popovers wear).
+   - **Every call** — one column per request, its height the prompt and its
+     stack the cache, so the call that lost the cache is the one you can see.
+     A click opens it in the timeline.
+   - **Tabs** — *Timeline*: turns, newest first, each call a row with a
+     waterfall against its turn and the pauses between calls as their own
+     lines; a row's fold is that call's bill, timing, prompt and prefix.
+     *Prompt*: where the prompt went, summed. *Tools*: every tool and MCP
+     server the thread carried or called.
 
    Nothing here branches on the runtime: `source` and `missing` are drawn in
    the door's own words (`lib/trace.ts`), and a part a door could not see is
    hatched, never drawn as a smaller prompt. */
 import * as React from "react"
-import { ChevronRightIcon, CpuIcon, LayersIcon, ListIcon, WrenchIcon } from "lucide-react"
+import { BotIcon, ChevronRightIcon, CpuIcon, WrenchIcon } from "lucide-react"
 
-import { DataTable, TitleCell, type DataTableExpand, type DataTableMobile } from "@/components/ui/data-table"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Empty } from "@/components/empty"
-import { Notice } from "@/components/notice"
+import { Skeleton } from "@/components/ui/skeleton"
 import { McpIcon } from "@/components/entity-icon"
 import { mcpTint } from "@/components/tool-parts"
-import { Count, SectionHead, Segmented, StatStrip } from "@/components/settings/primitives"
-import type { ColumnDef } from "@/lib/table"
+import { Count, SectionHead, Segmented } from "@/components/settings/primitives"
 import type { PrefixItem, PromptParts } from "@daedalus/protocol"
 import { useMcpServers } from "@/lib/queries/catalog"
 import { useThreadCalls } from "@/lib/queries/model-calls"
@@ -43,11 +43,13 @@ import {
   PART_KEYS,
   anchorItems,
   billedOf,
-  cacheSaved,
+  cacheDrops,
+  cachePercent,
   calledCounts,
   costOf,
   gapsOf,
   itemsAt,
+  laneOf,
   mcpOfName,
   mergeCalls,
   missingWords,
@@ -56,6 +58,8 @@ import {
   sumBilled,
   sumParts,
   toolStats,
+  usageOfCalls,
+  type CacheDrop,
   type Gap,
   type GapReason,
   type SilenceWhere,
@@ -66,15 +70,19 @@ import {
 } from "@/lib/trace"
 import { stepLeadOf } from "@/lib/tools"
 import { cn } from "@/lib/utils"
+import {
+  Facts,
+  HATCH,
+  PART_COLOR,
+  PART_LABEL,
+  ReadingHero,
+  ReadingTabs,
+  TokenBreakdown,
+  cacheTone,
+  formatMs,
+  sumSplits,
+} from "@/components/reading-kit"
 
-const PART_LABEL: Record<PartKey, string> = {
-  system: "System prompt",
-  tools: "Tool definitions",
-  mcp: "MCP definitions",
-  user: "Your messages",
-  assistant: "Assistant replies",
-  results: "Tool results",
-}
 const PART_SHORT: Record<PartKey, string> = {
   system: "System",
   tools: "Tools",
@@ -83,21 +91,10 @@ const PART_SHORT: Record<PartKey, string> = {
   assistant: "Assistant",
   results: "Results",
 }
-const PART_COLOR: Record<PartKey, string> = {
-  system: "var(--chart-1)",
-  tools: "var(--chart-2)",
-  mcp: "var(--chart-3)",
-  user: "var(--chart-4)",
-  assistant: "var(--chart-5)",
-  results: "var(--primary)",
-}
-/** A part the door could not see: drawn as a hatch, never as a smaller prompt. */
-const HATCH = { backgroundImage: "repeating-linear-gradient(45deg, transparent 0 3px, var(--border) 3px 5px)" }
-
 const pct = (n: number, total: number) => (total > 0 ? `${Math.round((n / total) * 100)}%` : "0%")
 const approx = (n: number) => `~${formatTokens(n)}`
 
-type View = "overview" | "tools" | "calls"
+type View = "calls" | "prompt" | "tools"
 
 /* ── shared pieces ── */
 
@@ -505,19 +502,6 @@ const gapLabel = (r: GapReason) => (r.kind === "idle" ? r.label : `${GAP_KIND[r.
 /** Only a pause worth a second look is drawn: under 1s is the loop turning over. */
 const GAP_MIN_MS = 1000
 
-/** `5m 2s` for the pause, with the one reason that filled most of it. */
-function GapNote({ gap }: { gap: Gap | undefined }) {
-  if (!gap || gap.ms < GAP_MIN_MS) return null
-  const top = gap.reasons[0]
-  const silence = gap.silences[0]
-  const why = top && top.ms >= gap.unaccounted ? gapLabel(top) : silence ? SILENCE_WORDS[silence.where].label.toLowerCase() + ", no cause recorded" : "no cause recorded"
-  return (
-    <span className="block text-[11px] text-muted-foreground" title={`${formatDuration(gap.ms)} after the previous response: ${why}`}>
-      +{formatDuration(gap.ms)} <span className="hidden @panel-lg:inline">· {why}</span>
-    </span>
-  )
-}
-
 /** Where the silence before this call went, each cause as a share of it. */
 function GapDetail({ gap }: { gap: Gap }) {
   if (gap.ms < GAP_MIN_MS) return null
@@ -552,41 +536,39 @@ function GapDetail({ gap }: { gap: Gap }) {
 }
 
 
-/** The row's fold: its split, its bill, its prefix and the tools its history carried. */
+/** A call's fold: why it waited, its bill in full, its timing, where its prompt
+    went, the tools it asked for and the prefix it carried. */
 function CallDetail({ call, calls, gap }: { call: ThreadCall; calls: ThreadCall[]; gap: Gap | undefined }) {
   const index = calls.indexOf(call)
   const items = itemsAt(calls, index)
   const b = billedOf(call.billed)
+  const rate = stepRate(call)
   const anchored = (list: PrefixItem[], part: number | null) =>
     anchorItems(list, part).map((i) => ({ key: i.name, label: i.name, title: i.name, tokens: i.tokens }))
-  /* Its own container: it is drawn inside a table cell or under a card, and
-     how much room it has is that box's width, not the panel's. */
+  /* Its own container: how much room it has is the fold's width, not the panel's. */
   return (
-    <div className="@container/detail min-w-0 space-y-5 py-2">
+    <div className="@container/detail min-w-0 space-y-4 py-3">
+      <Facts
+        items={[
+          call.timing?.ttftMs !== undefined && { label: "First token", value: formatMs(call.timing.ttftMs) },
+          call.timing?.decodeMs !== undefined && { label: "Writing", value: formatMs(call.timing.decodeMs) },
+          call.ms !== undefined && { label: "Request", value: formatMs(call.ms) },
+          rate !== null && { label: "Speed", value: formatTps(rate) ?? "—" },
+          call.costUsd !== undefined && { label: "Cost", value: `$${call.costUsd.toFixed(4)}` },
+        ]}
+      />
+      <TokenBreakdown usage={call.billed} split={call.output} />
       {gap && <GapDetail gap={gap} />}
       {call.prompt ? (
-        <div className="space-y-3">
-          <PromptBar parts={call.prompt} total={b.prompt} className="h-2.5" />
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Where the prompt went</p>
+          <PromptBar parts={call.prompt} total={b.prompt} className="h-2" />
           <PartsLegend parts={call.prompt} total={b.prompt} />
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">No prompt split for this call — the bill only.</p>
       )}
       {call.missing && call.missing.length > 0 && <p className="text-xs text-muted-foreground">Not visible to this door: {call.missing.join(", ")}.</p>}
-      <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-xs @xs/detail:grid-cols-2 @xl/detail:grid-cols-4">
-        <Fact label="Fresh input" value={formatTokens(b.input)} />
-        <Fact label="Cache read" value={formatTokens(b.cacheRead)} />
-        <Fact label="Cache write" value={formatTokens(b.cacheWrite)} />
-        <Fact label="Output" value={formatTokens(b.output)} />
-        {call.output && (
-          <>
-            <Fact label="~ Text" value={formatTokens(call.output.text)} />
-            <Fact label="Reasoning" value={formatTokens(call.output.reasoning)} />
-            <Fact label="~ Tool calls" value={formatTokens(call.output.toolCalls)} />
-          </>
-        )}
-        {call.costUsd !== undefined && <Fact label="Cost" value={`$${call.costUsd.toFixed(4)}`} />}
-      </dl>
       {call.called && call.called.length > 0 && (
         <div>
           <p className="mb-1.5 text-xs font-medium text-muted-foreground">Asked to run</p>
@@ -636,175 +618,409 @@ function PrefixList({ title, rows, total, color }: { title: string; rows: { key:
   )
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-2">
-      <dt className="truncate text-muted-foreground">{label}</dt>
-      <dd className="tabular-nums">{value}</dd>
-    </div>
-  )
-}
-
 const WHO: Record<ThreadCall["who"], string> = { turn: "turn", subagent: "subagent", compaction: "compaction", title: "title" }
 
-function CallsView({ calls, items, turnIndex, loading }: { calls: ThreadCall[]; items: ThreadItem[]; turnIndex: Map<string, number>; loading: boolean }) {
-  const gaps = React.useMemo(() => gapsOf(calls, items, (tool) => stepLeadOf(tool.meta)), [calls, items])
-  const columns = React.useMemo<ColumnDef<ThreadCall, unknown>[]>(
-    () => [
-      {
-        id: "call",
-        header: "Call",
-        meta: { title: true, className: "min-w-36" },
-        cell: ({ row }) => {
-          const call = row.original
-          const turn = call.turnId ? turnIndex.get(call.turnId) : undefined
-          return (
-            <div className="min-w-0 space-y-1">
-              <TitleCell title={`${turn ? `Turn ${turn} · ` : ""}step ${call.step}`} subtitle={[WHO[call.who], call.model].join(" · ")} />
-              <CalledChips call={call} />
-            </div>
-          )
-        },
-      },
-      {
-        id: "prompt",
-        header: "~ Prompt",
-        meta: { className: "min-w-40" },
-        cell: ({ row }) => {
-          const b = billedOf(row.original.billed)
-          return (
-            <div className="space-y-1">
-              <PromptBar parts={row.original.prompt} total={b.prompt} />
-              <p className="text-xs tabular-nums text-muted-foreground">
-                {formatTokens(b.prompt)}
-                {b.cacheRead ? ` · ${pct(b.cacheRead, b.prompt)} cached` : ""}
-              </p>
-            </div>
-          )
-        },
-      },
-      {
-        id: "output",
-        header: "Output",
-        meta: { align: "end", className: "w-20 whitespace-nowrap" },
-        cell: ({ row }) => (
-          <span className="tabular-nums">
-            {formatTokens(row.original.billed.outputTokens)}
-            {row.original.billed.thoughtTokens ? <span className="text-muted-foreground"> +{formatTokens(row.original.billed.thoughtTokens)}</span> : null}
-          </span>
-        ),
-      },
-      {
-        id: "time",
-        header: "Time",
-        meta: { align: "end", className: "hidden @panel-md:table-cell w-24 whitespace-nowrap" },
-        cell: ({ row }) => (
-          <span className="block text-end">
-            <Ms value={row.original.ms ?? row.original.timing?.decodeMs} />
-            {row.original.timing?.ttftMs !== undefined && (
-              <span className="block text-[11px] text-muted-foreground">
-                first <Ms value={row.original.timing.ttftMs} />
-              </span>
-            )}
-            <StepRate call={row.original} className="block text-[11px]" />
-            <GapNote gap={gaps.get(row.original.callId)} />
-          </span>
-        ),
-      },
-      {
-        id: "finish",
-        header: "Finish",
-        meta: { className: "hidden @panel-lg:table-cell w-24" },
-        cell: ({ row }) => <span className="font-mono text-xs text-muted-foreground">{row.original.finishReason ?? "—"}</span>,
-      },
-    ],
-    [turnIndex, gaps]
-  )
-  const expand = React.useMemo<DataTableExpand<ThreadCall>>(
-    () => ({ render: (call) => <CallDetail call={call} calls={calls} gap={gaps.get(call.callId)} />, cards: true }),
-    [calls, gaps]
-  )
-  /* The narrow card: what the wide row says, stacked — step and model, the
-     tools it ran, then the bar with its figures under it. */
-  const mobile = React.useMemo<DataTableMobile<ThreadCall>>(
-    () => ({
-      renderRow: (call) => {
-        const b = billedOf(call.billed)
-        return (
-          <div className="min-w-0 space-y-1.5 pe-2">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="truncate text-sm font-medium">Step {call.step}</span>
-              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                {call.ms !== undefined ? <Ms value={call.ms} /> : null}
-              </span>
-            </div>
-            <GapNote gap={gaps.get(call.callId)} />
-            <p className="truncate text-xs text-muted-foreground">{[WHO[call.who], call.model].join(" · ")}</p>
-            <CalledChips call={call} />
-            <PromptBar parts={call.prompt} total={b.prompt} />
-            <p className="flex flex-wrap gap-x-3 text-xs tabular-nums text-muted-foreground">
-              <span>{formatTokens(b.prompt)} in</span>
-              {b.cacheRead > 0 && <span>{pct(b.cacheRead, b.prompt)} cached</span>}
-              <span>
-                {formatTokens(b.output)} out{b.reasoning ? ` +${formatTokens(b.reasoning)}` : ""}
-              </span>
-              <StepRate call={call} />
-            </p>
-          </div>
-        )
-      },
-    }),
-    [gaps]
-  )
-  /* Newest first: the call a reader opens this panel about is the last one. */
-  const rows = React.useMemo(() => [...calls].reverse(), [calls])
-  return (
-    <DataTable
-      columns={columns}
-      data={rows}
-      getRowId={(call) => call.callId}
-      isLoading={loading}
-      expand={expand}
-      pageSize={50}
-      viewToggle={false}
-      mobile={mobile}
-      grouping={{
-        by: (call) => call.turnId ?? undefined,
-        renderHeader: (key) => <TurnHead turn={turnIndex.get(key)} calls={calls.filter((c) => c.turnId === key)} />,
-        renderMobileHeader: (key) => <TurnHead turn={turnIndex.get(key)} calls={calls.filter((c) => c.turnId === key)} />,
-      }}
-    />
-  )
-}
+/* ── Every call, as one chart ──
+   A column per request, in order, its height the prompt it sent and its stack
+   what of that came from the cache, was written to it and went uncached. A
+   turn starts after a gap. The question this answers at a glance is the one a
+   table of rows made the reader assemble: *which* call lost the cache — it is
+   the tall column with no green in it. A click opens that call below. */
+const CACHE_PARTS = [
+  { key: "cacheRead", label: "Cache read", color: "var(--chart-2)" },
+  { key: "cacheWrite", label: "Cache write", color: "var(--chart-3)" },
+  { key: "input", label: "Uncached", color: "var(--chart-1)" },
+] as const
 
-function TurnHead({ turn, calls }: { turn: number | undefined; calls: ThreadCall[] }) {
-  const b = sumBilled(calls)
+function CallChart({
+  calls,
+  drops,
+  openId,
+  onOpen,
+}: {
+  calls: ThreadCall[]
+  drops: Map<string, CacheDrop>
+  openId: string | null
+  onOpen: (callId: string) => void
+}) {
+  const bills = calls.map((call) => billedOf(call.billed))
+  const max = Math.max(1, ...bills.map((b) => b.prompt))
   return (
-    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs font-medium text-muted-foreground">
-      {turn ? `Turn ${turn}` : "Turn"}
-      <span className="font-normal tabular-nums">
-        {calls.length} call{calls.length === 1 ? "" : "s"} · {formatTokens(b.prompt)} in · {formatTokens(b.output)} out
-      </span>
+    <div className="space-y-2">
+      <div className="flex h-24 items-end gap-px overflow-x-auto pb-px [scrollbar-width:thin]" role="list" aria-label="Prompt per call">
+        {calls.map((call, i) => {
+          const b = bills[i]
+          const cache = cachePercent(call.billed)
+          const newTurn = i > 0 && call.turnId !== calls[i - 1].turnId
+          const drop = drops.get(call.callId)
+          return (
+            <button
+              key={call.callId}
+              type="button"
+              role="listitem"
+              onClick={() => onOpen(call.callId)}
+              title={`Step ${call.step} · ${formatTokens(b.prompt)} prompt${cache !== null ? ` · ${cache}% cached` : ""} · ${formatTokens(b.output)} out${drop ? ` · cache fell from ${drop.from}% to ${drop.to}%` : ""}`}
+              className={cn(
+                "group/col flex h-full max-w-5 min-w-1.5 flex-1 flex-col justify-end rounded-t-[3px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                newTurn && "ms-1.5"
+              )}
+            >
+              {/* The marker sits on the column it names, above its stack, so a
+                  drop reads as a flag on the call rather than a second chart. */}
+              {drop && <DropMark className="mx-auto mb-0.5" />}
+              <span
+                className={cn(
+                  "flex w-full flex-col-reverse overflow-hidden rounded-t-[3px] transition-opacity",
+                  openId === null || openId === call.callId ? "opacity-100" : "opacity-45 group-hover/col:opacity-100"
+                )}
+                style={{ height: `${Math.max(2, (b.prompt / max) * 100)}%` }}
+              >
+                {CACHE_PARTS.map((part) =>
+                  b[part.key] > 0 ? <span key={part.key} className="w-full shrink-0" style={{ height: `${(b[part.key] / b.prompt) * 100}%`, background: part.color }} /> : null
+                )}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+        {CACHE_PARTS.map((part) => (
+          <span key={part.key} className="inline-flex items-center gap-1">
+            <span aria-hidden className="size-2 rounded-[3px]" style={{ background: part.color }} />
+            {part.label}
+          </span>
+        ))}
+        {drops.size > 0 && (
+          <span className="inline-flex items-center gap-1 text-destructive">
+            <DropMark />
+            {drops.size} cache drop{drops.size === 1 ? "" : "s"}
+          </span>
+        )}
+        <span className="ms-auto tabular-nums">peak {formatTokens(max)}</span>
+      </div>
     </div>
   )
 }
 
-/** The step's output speed, after its first chunk; nothing where no decode was timed. */
-function StepRate({ call, className }: { call: ThreadCall; className?: string }) {
-  const rate = stepRate(call)
-  const text = rate === null ? null : formatTps(rate)
-  return text ? (
-    <span className={cn("tabular-nums text-muted-foreground", className)} title="Output tokens per second after the first chunk">
-      {text}
+/** Where a call's cache fell away from the one before it on its lane. */
+function DropMark({ className }: { className?: string }) {
+  return <span aria-hidden className={cn("block size-0 shrink-0 border-x-[4px] border-t-[5px] border-x-transparent border-t-destructive", className)} />
+}
+
+/* ── The timeline ──
+   Turns, newest first, each a fold of its calls in the order they were made.
+   A call's row carries a waterfall: where in the turn it started, its wait for
+   a first token (pale) and its writing (solid), against the turn's own span —
+   so overlap (a subagent's calls beside the parent's) and the silences between
+   requests are drawn, not inferred from two timestamps. A pause worth a look
+   sits between the rows as its own line, with what filled it. */
+
+/** Why the time before a call went where it did, in a few words. */
+function gapWhy(gap: Gap): string {
+  const top = gap.reasons[0]
+  const silence = gap.silences[0]
+  if (top && top.ms >= gap.unaccounted) return gapLabel(top)
+  return silence ? `${SILENCE_WORDS[silence.where].label.toLowerCase()}, no cause recorded` : "no cause recorded"
+}
+
+function GapRow({ gap }: { gap: Gap | undefined }) {
+  if (!gap || gap.ms < GAP_MIN_MS) return null
+  const why = gapWhy(gap)
+  return (
+    <li className="flex items-center gap-2 px-3 py-1 text-[11px] text-muted-foreground" title={`${formatDuration(gap.ms)} after the previous response: ${why}`}>
+      <span aria-hidden className="w-6 shrink-0 border-t border-dashed" />
+      <span className="shrink-0 tabular-nums">+{formatDuration(gap.ms)}</span>
+      <span className="min-w-0 truncate">{why}</span>
+      <span aria-hidden className="min-w-4 flex-1 border-t border-dashed" />
+    </li>
+  )
+}
+
+function Waterfall({ call, start, span, child, className }: { call: ThreadCall; start: number; span: number; child: boolean; className?: string }) {
+  const at = span > 0 ? ((call.at - start) / span) * 100 : 0
+  const share = (ms: number | undefined) => (ms !== undefined && span > 0 ? (ms / span) * 100 : 0)
+  const ttft = share(call.timing?.ttftMs)
+  const writing = share(call.timing?.decodeMs)
+  const whole = share(call.ms)
+  const timed = ttft + writing > 0
+  return (
+    <span className={cn("relative block h-2 w-full rounded-full bg-muted", className)} aria-hidden>
+      <span className="absolute inset-y-0 flex min-w-0.5" style={{ left: `${Math.min(at, 99.5)}%`, width: `${Math.max(timed ? ttft + writing : whole, 0.5)}%` }}>
+        {timed ? (
+          <>
+            <span className="h-full rounded-s-full bg-chart-1/45" style={{ flexGrow: ttft }} />
+            <span className={cn("h-full rounded-e-full", child ? "bg-chart-4" : "bg-chart-2")} style={{ flexGrow: Math.max(writing, 0.01) }} />
+          </>
+        ) : (
+          <span className="h-full flex-1 rounded-full bg-muted-foreground/40" />
+        )}
+      </span>
     </span>
-  ) : null
+  )
 }
 
-function Ms({ value }: { value: number | undefined }) {
-  return <span className="tabular-nums text-muted-foreground">{value === undefined ? "—" : value >= 10_000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`}</span>
+function CallRow({
+  call,
+  calls,
+  start,
+  span,
+  open,
+  onToggle,
+  gap,
+  drop,
+}: {
+  call: ThreadCall
+  calls: ThreadCall[]
+  start: number
+  span: number
+  open: boolean
+  onToggle: () => void
+  gap: Gap | undefined
+  drop: CacheDrop | undefined
+}) {
+  const ref = React.useRef<HTMLLIElement>(null)
+  /* Opened from the chart above, the row may be far below: bring it in. */
+  React.useEffect(() => {
+    if (open) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" })
+  }, [open])
+  const b = billedOf(call.billed)
+  const cache = cachePercent(call.billed)
+  return (
+    <li ref={ref} className={cn(open && "bg-muted/30")}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="grid w-full grid-cols-[2.25rem_minmax(0,1fr)_3.5rem_2.75rem] items-center gap-x-2 gap-y-1.5 px-3 py-2 text-start text-xs outline-none hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset @panel-sm:grid-cols-[2.25rem_minmax(0,1fr)_minmax(5rem,38%)_3.5rem_2.75rem]"
+      >
+        <span className="flex items-center gap-0.5 tabular-nums text-muted-foreground">
+          <ChevronRightIcon className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
+          {call.step}
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          {call.who !== "turn" && call.who !== "subagent" && (
+            <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] leading-none text-muted-foreground">{WHO[call.who]}</span>
+          )}
+          {call.called?.length ? <CalledChips call={call} max={2} /> : <span className="truncate font-mono text-[11px] text-muted-foreground">{call.finishReason ?? "—"}</span>}
+        </span>
+        <Waterfall call={call} start={start} span={span} child={call.childId !== undefined} className="order-last col-span-4 @panel-sm:order-none @panel-sm:col-span-1" />
+        <span className="text-end tabular-nums" title={`${formatTokens(b.prompt)} prompt · ${formatTokens(b.output)} out`}>
+          {formatTokens(b.prompt)}
+        </span>
+        <span
+          className={cn("flex items-center justify-end gap-1 tabular-nums", cacheTone(cache) ?? "text-muted-foreground")}
+          title={drop ? `Cache fell from ${drop.from}% on the previous call` : undefined}
+        >
+          {drop && <DropMark />}
+          {cache === null ? "—" : `${cache}%`}
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-dashed px-3">
+          <CallDetail call={call} calls={calls} gap={gap} />
+        </div>
+      )}
+    </li>
+  )
 }
 
-/* ── the panel ── */
+function TurnBlock({
+  label,
+  turnCalls,
+  calls,
+  gaps,
+  drops,
+  laneNames,
+  openId,
+  onOpen,
+  defaultOpen,
+}: {
+  label: string
+  turnCalls: ThreadCall[]
+  calls: ThreadCall[]
+  gaps: Map<string, Gap>
+  drops: Map<string, CacheDrop>
+  laneNames: Map<string, string>
+  openId: string | null
+  onOpen: (callId: string | null) => void
+  defaultOpen: boolean
+}) {
+  const holdsOpen = openId !== null && turnCalls.some((call) => call.callId === openId)
+  const [open, setOpen] = React.useState(defaultOpen)
+  React.useEffect(() => {
+    if (holdsOpen) setOpen(true)
+  }, [holdsOpen])
+  const start = turnCalls[0].at
+  const end = Math.max(...turnCalls.map((call) => call.at + (call.ms ?? 0)))
+  const span = end - start
+  const b = sumBilled(turnCalls)
+  const cache = cachePercent(usageOfCalls(turnCalls)!)
+  const lanes = lanesOf(turnCalls)
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="overflow-hidden rounded-xl bg-card text-card-foreground ring-1 ring-foreground/10">
+      <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2.5 text-start outline-none hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset">
+        <ChevronRightIcon className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{label}</span>
+          <span className="block truncate text-[11px] tabular-nums text-muted-foreground">
+            {turnCalls.length} call{turnCalls.length === 1 ? "" : "s"}
+            {span > 0 && ` · ${formatDuration(span)}`} · {formatTokens(b.output)} out
+          </span>
+        </span>
+        <span className="shrink-0 text-end">
+          <span className="block text-xs font-medium tabular-nums">{formatTokens(b.prompt + b.output)}</span>
+          {cache !== null && <span className={cn("block text-[11px] tabular-nums", cacheTone(cache))}>{cache}% cached</span>}
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border-t">
+        <div className="hidden grid-cols-[2.25rem_minmax(0,1fr)_minmax(5rem,38%)_3.5rem_2.75rem] gap-x-2 px-3 pt-2 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase @panel-sm:grid">
+          <span>Step</span>
+          <span>Asked for</span>
+          <span>Waterfall</span>
+          <span className="text-end">Prompt</span>
+          <span className="text-end">Cache</span>
+        </div>
+        {/* A lane per conversation: the thread's own calls, then each
+            subagent's under its name. Every waterfall is still drawn against
+            the turn's whole span, so a child running beside its parent shows
+            as two bars over the same stretch — and a gap row is only ever
+            between two calls of one lane, which is what `gapsOf` measured. */}
+        <ul className="pb-1">
+          {lanes.map(([lane, laneCalls], index) => (
+            <li key={lane || "own"} className={cn(lanes.length > 1 && index > 0 && "mt-1 border-t border-dashed pt-1")}>
+              {(lanes.length > 1 || lane !== "") && (
+                <p className="flex items-center gap-1.5 px-3 pt-1.5 pb-0.5 text-[11px] font-medium text-muted-foreground">
+                  {lane ? <BotIcon className="size-3 shrink-0 text-chart-4" /> : <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-chart-2" />}
+                  <span className="min-w-0 truncate">{lane ? (laneNames.get(lane) ?? `Subagent ${lanes[0][0] === "" ? index : index + 1}`) : "This thread"}</span>
+                  <span className="shrink-0 font-normal tabular-nums">
+                    · {laneCalls.length} call{laneCalls.length === 1 ? "" : "s"}
+                  </span>
+                </p>
+              )}
+              <ul className={cn(lane && "ms-3 border-s border-chart-4/40")}>
+                {laneCalls.map((call) => (
+                  <React.Fragment key={call.callId}>
+                    <GapRow gap={gaps.get(call.callId)} />
+                    <CallRow
+                      call={call}
+                      calls={calls}
+                      start={start}
+                      span={span}
+                      open={openId === call.callId}
+                      onToggle={() => onOpen(openId === call.callId ? null : call.callId)}
+                      gap={gaps.get(call.callId)}
+                      drop={drops.get(call.callId)}
+                    />
+                  </React.Fragment>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+/** A turn's calls by lane: the thread's own first, then each subagent in the
+    order it first called the model. */
+function lanesOf(turnCalls: ThreadCall[]): [string, ThreadCall[]][] {
+  const lanes = new Map<string, ThreadCall[]>([["", []]])
+  for (const call of turnCalls) {
+    const lane = laneOf(call)
+    lanes.set(lane, [...(lanes.get(lane) ?? []), call])
+  }
+  return [...lanes].filter(([, list]) => list.length > 0)
+}
+
+/** Turns drawn before "show older": a long thread is hundreds of calls. */
+const TURNS_SHOWN = 8
+
+function Timeline({
+  calls,
+  items,
+  turnIndex,
+  drops,
+  openId,
+  onOpen,
+}: {
+  calls: ThreadCall[]
+  items: ThreadItem[]
+  turnIndex: Map<string, number>
+  drops: Map<string, CacheDrop>
+  openId: string | null
+  onOpen: (callId: string | null) => void
+}) {
+  const gaps = React.useMemo(() => gapsOf(calls, items, (tool) => stepLeadOf(tool.meta)), [calls, items])
+  /* A lane is named by the child the runtime announced, where it did; a
+     runtime whose children are only tool calls leaves it numbered. */
+  const laneNames = React.useMemo(() => {
+    const names = new Map<string, string>()
+    for (const item of items) if (item.kind === "subagent") names.set(item.sessionId, item.name)
+    return names
+  }, [items])
+  /* Newest turn first: the call a reader opens this panel about is the last one. */
+  const turns = React.useMemo(() => {
+    const byTurn = new Map<string, ThreadCall[]>()
+    for (const call of calls) {
+      const key = call.turnId ?? ""
+      byTurn.set(key, [...(byTurn.get(key) ?? []), call])
+    }
+    return [...byTurn].reverse()
+  }, [calls])
+  const [limit, setLimit] = React.useState(TURNS_SHOWN)
+  const openAt = openId === null ? -1 : turns.findIndex(([, list]) => list.some((call) => call.callId === openId))
+  React.useEffect(() => {
+    if (openAt >= limit) setLimit(openAt + 1)
+  }, [openAt, limit])
+  return (
+    <div className="space-y-2">
+      {turns.slice(0, limit).map(([key, list], i) => (
+        <TurnBlock
+          key={key || "outside"}
+          label={key ? `Turn ${turnIndex.get(key) ?? "?"}` : "Outside a turn"}
+          turnCalls={list}
+          calls={calls}
+          gaps={gaps}
+          drops={drops}
+          laneNames={laneNames}
+          openId={openId}
+          onOpen={onOpen}
+          defaultOpen={i < 2}
+        />
+      ))}
+      {turns.length > limit && (
+        <button
+          type="button"
+          onClick={() => setLimit((n) => n + TURNS_SHOWN)}
+          className="w-full rounded-xl py-2 text-xs text-muted-foreground border border-dashed hover:bg-muted/40 hover:text-foreground"
+        >
+          Show {Math.min(TURNS_SHOWN, turns.length - limit)} older turn{turns.length - limit === 1 ? "" : "s"} of {turns.length - limit}
+        </button>
+      )}
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1">
+          <span aria-hidden className="h-1.5 w-3 rounded-full bg-chart-1/45" /> waiting for first token
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span aria-hidden className="h-1.5 w-3 rounded-full bg-chart-2" /> writing
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span aria-hidden className="h-1.5 w-3 rounded-full bg-chart-4" /> a subagent writing
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span aria-hidden className="h-1.5 w-3 rounded-full bg-muted-foreground/40" /> untimed
+        </span>
+      </p>
+    </div>
+  )
+}
+
+/* ── the panel ──
+   Three bands, top to bottom: the thread's bill (the same face a turn's and a
+   step's popover wear, so the three never read as three products), every call
+   as one chart of its prompt and cache, and the detail behind tabs — the
+   timeline of turns and calls, where the prompt went, and the tools. */
 
 export default function TracePanel({ thread, meta }: { thread: ThreadState; meta: SessionMeta }) {
   /* The route answers the turns the window withheld and a retired thread's
@@ -825,66 +1041,90 @@ export default function TracePanel({ thread, meta }: { thread: ThreadState; meta
     for (const call of calls) if (call.turnId && !index.has(call.turnId)) index.set(call.turnId, index.size + 1)
     return index
   }, [thread.turns, calls])
-  const [view, setView] = React.useState<View>("overview")
+  const [view, setView] = React.useState<View>("calls")
+  const [openId, setOpenId] = React.useState<string | null>(null)
 
   const billed = sumBilled(calls)
-  const saved = cacheSaved(billed)
+  const usage = React.useMemo(() => usageOfCalls(calls), [calls])
+  const split = React.useMemo(() => sumSplits(calls.map((call) => call.output)), [calls])
+  const drops = React.useMemo(() => cacheDrops(calls), [calls])
   const cost = costOf(calls)
   const missing = missingWords(calls)
   const door = thread.callsVia ?? calls.at(-1)?.source ?? null
-  const loading = stored.isPending && calls.length === 0
   const toolCount = React.useMemo(() => toolStats(calls).length, [calls])
+  const turnCount = new Set(calls.map((call) => call.turnId).filter(Boolean)).size
+  const modelMs = calls.reduce((n, call) => n + (call.ms ?? 0), 0)
+  const openCall = (callId: string) => {
+    setView("calls")
+    setOpenId(callId)
+  }
 
-  return (
-    <div className="@container min-h-0 flex-1 overflow-y-auto p-3">
-      {storedError && <ErrorNote error={storedError} onRetry={() => void stored.refetch()} className="mb-4" />}
-      <StatStrip
-        stats={[
-          { label: "Prompt", value: formatTokens(billed.prompt), hint: `${formatTokens(billed.input)} fresh`, loading },
-          {
-            label: "Cache hit",
-            value: saved === null ? "—" : `${Math.round(saved * 100)}%`,
-            hint: `${formatTokens(billed.cacheRead)} read`,
-            tone: saved !== null && saved >= 0.5 ? "ok" : "default",
-            loading,
-          },
-          { label: "Output", value: formatTokens(billed.output), hint: billed.reasoning > 0 ? `${formatTokens(billed.reasoning)} reasoning` : undefined, loading },
-          { label: "Calls", value: calls.length, hint: cost !== null ? `$${cost.toFixed(4)}` : undefined, loading },
-        ]}
-      />
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <Segmented<View>
-          label="Trace view"
-          value={view}
-          onChange={setView}
-          options={[
-            { value: "overview", label: "Overview", icon: LayersIcon },
-            { value: "tools", label: "Tools", icon: WrenchIcon, count: toolCount || undefined },
-            { value: "calls", label: "Calls", icon: ListIcon, count: calls.length || undefined },
-          ]}
-        />
-        {door && (
-          <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" title={DOOR_WORDS[door]}>
-            <CpuIcon className="size-3.5 shrink-0" />
-            <span className="truncate">via {door}</span>
-          </span>
+  if (calls.length === 0)
+    return (
+      <div className="@container min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
+        {storedError && <ErrorNote error={storedError} onRetry={() => void stored.refetch()} />}
+        {stored.isPending ? (
+          <div className="space-y-3" aria-busy>
+            <Skeleton className="h-40 rounded-2xl" />
+            <Skeleton className="h-32 rounded-2xl" />
+          </div>
+        ) : (
+          <Empty>No model calls recorded in this thread yet.</Empty>
         )}
       </div>
-      {door && (missing.length > 0 || door === "usage") && (
-        <Notice tone="neutral" className="mb-4">
-          {DOOR_WORDS[door]}
-          {missing.length > 0 && ` Not visible: ${missing.join(", ")}.`}
-        </Notice>
-      )}
-      {calls.length === 0 && !stored.isPending ? (
-        <Empty>No model calls recorded in this thread yet.</Empty>
-      ) : view === "overview" ? (
-        <Overview calls={calls} onTools={() => setView("tools")} />
-      ) : view === "tools" ? (
-        <ToolsView calls={calls} />
-      ) : (
-        <CallsView calls={calls} items={thread.items} turnIndex={turnIndex} loading={loading} />
-      )}
+    )
+
+  return (
+    <div className="@container min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+      {storedError && <ErrorNote error={storedError} onRetry={() => void stored.refetch()} />}
+      <section className="space-y-3 rounded-2xl bg-card p-4 text-card-foreground ring-1 ring-foreground/10">
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="font-medium">This thread</span>
+          {door && (
+            <span className="flex min-w-0 items-center gap-1" title={DOOR_WORDS[door]}>
+              <CpuIcon className="size-3.5 shrink-0" />
+              <span className="truncate">via {door}</span>
+            </span>
+          )}
+        </div>
+        <ReadingHero
+          value={formatTokens(billed.prompt + billed.output)}
+          unit="tokens billed"
+          caption={`${calls.length} call${calls.length === 1 ? "" : "s"}${turnCount ? ` · ${turnCount} turn${turnCount === 1 ? "" : "s"}` : ""}`}
+          cache={usage ? cachePercent(usage) : null}
+        />
+        <Facts
+          items={[
+            { label: "Prompt", value: formatTokens(billed.prompt) },
+            { label: "Output", value: formatTokens(billed.output) },
+            modelMs > 0 && { label: "Model time", value: formatDuration(modelMs) },
+            cost !== null && { label: "Cost", value: `$${cost.toFixed(cost < 1 ? 4 : 2)}` },
+          ]}
+        />
+        {usage && <TokenBreakdown usage={usage} split={split} />}
+        {door && (missing.length > 0 || door === "usage") && (
+          <p className="border-t pt-2 text-[11px] leading-4 text-muted-foreground">
+            {DOOR_WORDS[door]}
+            {missing.length > 0 && ` Not visible: ${missing.join(", ")}.`}
+          </p>
+        )}
+      </section>
+      <section className="space-y-2 rounded-2xl bg-card p-4 text-card-foreground ring-1 ring-foreground/10">
+        <div className="flex items-baseline justify-between gap-2 text-xs">
+          <span className="font-medium text-muted-foreground">Every call</span>
+          <span className="text-muted-foreground">prompt sent, by cache · click one to open it</span>
+        </div>
+        <CallChart calls={calls} drops={drops} openId={openId} onOpen={openCall} />
+      </section>
+      <ReadingTabs
+        value={view}
+        onChange={(id) => setView(id as View)}
+        tabs={[
+          { id: "calls", label: "Timeline", meta: `${calls.length} calls`, content: <Timeline calls={calls} items={thread.items} turnIndex={turnIndex} drops={drops} openId={openId} onOpen={setOpenId} /> },
+          { id: "prompt", label: "Prompt", meta: "~ anchored to the bill", content: <Overview calls={calls} onTools={() => setView("tools")} /> },
+          toolCount > 0 && { id: "tools", label: "Tools", meta: `${toolCount}`, content: <ToolsView calls={calls} /> },
+        ]}
+      />
     </div>
   )
 }

@@ -7,9 +7,14 @@
  * matter and are paired by request id: `api_request` (the provider's exact
  * counters, `cost_usd`, `duration_ms`, `model`) and `api_request_body` (the
  * file it wrote the request to — read from the thread's own directory and
- * nowhere else, shaped by the Anthropic adapter, deleted). The pair is one
- * draft to `recordCall`. A request whose body never comes is a record with no
- * `prompt`; a body whose request never comes is counted billed-less.
+ * nowhere else, shaped by the Anthropic adapter, deleted). A third event,
+ * `api_response_body`, is the reply as an assistant message: its `tool_use`
+ * blocks are what the request asked to run, and their ids are the ACP
+ * `toolCallId`s of the rows it produced — `called` and `toolCallIds`, so the
+ * record is drawn on its own step rather than wherever it landed. The halves
+ * are one draft to `recordCall`. A request whose body never comes is a record
+ * with no `prompt`; a body whose request never comes is counted billed-less;
+ * a reply that never comes is a record with no ids.
  *
  * Trust: the key in the path is the credential (`derive("otlp")`, as `/gw/`);
  * a thread not attached here is a 404; a body path is resolved against the
@@ -43,12 +48,15 @@ export function configureOtlp(opts: { port: number }): void {
 
 /* ── attached threads and what each is waiting on ── */
 
-/** One request's two halves, until both are in or the wait runs out. */
+/** One request's halves, until all are in or the wait runs out. */
 interface Waiting {
   draft?: ModelCallDraft;
   shape?: RequestShape;
+  /** The reply's tool calls, in order — present once the reply was read. */
+  calls?: { name: string; id: string }[];
   timer: NodeJS.Timeout;
 }
+type Half = Partial<Pick<Waiting, "draft" | "shape" | "calls">>;
 
 interface Attachment {
   thread: CallThread;
@@ -119,21 +127,35 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /* ── pairing ── */
 
-/** The record goes out once both halves are in, or when the wait runs out
-    with whichever half came. */
-function settle(me: Attachment, requestId: string, half: Partial<Pick<Waiting, "draft" | "shape">>): void {
+/** The record goes out once the request, its body and its reply are in, or
+    when the wait runs out with whichever came. Bodies are written in a pair
+    (`OTEL_LOG_RAW_API_BODIES`), so a request whose body arrived has a reply on
+    its way too; without either, the request is all there will ever be. */
+function settle(me: Attachment, requestId: string, half: Half): void {
   const found = me.waiting.get(requestId);
-  if (found) {
-    clearTimeout(found.timer);
-    me.waiting.delete(requestId);
-    void file(me, { ...found, ...half });
-    return;
-  }
-  const w: Waiting = { ...half, timer: setTimeout(() => { me.waiting.delete(requestId); void file(me, w); }, PAIR_WAIT_MS) };
+  const w: Waiting = found ? { ...found, ...half } : { ...half, timer: setTimeout(() => flush(me, requestId), PAIR_WAIT_MS) };
+  if (found) w.timer = found.timer;
   me.waiting.set(requestId, w);
+  if (w.draft && w.shape && w.calls) flush(me, requestId);
 }
 
-function file(me: Attachment, w: Pick<Waiting, "draft" | "shape">): Promise<void> {
+function flush(me: Attachment, requestId: string): void {
+  const w = me.waiting.get(requestId);
+  if (!w) return;
+  clearTimeout(w.timer);
+  me.waiting.delete(requestId);
+  void file(me, w);
+}
+
+/** What a reply asked to run: the `tool_use` blocks of its content. */
+function toolUsesOf(reply: Json | null): { name: string; id: string }[] {
+  return list(reply?.content).flatMap((block) => {
+    const b = record(block);
+    return b?.type === "tool_use" && str(b.name) && str(b.id) ? [{ name: str(b.name), id: str(b.id) }] : [];
+  });
+}
+
+function file(me: Attachment, w: Half): Promise<void> {
   const draft: ModelCallDraft = w.draft ?? {
     callId: `otlp-${Date.now()}`,
     at: Date.now(),
@@ -142,6 +164,10 @@ function file(me: Attachment, w: Pick<Waiting, "draft" | "shape">): Promise<void
     source: "otlp",
     billed: { totalTokens: 0, inputTokens: 0, outputTokens: 0 },
   };
+  if (w.draft && w.calls?.length) {
+    draft.called = w.calls.map((call) => call.name);
+    draft.toolCallIds = w.calls.map((call) => call.id);
+  }
   if (w.shape) {
     draft.shape = w.shape;
     const prefix = [...w.shape.system, ...w.shape.tools].map((p) => p.name).join("\n");
@@ -189,7 +215,7 @@ async function requestIdOf(threadId: string, a: Record<string, string | number>,
     for (let i = lines.length - 1; i >= 0; i--) {
       if (!lines[i]!.includes(name)) continue;
       const row = record(JSON.parse(lines[i]!));
-      if (row?.request_file === name && typeof row.request_id === "string") return row.request_id;
+      if ((row?.request_file === name || row?.response_file === name) && typeof row.request_id === "string") return row.request_id;
     }
   } catch {
     /* not written yet, or not JSON */
@@ -231,8 +257,13 @@ async function claudeLog(me: Attachment, raw: Json): Promise<void> {
     if (!body) return;
     settle(me, await requestIdOf(me.thread.id, a, path), { shape: fromAnthropicMessages(body) });
   } else if (event === "api_response_body") {
+    /* Read for its tool calls only, then gone — it holds what the model wrote. */
     const path = str(a.body_ref) ? ownPath(me.thread.id, str(a.body_ref)) : null;
-    if (path) await unlink(path).catch(() => {}); // nothing reads a response
+    const reply = path ? await readBody(path) : null;
+    if (path) await unlink(path).catch(() => {});
+    if (!attached.has(me.thread.id)) return;
+    const requestId = str(a.request_id) || (path ? await requestIdOf(me.thread.id, a, path) : "");
+    if (requestId) settle(me, requestId, { calls: toolUsesOf(reply) });
   }
 }
 

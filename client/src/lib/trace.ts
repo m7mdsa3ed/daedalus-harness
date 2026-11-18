@@ -12,7 +12,13 @@ import type { ThreadItem } from "./store"
 /** A record as the thread holds it: the turn it was filed under, which the
     server knows and the wire record does not carry. Null for a call outside any
     turn (a title call after the turn ended, a record on an old journal). */
-export type ThreadCall = ModelCall & { turnId: string | null }
+export type ThreadCall = ModelCall & {
+  turnId: string | null
+  /** The thread's own row that was last when the record landed — where a
+      record with no `toolCallIds` is drawn (`callsByStep`). Absent on a
+      subagent's record and on one read cold from the route. */
+  tailId?: string
+}
 
 /** The turn a record arriving now belongs to: the newest user bubble's. The
     harness's `turn_started` is the only thing that mints a `turnId`, and it
@@ -27,9 +33,90 @@ export function openTurnId(items: readonly ThreadItem[]): string | null {
 
 /** File one record; the same `callId` twice is the same news (a fan-out and a
     cold read of the route both say it) and must not row twice. */
-export function fileCall(calls: readonly ThreadCall[], call: ModelCall, turnId: string | null, childId?: string): ThreadCall[] {
+export function fileCall(
+  calls: readonly ThreadCall[],
+  call: ModelCall,
+  turnId: string | null,
+  childId?: string,
+  tailId?: string
+): ThreadCall[] {
   if (calls.some((c) => c.callId === call.callId)) return calls as ThreadCall[]
-  return [...calls, { ...call, ...(childId && !call.childId ? { childId } : {}), turnId }]
+  return [...calls, { ...call, ...(childId && !call.childId ? { childId } : {}), ...(tailId ? { tailId } : {}), turnId }]
+}
+
+/** The thread's own last row — the one a reading arriving now is filed against,
+    for a usage figure and a model call alike. */
+export function ownTailId(items: readonly ThreadItem[]): string | undefined {
+  for (let i = items.length - 1; i >= 0; i--) if (!items[i].parentId) return items[i].id
+  return undefined
+}
+
+/**
+ * Which transcript row each of the thread's own model calls is drawn on — the
+ * row the request ended on, the same row its `usage_update` lands on.
+ *
+ * Exact where the record names its tool calls (`toolCallIds`: our runtime, a
+ * proxied reply): the last of them in the transcript. Otherwise where it landed
+ * (`tailId`), which is right for a door that reports as the response ends and
+ * can be a step late for one that batches (OTLP exports each second) — the
+ * popover says which (`exact`). A subagent's, a title's and a compaction's
+ * calls are not a step of this transcript and are never drawn on one.
+ */
+export function callsByStep(
+  items: readonly ThreadItem[],
+  calls: readonly ThreadCall[]
+): Record<string, { calls: ThreadCall[]; exact: boolean }> {
+  const out: Record<string, { calls: ThreadCall[]; exact: boolean }> = {}
+  if (calls.length === 0) return out
+  const index = new Map<string, number>()
+  items.forEach((item, i) => {
+    if (!item.parentId) index.set(item.id, i)
+  })
+  for (const call of calls) {
+    if (call.who !== "turn" || call.childId) continue
+    let row: string | undefined
+    let at = -1
+    for (const id of call.toolCallIds ?? []) {
+      const i = index.get(id)
+      if (i !== undefined && i > at) [row, at] = [id, i]
+    }
+    const exact = row !== undefined
+    if (!exact && call.tailId && index.has(call.tailId)) row = call.tailId
+    if (!row) continue
+    const entry = (out[row] ??= { calls: [], exact: true })
+    entry.calls.push(call)
+    entry.exact &&= exact
+  }
+  return out
+}
+
+/** The share of a prompt read from cache, a whole percent. Null where nothing
+    was sent, or where the door reported no cache figure at all — an absent
+    field is "not said", and drawing it as 0% would claim a miss nobody saw. */
+export function cachePercent(usage: acp.Usage): number | null {
+  if (usage.cachedReadTokens == null && usage.cachedWriteTokens == null) return null
+  const b = billedOf(usage)
+  return b.prompt > 0 ? Math.round((b.cacheRead / b.prompt) * 100) : null
+}
+
+/** Several calls' bills as one `acp.Usage` — a step whose request was retried,
+    a turn's calls. Cache fields stay null only where no call reported one. */
+export function usageOfCalls(calls: readonly ModelCall[]): acp.Usage | null {
+  let out: acp.Usage | null = null
+  const add = (a: number | null | undefined, b: number | null | undefined) => (a == null && b == null ? null : (a ?? 0) + (b ?? 0))
+  for (const { billed } of calls) {
+    out = out
+      ? {
+          totalTokens: out.totalTokens + billed.totalTokens,
+          inputTokens: out.inputTokens + billed.inputTokens,
+          outputTokens: out.outputTokens + billed.outputTokens,
+          thoughtTokens: add(out.thoughtTokens, billed.thoughtTokens),
+          cachedReadTokens: add(out.cachedReadTokens, billed.cachedReadTokens),
+          cachedWriteTokens: add(out.cachedWriteTokens, billed.cachedWriteTokens),
+        }
+      : { ...billed }
+  }
+  return out
 }
 
 /** Records from the route and the ones the socket filed, as one list in `at`
@@ -344,7 +431,37 @@ function claim(window: Span, claimed: Span[], span: Span): number {
   return free
 }
 
-const laneOf = (call: ModelCall) => call.childId ?? ""
+/** Which sequence of requests a call belongs to: the thread's own (`""`) or
+    one subagent's — each has its own conversation, so its own cache and gaps. */
+export const laneOf = (call: ModelCall) => call.childId ?? ""
+
+/** A call whose cache share fell sharply from the call before it on its lane. */
+export interface CacheDrop {
+  from: number
+  to: number
+}
+
+/**
+ * The calls where the cache fell away: at least `minDrop` points below the
+ * previous call *on the same lane* (a subagent's first call is not the
+ * parent's cache missing), on a prompt big enough for it to cost something.
+ * A title or compaction request rides no conversation's prefix and is skipped,
+ * and a call with no cache figure neither drops nor resets the comparison.
+ */
+export function cacheDrops(calls: readonly ModelCall[], minDrop = 30, minPrompt = 1_000): Map<string, CacheDrop> {
+  const drops = new Map<string, CacheDrop>()
+  const last = new Map<string, number>()
+  for (const call of [...calls].sort((a, b) => a.at - b.at)) {
+    if (call.who === "title" || call.who === "compaction") continue
+    const cache = cachePercent(call.billed)
+    if (cache === null) continue
+    const lane = laneOf(call)
+    const prev = last.get(lane)
+    last.set(lane, cache)
+    if (prev !== undefined && prev - cache >= minDrop && billedOf(call.billed).prompt >= minPrompt) drops.set(call.callId, { from: prev, to: cache })
+  }
+  return drops
+}
 
 /**
  * For every call that follows another on its lane (the thread's own, or one

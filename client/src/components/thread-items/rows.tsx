@@ -135,7 +135,7 @@ import {
 } from "@/lib/tools"
 import { buildRows, rowTailId, streamingRowIds } from "@/lib/transcript-rows"
 import type { Row, RunItem, SubagentGroup, ToolGroup, WorkFold } from "@/lib/transcript-rows"
-import { StepTokens, TokenSummary, useStepTokens } from "@/components/token-usage"
+import { StepTokens, TokenSummary, useStepCallEntry, useStepTokens } from "@/components/token-usage"
 import { Logo } from "@/components/ui/logo"
 import { cn, stagger } from "@/lib/utils"
 import { toolVariantOf, useLayoutOptionsContext } from "@/lib/layout-options"
@@ -1210,6 +1210,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
      place a hook can live. Only a thought uses it — a tool row draws its own
      inside ToolStep, and the other kinds are not steps. */
   const stepTokens = useStepTokens(item.id)
+  const stepCalls = useStepCallEntry(item.id)
   /* From when thinking began (`startedAt`, the step before it) to its last
      chunk — or to its only one: a thought sent whole has no `endedAt`, and its
      arrival is where it ended. */
@@ -1390,6 +1391,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
          is simply lost. Never while it streams: the figure lands with the
          request that is still being written. */
       const tokens = view.showTokens && !streaming ? stepTokens : undefined
+      const calls = view.showTokens && !streaming ? stepCalls : undefined
       /* The clock is the block's own title, not a trailing reading: the whole
          point of the thought is the duration, and a label parked at the row's
          end left the reasoning squeezed into the column beside it. */
@@ -1423,7 +1425,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
             autoOpen={view.showThinking && streaming}
             openSetting={view.showThinking}
             persistKey={item.id}
-            metric={[tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null]}
+            metric={[tokens || calls ? <StepTokens usage={tokens} calls={calls} itemId={item.id} /> : null]}
             detail={
               <div className="thought-surface">
                 <ThoughtLabel />
@@ -1438,7 +1440,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           dir={dominantTextDir(reasoning)}
           plain
           status={streaming ? "in_progress" : null}
-          metric={[tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null]}
+          metric={[tokens || calls ? <StepTokens usage={tokens} calls={calls} itemId={item.id} /> : null]}
           mono={false}
           /* The block the step shape replaced, kept for a reader who reads
              thinking as prose: its own clock over the reasoning, three lines of
@@ -1794,7 +1796,9 @@ const ToolStep = React.memo(function ToolStep({
      carries one, so most rows in a run have none — that is the reading being
      honest about which step it can be pinned to, not a gap. */
   const stepTokens = useStepTokens(item.id)
+  const stepCalls = useStepCallEntry(item.id)
   const tokens = view.showTokens ? stepTokens : undefined
+  const calls = view.showTokens ? stepCalls : undefined
   /* What the agent said it was doing beats what it typed: a Bash call carries
      both, and the command truncates to nothing useful in a row this wide.
      A subagent's step drops the child's name its runtime may have prefixed —
@@ -1854,7 +1858,7 @@ const ToolStep = React.memo(function ToolStep({
          teaser for it. `failed` still reaches the row, as the label. */
       metric={[
         isHarnessTool && item.status !== "failed" ? harnessSummary(item) : null,
-        tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null,
+        tokens || calls ? <StepTokens usage={tokens} calls={calls} itemId={item.id} /> : null,
         showTimestamp ? <Timestamp at={item.at} /> : null,
       ]}
       startedAt={item.startedAt}

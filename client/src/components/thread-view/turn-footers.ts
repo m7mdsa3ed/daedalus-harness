@@ -18,6 +18,7 @@ import { extractEdits, type EditInputDiff } from "@/lib/tools/edits"
 import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
 import { turnSuggestions, type SuggestCtx, type SuggestGroup } from "@/lib/suggestions"
 import type { ThreadItem } from "@/lib/store"
+import { callsByStep, type ThreadCall } from "@/lib/trace"
 import type { TurnChanges } from "@/lib/workspace/git-api"
 
 /**
@@ -363,10 +364,10 @@ function cachedTurnSuggestions(
   return entry
 }
 
-/** Every row's turn, keyed by the row's own id. A step's popover reads the
-    billed split of the turn it sits in here (`StepTokens`), since a runtime
-    reports only a total per model request and the prompt/output/cache split
-    once, at turn end. The walk is the same one `withTurnUsage` does for the
+/** Every row's turn, keyed by the row's own id. A step's popover falls back to
+    the billed split of the turn it sits in (`StepTokens`) only where neither
+    the step's own bill (`_meta.daedalus.step`) nor a model call record joined
+    to the row (`useStepCalls`) says it. The walk is the same one `withTurnUsage` does for the
     footer — the nearest user row back, which is the only thing tying a
     transcript position to a reading that arrives after it — but kept per row. */
 export function withStepTurnUsage(
@@ -422,4 +423,61 @@ export function useStepTurnUsage(
     if (!same) held.current = next
     return held.current
   }, [items, turnUsage])
+}
+
+/** The model calls drawn on each row (`callsByStep`), held at one identity per
+    entry and for the whole map until one moves — the same bargain as
+    `useStepTurnUsage`, for the same reason: it is half of what every
+    transcript row subscribes to. */
+export function useStepCalls(
+  items: ThreadItem[],
+  calls: ThreadCall[]
+): Record<string, { calls: ThreadCall[]; exact: boolean }> {
+  const held = React.useRef<Record<string, { calls: ThreadCall[]; exact: boolean }>>({})
+  return React.useMemo(() => {
+    const next = callsByStep(items, calls)
+    const previous = held.current
+    let same = Object.keys(next).length === Object.keys(previous).length
+    for (const [key, entry] of Object.entries(next)) {
+      const old = previous[key]
+      if (old && old.exact === entry.exact && old.calls.length === entry.calls.length && old.calls.every((c, i) => c === entry.calls[i]))
+        next[key] = old
+      else same = false
+    }
+    if (!same) held.current = next
+    return held.current
+  }, [items, calls])
+}
+
+/** Each finished turn's own model calls — its requests, in order — keyed by
+    the row it ends on, for the turn popover's per-request list. A subagent's,
+    a title's and a compaction's calls are left out: they are not this
+    transcript's steps. Held at one identity per turn until one of its calls
+    changes, so a record landing re-renders only its own turn's footer. */
+export function useTurnCalls(
+  items: ThreadItem[],
+  turnActive: boolean,
+  calls: ThreadCall[],
+  showConfigNotices = true
+): Map<string, ThreadCall[]> {
+  const held = React.useRef<Map<string, ThreadCall[]>>(new Map())
+  return React.useMemo(() => {
+    const byTurn = new Map<string, ThreadCall[]>()
+    for (const call of calls) {
+      if (call.who !== "turn" || call.childId || !call.turnId) continue
+      const list = byTurn.get(call.turnId)
+      if (list) list.push(call)
+      else byTurn.set(call.turnId, [call])
+    }
+    const next = new Map<string, ThreadCall[]>()
+    for (const { turn, tailId } of finishedTurns(items, turnActive, showConfigNotices)) {
+      const head = turn[0]
+      const own = head.kind === "user" && head.turnId ? byTurn.get(head.turnId) : undefined
+      if (!own) continue
+      const old = held.current.get(tailId)
+      next.set(tailId, old && old.length === own.length && old.every((c, i) => c === own[i]) ? old : own)
+    }
+    held.current = next
+    return next
+  }, [items, turnActive, calls, showConfigNotices])
 }

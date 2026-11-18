@@ -2,7 +2,7 @@
 // the path is the credential, a thread not attached is a 404, a body is read
 // from the thread's own directory only and deleted once counted, an
 // `api_request` and its `api_request_body` become one record whose parts sum
-// to the billed prompt, each half alone is still a record after the wait,
+// to the billed prompt, the reply names its tool calls' ids, each half alone is still a record after the wait,
 // identity attributes land nowhere, and traces/metrics record nothing.
 // Run: pnpm test:otlp
 import "./require-temp-data.js";
@@ -133,6 +133,8 @@ await test("a wrong key, an unattached thread, a non-JSON body and protobuf are 
 await test("api_request and api_request_body become one record whose parts sum to the billed prompt; the body is gone; identity lands nowhere", async () => {
   const file = `${dir}/b1.request.json`;
   writeFileSync(file, JSON.stringify(requestBody));
+  const reply = `${dir}/req_1.response.json`;
+  writeFileSync(reply, JSON.stringify({ type: "message", role: "assistant", content: [{ type: "text", text: "ok" }, { type: "tool_use", id: "toolu_9", name: "Bash", input: {} }] }));
   writeFileSync(`${dir}/index.jsonl`, JSON.stringify({ request_id: "req_1", request_file: "b1.request.json", response_file: "req_1.response.json" }) + "\n");
   const res = await post(
     "/v1/logs",
@@ -140,6 +142,7 @@ await test("api_request and api_request_body become one record whose parts sum t
       JSON.stringify(
         logs(
           { attributes: [...identity, kv("event.name", "api_request_body"), kv("body_ref", file), kv("body_length", 100)] },
+          { attributes: [kv("event.name", "api_response_body"), kv("request_id", "req_1"), kv("body_ref", reply)] },
           {
             timeUnixNano: nanos(T0),
             attributes: [
@@ -177,6 +180,9 @@ await test("api_request and api_request_body become one record whose parts sum t
   assert.ok(call.items?.mcp.some((i) => i.name === "mcp__docs__search"), "items ride the first record");
   assert.ok(call.items?.system.some((i) => i.name.startsWith("Injected context › ")), "a <system-reminder> is the runtime's context");
   assert.equal(existsSync(file), false, "a body holds the conversation: it is deleted once read");
+  assert.equal(existsSync(reply), false, "so does the reply");
+  assert.deepEqual(call.called, ["Bash"], "the reply says what the request asked to run");
+  assert.deepEqual(call.toolCallIds, ["toolu_9"], "and the ids its tool_call rows carry");
   assert.doesNotMatch(JSON.stringify(call), /me@example\.com|claude-session|organization/, "identity attributes are dropped");
   assert.equal(t1.emitted.length, 1, "the pair is one record, not two");
 });

@@ -8,7 +8,12 @@ import assert from "node:assert"
 
 import {
   anchorItems,
+  cacheDrops,
+  cachePercent,
+  callsByStep,
   itemsAt,
+  ownTailId,
+  usageOfCalls,
   byTurn,
   calledCounts,
   mcpOfName,
@@ -200,6 +205,55 @@ assert.deepEqual(anchorItems([{ name: "a", tokens: 1 }], null), [])
   assert.equal(bare.unaccounted, 290_000)
   assert.deepEqual(bare.silences, [{ where: "after-tools", ms: 290_000 }])
   assert.deepEqual(gapsOf([calls[0], { ...calls[1], at: 5000 }], []).get("b").silences, [{ where: "quiet", ms: 3000 }])
+}
+
+/* ── which row a call is drawn on, and its cache share ── */
+{
+  const tool = (id, extra = {}) => ({ kind: "tool", id, title: id, status: "completed", ...extra })
+  const items = [user("u", "t1"), tool("a"), tool("b"), { kind: "text", id: "m", text: "done" }, tool("child", { parentId: "b" })]
+  const bill = (read) => ({ totalTokens: 1_100, inputTokens: 100, outputTokens: 100, cachedReadTokens: read, cachedWriteTokens: 0 })
+  const call = (callId, extra) => ({ callId, at: 0, who: "turn", step: 1, model: "m", source: "proxy", billed: bill(900), turnId: "t1", ...extra })
+  assert.equal(ownTailId(items), "m", "a subagent's row is never the thread's tail")
+  const steps = callsByStep(items, [
+    call("c1", { toolCallIds: ["b", "a"], tailId: "m" }),
+    call("c2", { tailId: "m" }),
+    call("c3", { tailId: "gone" }),
+    call("c4", { who: "title", tailId: "m" }),
+    call("c5", { childId: "kid", toolCallIds: ["a"] }),
+  ])
+  assert.deepEqual(Object.keys(steps).sort(), ["b", "m"], "ids beat the tail; a vanished tail, a title and a child draw nowhere")
+  assert.equal(steps.b.exact, true)
+  assert.deepEqual(steps.b.calls.map((c) => c.callId), ["c1"], "the last of a call's tool rows")
+  assert.equal(steps.m.exact, false, "placed by arrival")
+  assert.equal(cachePercent(bill(900)), 90, "read over everything sent: 900 of 100 fresh + 900 read")
+  assert.equal(cachePercent({ totalTokens: 10, inputTokens: 10, outputTokens: 0 }), null, "no cache figure is not 0%")
+  assert.equal(cachePercent({ totalTokens: 0, inputTokens: 0, outputTokens: 0, cachedReadTokens: 0 }), null, "nothing sent")
+  assert.deepEqual(usageOfCalls([call("x"), call("y", { billed: { totalTokens: 5, inputTokens: 5, outputTokens: 0 } })]), {
+    totalTokens: 1_105, inputTokens: 105, outputTokens: 100, thoughtTokens: null, cachedReadTokens: 900, cachedWriteTokens: 0,
+  })
+}
+
+{
+  /* A drop is measured against the previous call on its own lane. */
+  const at = (n) => 1_000 + n
+  const c = (id, n, read, extra = {}) => ({
+    callId: id, at: at(n), who: "turn", step: n, model: "m", source: "acp", turnId: "t",
+    billed: { totalTokens: 10_000, inputTokens: 10_000 - read, outputTokens: 0, cachedReadTokens: read, cachedWriteTokens: 0 },
+    ...extra,
+  })
+  const drops = cacheDrops([
+    c("a", 1, 9_000),
+    c("b", 2, 9_500),
+    c("k1", 3, 0, { who: "subagent", childId: "kid" }),
+    c("d", 4, 2_000),
+    c("e", 5, 1_000),
+    c("t", 6, 0, { who: "title" }),
+    c("f", 7, 9_000),
+    c("g", 8, 6_500),
+  ])
+  assert.deepEqual([...drops.keys()], ["d"], "95% -> 20% drops; a child's first call, a title, a 10-point and a 25-point fall do not")
+  assert.deepEqual(drops.get("d"), { from: 95, to: 20 })
+  assert.equal(cacheDrops([c("a", 1, 9_000), { ...c("b", 2, 0), billed: { totalTokens: 500, inputTokens: 500, outputTokens: 0, cachedReadTokens: 0 } }]).size, 0, "a small prompt is no drop")
 }
 
 console.log("trace: ok")

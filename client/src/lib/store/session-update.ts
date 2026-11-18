@@ -34,7 +34,7 @@ import type {
 } from "./items"
 import type { ThreadState } from "./thread"
 import { addUsage } from "./messages"
-import { fileCall, openTurnId } from "../trace"
+import { fileCall, openTurnId, ownTailId } from "../trace"
 
 // ---- update application (shared by live updates and journal rebuild) ----
 
@@ -979,7 +979,10 @@ export function applyMetaUpdate(
      (filed on the child's session id) is kept with the thread's, named by its
      child, so the Trace panel reads one list. Filed under the open turn. */
   if (update.sessionUpdate === "_daedalus/model_call")
-    return { ...thread, calls: fileCall(thread.calls, update.call, openTurnId(thread.items), sessionId) }
+    return {
+      ...thread,
+      calls: fileCall(thread.calls, update.call, openTurnId(thread.items), sessionId, sessionId ? undefined : ownTailId(thread.items)),
+    }
   /* The one session-level update a child still has somewhere to go: its
      context occupancy is not the thread's, but it IS the step's, and the step
      is an item. Everything else about a child's session dies here. */

@@ -69,6 +69,9 @@ export interface ModelCall {
   toolUse?: ToolUse[];
   /** The tools this response asked to run, in order — one entry per call. */
   called?: string[];
+  /** The `toolCallId` of each entry in `called` — the ACP ids this runtime's
+      `tool_call` rows carry, so the client ties the record to its step exactly. */
+  toolCallIds?: string[];
 }
 
 /** ~ One tool's footprint in a request's conversation, anchored to the
@@ -382,8 +385,11 @@ export class Tracer {
         : {}),
       output: splitOutput(event),
     };
-    const called = event.content.flatMap((part) => (part.type === "tool-call" ? [part.toolName] : []));
-    if (called.length) call.called = called;
+    const calls = event.content.flatMap((part) => (part.type === "tool-call" ? [part] : []));
+    if (calls.length) {
+      call.called = calls.map((part) => part.toolName);
+      call.toolCallIds = calls.map((part) => part.toolCallId);
+    }
     /* An end with no start seen is a bill with no request to divide — the
        SDK pairs them, so this is a guard, not a path. */
     if (!started) return { ...call, missing: ["the request as sent"] };

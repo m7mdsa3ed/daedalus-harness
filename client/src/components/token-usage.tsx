@@ -11,24 +11,39 @@
    having: the turn is the thing a reader asks "why was that expensive" about.
    `StepTokens` is the same offer on a transcript step, which is why `StepRow`
    draws its trailing columns beside its disclosure button rather than inside
-   it: the step's own reading says less than a turn's (a window and a share,
-   not a prompt/output split), but "how much did this cost" is asked of a step
-   in exactly the same breath, and answering it with a `title` attribute meant
+   it: "how much did this cost, and did it hit the cache" is asked of a step
+   in exactly the same breath as of a turn, and answering it with a `title` attribute meant
    the answer was invisible on a phone and unreachable from a keyboard.
 
    Everything here is gated by the `showTokens` view option at the CALL SITE,
    not in here: a component that renders nothing is still a component the
    transcript mounts per row. */
 import * as React from "react"
-import { CoinsIcon, TimerIcon } from "lucide-react"
+import { CoinsIcon, DatabaseZapIcon, TimerIcon } from "lucide-react"
 import type * as acp from "@daedalus/acp"
-import type { TurnGeneration } from "@daedalus/protocol"
-import { generationRate } from "@daedalus/tps"
+import type { ModelCall, TurnGeneration } from "@daedalus/protocol"
+import { generationRate, stepRate } from "@daedalus/tps"
 
 import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import { ReadingPopoverContent } from "@/components/composer/indicator"
+import {
+  BilledBar,
+  Chips,
+  Facts,
+  Meter,
+  READING_WIDTH,
+  ReadingHero,
+  ReadingTabs,
+  cacheTone,
+  formatMs,
+  promptBarParts,
+  sumSplits,
+  TokenBreakdown,
+  type BillPart,
+} from "@/components/reading-kit"
 import { formatDuration, formatRate, formatTokens, formatTps, promptTokens, windowEstimated } from "@/lib/tokens"
 import { vendorMeta } from "@/lib/tools"
+import { cachePercent, usageOfCalls, type ThreadCall } from "@/lib/trace"
 import { cn } from "@/lib/utils"
 
 /* The trigger box both popover figures wear. One padding, one line box, one
@@ -56,20 +71,23 @@ export function TokenFigure({
 }
 
 /* ── A step's own figure ──
-   `ThreadState.stepUsage` keyed by item id (see `markStepUsage`), read through
-   a context for the reason the view options are: the rows that print it are
-   `ToolStep` and a thought inside `ThreadItemView`, both several layers below
-   the transcript and both already memoized per item, and threading a map
-   through every row of `buildRows` to reach two of them is a prop nothing in
-   between is about. The same context carries each step's *turn* — the billed
-   split behind the `used` total — because a step cannot say what its prompt
-   and output were on its own: both runtimes report one total per request, and
-   the split only when a turn ends. */
+   Three readings meet on a transcript row, each keyed by the row's id and read
+   through one store (below): the `usage_update` the request filed there
+   (`markStepUsage` — a window share for every runtime, the exact bill as well
+   for ours), the model call records joined to the row (`callsByStep` — the
+   bill, cache and timing whichever door saw the request), and the turn the
+   row sits in, the last resort for a split when neither of the first two has
+   one. Read through a store rather than threaded as props because the rows
+   that print it are several memoized layers below the transcript. */
+type StepCallEntry = { calls: ThreadCall[]; exact: boolean }
+
 type StepTokensValue = {
   /** What the model request that ended on each item filed. */
   step: Record<string, acp.UsageUpdate>
   /** Each item's turn, keyed by the same item ids `step` uses. */
   turn: Record<string, acp.Usage>
+  /** The model call records drawn on each item. */
+  calls: Record<string, StepCallEntry>
 }
 
 /* A store, not a context *value*: `stepUsage` is replaced once per model step,
@@ -90,13 +108,13 @@ export type StepTokensStore = {
 }
 
 export function createStepTokensStore(): StepTokensStore {
-  let value: StepTokensValue = { step: {}, turn: {} }
+  let value: StepTokensValue = { step: {}, turn: {}, calls: {} }
   let published = value
   const listeners = new Set<() => void>()
   return {
     get: () => value,
     prime: (next) => {
-      if (next.step !== value.step || next.turn !== value.turn) value = next
+      if (next.step !== value.step || next.turn !== value.turn || next.calls !== value.calls) value = next
     },
     publish: () => {
       if (published === value) return
@@ -127,59 +145,138 @@ export function useStepTokens(itemId: string): acp.UsageUpdate | undefined {
   return useStepTokensEntry((value) => value.step[itemId])
 }
 
-/** The turn a step sits in, keyed the same way `useStepTokens` is — a step
-    itself carries no prompt/output split (runtimes report one total per
-    request), but its turn does, and that is what the breakdown is drawn
-    from. */
+/** The model call records drawn on this item, and whether they were pinned to
+    it by their tool call ids or by where they landed. */
+export function useStepCallEntry(itemId: string): StepCallEntry | undefined {
+  return useStepTokensEntry((value) => value.calls[itemId])
+}
+
+/** The turn a step sits in, keyed the same way `useStepTokens` is — the split
+    a step falls back to when it has none of its own. */
 export function useStepTurnUsage(itemId: string): acp.Usage | undefined {
   return useStepTokensEntry((value) => value.turn[itemId])
 }
 
+/** The share of a prompt read from cache, as a chip's trailing mark. */
+function CacheFigure({ percent }: { percent: number }) {
+  return (
+    <span className="ms-1 inline-flex items-center gap-0.5">
+      <DatabaseZapIcon aria-hidden className="size-3 shrink-0" />
+      {percent}%
+    </span>
+  )
+}
+
+/** Who measured a record, as a chip. */
+const MEASURED_SHORT: Record<ModelCall["source"], string> = {
+  acp: "Runtime",
+  proxy: "Gateway proxy",
+  otlp: "Telemetry",
+  files: "Session files",
+  usage: "Usage reports",
+}
+
+/** A request on one bar: the wait for its first token (the network, the
+    queue and the prompt's prefill — and any reasoning the provider never
+    streamed), the writing after it, and whatever came after the last token
+    (the usage chunk, a gateway's flush). */
+function timelineOf(call: ModelCall): BillPart[] {
+  const ttft = call.timing?.ttftMs
+  const writing = call.timing?.decodeMs
+  if (ttft === undefined && writing === undefined) return []
+  const tail = call.ms !== undefined ? call.ms - (ttft ?? 0) - (writing ?? 0) : 0
+  return [
+    { label: "To first token", tokens: ttft ?? 0, color: "var(--chart-1)" },
+    { label: "Writing", tokens: writing ?? 0, color: "var(--chart-2)" },
+    { label: "After last token", tokens: tail > 50 ? tail : 0, color: "var(--chart-3)" },
+  ]
+}
+
+/** Who measured a record, in words — the popover's footnote. */
+const MEASURED_BY: Record<ModelCall["source"], string> = {
+  acp: "the runtime",
+  proxy: "the harness's gateway proxy",
+  otlp: "the runtime's telemetry",
+  files: "the runtime's session files",
+  usage: "the runtime's usage reports",
+}
+
+/** What a step's row can say about the request behind it. */
+interface StepReading {
+  /** The headline: the request's bill, or its window reading. */
+  figure: number
+  /** The prompt/output/cache split, and whose it is. */
+  split: acp.Usage | null
+  scope: "request" | "turn" | null
+  /** Figure and split are this request's and pinned to this row exactly. */
+  exact: boolean
+  /** Share of the prompt read from cache — only ever the request's own. */
+  cache: number | null
+  /** The record timing is read from: the last one drawn on the row. */
+  call?: ThreadCall
+}
+
+function readStep(usage: acp.UsageUpdate | undefined, entry: StepCallEntry | undefined, turn: acp.Usage | undefined): StepReading | null {
+  const own = usage ? (vendorMeta(usage._meta, "daedalus")?.step as acp.Usage | null | undefined) : undefined
+  const fromCalls = entry ? usageOfCalls(entry.calls) : null
+  const request = own ?? fromCalls
+  const split = request ?? turn ?? null
+  const figure = request ? request.totalTokens : (usage?.used ?? 0)
+  if (!(figure > 0) && !split) return null
+  return {
+    figure,
+    split,
+    scope: request ? "request" : split ? "turn" : null,
+    exact: own != null || (fromCalls != null && entry!.exact),
+    cache: request ? cachePercent(request) : null,
+    call: entry?.calls.at(-1),
+  }
+}
+
 /**
- * A step's cost, on the step's own row — the figure, with the same breakdown
- * behind it that a turn's has. The breakdown is the *turn's*, not the step's:
- * a runtime reports one total per model request and the prompt/output/cache
- * split only when the turn ends, so the split lives two hops away and the
- * popover says so rather than pretending each row was billed separately.
+ * A step's cost, on the step's own row: the request's tokens and, where the
+ * door reported one, the share of its prompt read from cache — the figure a
+ * reader scans down a run of steps for, since a step that missed the cache is
+ * where a turn's bill went.
  *
- * Written `~12.4k tokens`, and the tilde is the honest part: unlike a turn's
- * figure or a workflow step's — both of which an agent *reported* — this one is
- * a mid-turn reading matched to a position (see `markStepUsage`), so it is the
- * right order of magnitude for this step and not an invoice line. The popover
- * says so in words, because a number with a breakdown under it reads as an
- * invoice unless something says otherwise.
+ * The tilde is the honest part: a figure is exact only when it is the
+ * request's own bill pinned to this row by its tool call ids (or our
+ * runtime's own step reading). A window reading, or a record placed by where
+ * it landed, is the right order of magnitude for this step and not an invoice
+ * line, and the popover says which in words.
  *
- * It is a real button with the same defaults `TokenSummary` opens on — hover
- * for a reader passing over it, click for one who cannot hover at all, keyboard
- * for one who does not point — which is why `StepRow` had to move its trailing
- * columns out of the disclosure button: a button may not hold a button, and the
- * figure was inside one everywhere it is drawn.
+ * A real button with the same defaults `TokenSummary` opens on — hover, click
+ * and keyboard — which is why `StepRow` draws its trailing columns beside its
+ * disclosure button: a button may not hold a button.
  */
 export function StepTokens({
   usage,
+  calls,
   itemId,
   className,
 }: {
-  usage: acp.UsageUpdate
+  /** The `usage_update` filed against this row, if one was. */
+  usage?: acp.UsageUpdate
+  /** The model call records drawn on this row, if any. */
+  calls?: StepCallEntry
   /** The row the figure was filed against, for the containing turn's split. */
   itemId?: string
   className?: string
 }) {
-  const share = usage.size > 0 ? Math.round((usage.used / usage.size) * 100) : null
-  /* Both figures are a fraction of a window the runtime had to guess at — the
-     request count beside them is real either way. */
-  const about = windowEstimated(usage) ? "~" : ""
   const turnUsage = useStepTurnUsage(itemId ?? "")
-  /* The step's own bill, when the runtime says it (`_meta.daedalus.step` on
-     our runtime's `usage_update`): exact, so the split is the step's and the
-     figure loses its tilde. Otherwise the turn's split stands in, as it always
-     did for a runtime that reports one total per request. */
-  const own = vendorMeta(usage._meta, "daedalus")?.step as acp.Usage | null | undefined
-  const exact = own != null
-  const split = own ?? turnUsage
-  const prompt = split ? promptTokens(split) : 0
-  const cacheRate = split && prompt > 0 ? Math.round(((split.cachedReadTokens ?? 0) / prompt) * 100) : null
+  const reading = readStep(usage, calls, turnUsage)
+  if (!reading) return null
+  const { figure, split, scope, exact, cache, call } = reading
   const approx = exact ? "" : "~"
+  const about = windowEstimated(usage) ? "~" : ""
+  const share = usage && usage.size > 0 ? Math.round((usage.used / usage.size) * 100) : null
+  const rate = call ? stepRate(call) : null
+  const timeline = call ? timelineOf(call) : []
+  const facts = [
+    call ? MEASURED_SHORT[call.source] : null,
+    call?.finishReason ? `finish: ${call.finishReason}` : null,
+    call?.costUsd !== undefined ? `$${call.costUsd.toFixed(4)}` : null,
+  ].filter((fact): fact is string => fact !== null)
   return (
     <Popover>
       <PopoverTrigger
@@ -188,66 +285,141 @@ export function StepTokens({
         render={
           <button
             type="button"
-            aria-label={`This step: ${exact ? "" : "about "}${usage.used} tokens`}
+            aria-label={`This step: ${exact ? "" : "about "}${figure} tokens${cache !== null ? `, ${cache}% from cache` : ""}`}
             className={cn(FIGURE, className)}
           >
-            {/* The coin already says "tokens"; a narrow panel keeps the figure
-                and drops the word, so the step's title keeps the line. */}
-            <CoinsIcon aria-hidden className="size-3 shrink-0" />{approx}{formatTokens(usage.used)}
-            <span className="hidden @panel-sm:inline">tokens</span>
+            {/* Marks, not words: the coin says "tokens" and the cache glyph
+                "from cache", so a step's title keeps the line at every width.
+                The words are the label's, and the popover's. */}
+            <CoinsIcon aria-hidden className="size-3 shrink-0" />
+            {approx}
+            {formatTokens(figure)}
+            {cache !== null && <CacheFigure percent={cache} />}
           </button>
         }
       />
-      <ReadingPopoverContent align="start" heading="This step">
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
-          <Stat label="Request" value={formatTokens(usage.used)} />
-          <Stat label="Window" value={`${about}${formatTokens(usage.size)}`} />
-          {share !== null && <Stat label="Share of window" value={`${about}${share}%`} />}
-          {usage.cost && (
-            <Stat
-              label="Session cost"
-              value={`${usage.cost.amount.toFixed(2)} ${usage.cost.currency}`}
-            />
-          )}
-        </dl>
-        {split ? (
-          <>
-            <p className="pt-1 text-xs font-medium text-muted-foreground">
-              {exact ? "This request" : "This turn"}
-            </p>
-            <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
-              <Stat label="Prompt" value={formatTokens(prompt)} />
-              <Stat label="Output" value={formatTokens(split.outputTokens)} />
-              <Stat label="New in" value={formatTokens(split.inputTokens)} />
-              {split.thoughtTokens ? <Stat label="Thinking" value={formatTokens(split.thoughtTokens)} /> : null}
-              {split.cachedReadTokens ? <Stat label="Cached" value={formatTokens(split.cachedReadTokens)} /> : null}
-              {split.cachedWriteTokens ? (
-                <Stat label="Cache write" value={formatTokens(split.cachedWriteTokens)} />
-              ) : null}
-              {cacheRate !== null && <Stat label="Cache rate" value={`${cacheRate}%`} />}
-              <Stat label="Total" value={formatTokens(split.totalTokens)} />
-            </dl>
-          </>
-        ) : null}
-        {/* What the runtime reports here is the *last model request's* own
-            count — the context it carried plus what it wrote — and which step
-            it belongs to is inferred from where it landed. Both halves of that
-            are why the figure is written with a tilde. */}
-        <p className="text-xs text-muted-foreground">
-          {exact
-            ? "What the model request behind this step was billed, as the runtime counted it."
-            : "Roughly what the model request behind this step cost — the context it carried plus what it wrote. The split is the whole turn's: this runtime reports a per-step total, and the prompt/output/cache breakdown only when a turn ends."}
-        </p>
+      <ReadingPopoverContent align="start" heading="This step" meta={call?.model} className={READING_WIDTH}>
+        <ReadingHero
+          value={`${approx}${formatTokens(figure)}`}
+          unit="tokens"
+          caption={scope === "request" ? (exact ? "This request's bill" : "This request's bill, matched by arrival") : "Window reading · split is the whole turn's"}
+          cache={cache}
+        />
+        <Facts
+          items={[
+            rate !== null && { label: "Speed", value: formatTps(rate) ?? "—" },
+            call?.timing?.ttftMs !== undefined && { label: "First token", value: formatMs(call.timing.ttftMs) },
+            call?.ms !== undefined && { label: "Request", value: formatMs(call.ms) },
+            share !== null && {
+              label: "Window",
+              value: `${about}${share}%`,
+              valueClass: share >= 85 ? "text-destructive" : share >= 70 ? "text-warning" : undefined,
+            },
+          ]}
+        />
+        {split && <TokenBreakdown usage={split} split={scope === "request" ? call?.output : null} />}
+        <ReadingTabs
+          tabs={[
+            call?.called && call.called.length > 0 && {
+              id: "tools",
+              label: "Asked for",
+              meta: `${call.called.length} call${call.called.length === 1 ? "" : "s"}`,
+              content: <Chips items={call.called} mono />,
+            },
+            timeline.length > 0 && {
+              id: "timing",
+              label: "Timing",
+              meta: call?.ms !== undefined ? formatMs(call.ms) : undefined,
+              content: <BilledBar parts={timeline} format={formatMs} share />,
+            },
+            call?.prompt && {
+              id: "prompt",
+              label: "Prompt",
+              meta: "estimated",
+              content: <BilledBar parts={promptBarParts(call.prompt)} share legend="grid" />,
+            },
+            usage && usage.size > 0 && share !== null && {
+              id: "window",
+              label: "Window",
+              meta: `${formatTokens(usage.used)} of ${about}${formatTokens(usage.size)}`,
+              content: <Meter value={usage.used} max={usage.size} tone={share >= 85 ? "error" : share >= 70 ? "warn" : undefined} />,
+            },
+          ]}
+        />
+        <div className="space-y-1.5 border-t pt-2">
+          <Chips items={facts} />
+          <p className="text-[11px] leading-4 text-muted-foreground">{stepNote(reading, call)}</p>
+        </div>
       </ReadingPopoverContent>
     </Popover>
   )
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+/** What the step's popover can stand behind, in words. */
+function stepNote(reading: StepReading, call: ThreadCall | undefined): string {
+  if (reading.scope === "turn")
+    return "No request record reached this step: the bill is the whole turn's, and the figure is the runtime's window reading."
+  if (!reading.exact)
+    return `Placed on this step by when ${call ? `${MEASURED_BY[call.source]}'s record` : "its record"} arrived, not by its tool calls, so it can be a step late.`
+  return "First token counts the network, the queue and the prompt's prefill; writing is everything after it."
+}
+
+/** A turn's wall clock on one bar: the model writing, the tools running, and
+    the rest — the waits for each request's first token (network, queue,
+    prefill), approvals, and the harness's own work. Writing can overlap tools
+    (a subagent's, a parallel call's), so each part is clamped to what is left. */
+function turnTimeParts(durationMs: number, toolDurationMs: number | undefined, generation: TurnGeneration | undefined): BillPart[] {
+  const writing = Math.min(durationMs, generation?.decodeMs ?? 0)
+  const tools = Math.min(durationMs - writing, toolDurationMs ?? 0)
+  return [
+    { label: "Model writing", tokens: writing, color: "var(--chart-2)" },
+    { label: "Running tools", tokens: tools, color: "var(--chart-4)" },
+    {
+      label: writing > 0 ? "First tokens & overhead" : "Model & overhead",
+      tokens: Math.max(0, durationMs - writing - tools),
+      color: "var(--chart-1)",
+    },
+  ]
+}
+
+/** What the turn's calls cost, where the runtime priced them; null otherwise. */
+function costOfCalls(calls: readonly ThreadCall[]): number | null {
+  let total: number | null = null
+  for (const call of calls) if (call.costUsd !== undefined) total = (total ?? 0) + call.costUsd
+  return total
+}
+
+const REQUEST_ROW = "grid grid-cols-[1.5rem_3.5rem_2.5rem_4rem_minmax(0,1fr)] items-baseline gap-x-2 tabular-nums"
+
+/** The turn's requests, one line each: which step, what it sent, how much of
+    that came from cache, how fast it wrote and what it asked to run — the
+    series that says *which* step lost the cache, which a total cannot. */
+function RequestList({ calls }: { calls: ThreadCall[] }) {
   return (
-    <div>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="font-medium tabular-nums">{value}</dd>
+    <div className="text-xs">
+      <div className={cn(REQUEST_ROW, "pb-1 text-[11px] text-muted-foreground")} aria-hidden>
+        <span>#</span>
+        <span className="text-end">Prompt</span>
+        <span className="text-end">Cache</span>
+        <span className="text-end">Speed</span>
+        <span>Asked for</span>
+      </div>
+    <ol className="max-h-48 space-y-0.5 overflow-y-auto">
+      {calls.map((call, index) => {
+        const prompt = promptTokens(call.billed)
+        const cache = cachePercent(call.billed)
+        const rate = stepRate(call)
+        return (
+          <li key={call.callId} className={REQUEST_ROW}>
+            <span className="text-muted-foreground">#{index + 1}</span>
+            <span className="text-end">{formatTokens(prompt)}</span>
+            <span className={cn("text-end", cacheTone(cache))}>{cache === null ? "—" : `${cache}%`}</span>
+            <span className="text-end text-muted-foreground">{rate === null ? "—" : formatTps(rate)?.replace(" tok/s", "/s")}</span>
+            <span className="truncate font-mono text-[11px] text-muted-foreground">{call.called?.join(", ") ?? call.finishReason ?? ""}</span>
+          </li>
+        )
+      })}
+    </ol>
     </div>
   )
 }
@@ -281,6 +453,7 @@ export function TokenSummary({
   durationMs,
   toolDurationMs,
   generation,
+  calls,
   className,
 }: {
   usage: acp.Usage
@@ -296,11 +469,15 @@ export function TokenSummary({
       Without it the figure beside the tokens is throughput over the turn's
       wall clock, and is labelled as that. */
   generation?: TurnGeneration
+  /** The turn's own model calls, in order — the per-request list. */
+  calls?: ThreadCall[]
   className?: string
 }) {
   const prompt = promptTokens(usage)
-  const cached = usage.cachedReadTokens ?? 0
-  const cacheRate = prompt > 0 ? Math.round((cached / prompt) * 100) : null
+  const firstTokenMs = calls?.[0]?.timing?.ttftMs
+  const costUsd = calls ? costOfCalls(calls) : null
+  /* Null where the runtime reported no cache figure: "not said" is not 0%. */
+  const cacheRate = cachePercent(usage)
   const generationSpeed = generation ? generationRate(generation) : null
   const speed = generationSpeed === null ? null : formatTps(generationSpeed)
   const throughput = durationMs !== undefined ? formatRate(usage.outputTokens, durationMs) : null
@@ -315,56 +492,64 @@ export function TokenSummary({
         render={
           <button
             type="button"
-            aria-label={`${label}: ${usage.totalTokens} tokens`}
+            aria-label={`${label}: ${usage.totalTokens} tokens${cacheRate !== null ? `, ${cacheRate}% from cache` : ""}`}
             className={cn(FIGURE, className)}
           >
             <CoinsIcon aria-hidden className="size-3 shrink-0" />
             <TokenFigure usage={usage} />
             {durationMs !== undefined && <span className="text-muted-foreground">· {formatDuration(durationMs)}</span>}
             {rate && <span className="text-muted-foreground">· {rate}</span>}
+            {cacheRate !== null && <CacheFigure percent={cacheRate} />}
           </button>
         }
       />
-      <ReadingPopoverContent align="start" heading={label}>
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
-          <Stat label="Prompt" value={formatTokens(prompt)} />
-          <Stat label="Output" value={formatTokens(usage.outputTokens)} />
-          <Stat label="New in" value={formatTokens(usage.inputTokens)} />
-          {usage.thoughtTokens ? <Stat label="Thinking" value={formatTokens(usage.thoughtTokens)} /> : null}
-          {usage.cachedReadTokens ? <Stat label="Cached" value={formatTokens(usage.cachedReadTokens)} /> : null}
-          {usage.cachedWriteTokens ? (
-            <Stat label="Cache write" value={formatTokens(usage.cachedWriteTokens)} />
-          ) : null}
-          {cacheRate !== null && <Stat label="Cache rate" value={`${cacheRate}%`} />}
-          <Stat label="Total" value={formatTokens(usage.totalTokens)} />
-          {durationMs !== undefined && (
-            <>
-              <Stat label="Turn time" value={formatDuration(durationMs)} />
-              {toolDurationMs !== undefined && (
-                <>
-                  <Stat label="Tool calls" value={formatDuration(toolDurationMs)} />
-                  <Stat
-                    label="Outside tools"
-                    value={formatDuration(Math.max(0, durationMs - toolDurationMs))}
-                  />
-                </>
-              )}
-            </>
-          )}
-          {generation?.waits && <Stat label="Between requests" value={formatDuration(generation.waits.totalMs)} />}
-          {speed && <Stat label="Output speed" value={speed} />}
-          {throughput && <Stat label="Whole-turn throughput" value={throughput} />}
-          {context && (
-            <Stat label="Context" value={`${formatTokens(context.used)} / ${formatTokens(context.size)}`} />
-          )}
-          {context?.cost && (
-            <Stat label="Cost" value={`${context.cost.amount.toFixed(2)} ${context.cost.currency}`} />
-          )}
-        </dl>
+      <ReadingPopoverContent align="start" heading={label} meta={calls?.[0]?.model} className={READING_WIDTH}>
+        <ReadingHero
+          value={formatTokens(usage.totalTokens)}
+          unit="tokens billed"
+          caption={[
+            calls?.length ? `${calls.length} request${calls.length === 1 ? "" : "s"}` : null,
+            `${formatTokens(prompt)} prompt sent`,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+          cache={cacheRate}
+        />
+        <Facts
+          items={[
+            durationMs !== undefined && { label: "Time", value: formatDuration(durationMs) },
+            rate && { label: speed ? "Speed" : "Throughput", value: rate },
+            firstTokenMs !== undefined && { label: "First token", value: formatMs(firstTokenMs) },
+            costUsd !== null && { label: "Cost", value: `$${costUsd.toFixed(costUsd < 1 ? 4 : 2)}` },
+          ]}
+        />
+        <TokenBreakdown usage={usage} split={calls ? sumSplits(calls.map((call) => call.output)) : null} />
+        <ReadingTabs
+          tabs={[
+            calls && calls.length > 0 && {
+              id: "requests",
+              label: "Requests",
+              meta: `${calls.length}`,
+              content: <RequestList calls={calls} />,
+            },
+            durationMs !== undefined && {
+              id: "time",
+              label: "Time",
+              meta: speed && throughput ? `whole turn ${throughput}` : formatDuration(durationMs),
+              content: <BilledBar parts={turnTimeParts(durationMs, toolDurationMs, generation)} format={formatDuration} share />,
+            },
+            context && {
+              id: "window",
+              label: "Window",
+              meta: `${formatTokens(context.used)} of ${formatTokens(context.size)}${context.cost ? ` · ${context.cost.amount.toFixed(2)} ${context.cost.currency}` : ""}`,
+              content: <Meter value={context.used} max={context.size} />,
+            },
+          ]}
+        />
         {/* The same caveat the composer's popover carries, and for the same
             reason: a turn re-sends its context once per tool call, so a total
             far above the context size is arithmetic, not a bug. */}
-        <p className="text-xs text-muted-foreground">
+        <p className="border-t pt-2 text-[11px] leading-4 text-muted-foreground">
           Billed across every model request in it — a turn re-sends the context once per tool call.
         </p>
       </ReadingPopoverContent>

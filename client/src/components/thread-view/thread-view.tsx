@@ -58,7 +58,9 @@ import { ThreadRail } from "@/components/thread-rail"
 import { RewindDialog, type RewindScope } from "@/components/rewind-dialog"
 import { useAgents } from "@/lib/queries/catalog"
 import {
+  useStepCalls,
   useStepTurnUsage,
+  useTurnCalls,
   withTurnDuration,
   withTurnToolDuration,
   withTurnGeneration,
@@ -97,6 +99,7 @@ import {
   useTranscriptJump,
 } from "@/components/thread-view/dormant"
 import { RowMemoryContext, clearSettled, type RowMemory } from "@/lib/row-open"
+import type { ThreadCall } from "@/lib/trace"
 
 /** How wide the *panel* must be for the inspector to dock beside the
     transcript (`--container-panel-lg`, 64rem); below it the column is a sheet. */
@@ -390,6 +393,8 @@ export function ThreadView({
     [thread.items, thread.turnActive, thread.turnGeneration, options.showConfigNotices]
   )
   const generationFor = (row: Row): TurnGeneration | undefined => generationAfter.get(rowTailId(row))
+  const callsAfter = useTurnCalls(thread.items, thread.turnActive, thread.calls, options.showConfigNotices)
+  const callsFor = (row: Row): ThreadCall[] | undefined => callsAfter.get(rowTailId(row))
   /* What each finished turn wrote, gated on the transcript (`withTurnChanges`
      — git measures a window, not an author). The newest gated turn is the
      reading the composer's `ChangesIndicator` and the inspector's Changes tab
@@ -430,9 +435,12 @@ export function ThreadView({
      because a context value change reaches every reader through every memo:
      the provider holds a store for the view's life instead, published after
      each commit, and a row re-renders only when its own entry moves. */
+  /* The model call records drawn on each row — the step's own split, cache and
+     timing for a runtime whose `usage_update` carries one undivided number. */
+  const stepCalls = useStepCalls(thread.items, thread.calls)
   const [stepTokens] = React.useState(createStepTokensStore)
-  stepTokens.prime({ step: thread.stepUsage, turn: stepTurnAfter })
-  React.useLayoutEffect(() => stepTokens.publish(), [stepTokens, thread.stepUsage, stepTurnAfter])
+  stepTokens.prime({ step: thread.stepUsage, turn: stepTurnAfter, calls: stepCalls })
+  React.useLayoutEffect(() => stepTokens.publish(), [stepTokens, thread.stepUsage, stepTurnAfter, stepCalls])
   /* Hoisted out of the map below: `findIndex` inside `rows.map` was O(n²) per
      render, re-scanned on every streamed token. */
   const firstUserIndex = React.useMemo(() => rows.findIndex((r) => r.kind === "user"), [rows])
@@ -1054,6 +1062,7 @@ export function ThreadView({
                     durationMs={durationFor(row)}
                     toolDurationMs={toolDurationFor(row)}
                     generation={generationFor(row)}
+                    calls={callsFor(row)}
                     suggestions={suggestionsFor(row)}
                     onPick={pickSuggestion}
                   />

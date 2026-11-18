@@ -188,17 +188,25 @@ function allEventsOf(response: { contentType: string; body: string }): Json[] {
     tool-use blocks (Messages), the indexed `tool_calls` deltas (chat), or the
     `function_call` output items (Responses), whole body or streamed. */
 export function calledOf(dialect: Dialect, events: Json[]): string[] {
-  const out: string[] = [];
+  return toolCallsOf(dialect, events).map((call) => call.name);
+}
+
+/** The same calls with the id each one carries — the id the runtime puts on
+    its ACP `tool_call` (Claude Code: the tool-use id; codex: `call_id`), which
+    is what ties this record to the transcript step it produced. */
+export function toolCallsOf(dialect: Dialect, events: Json[]): { name: string; id?: string }[] {
+  const out: { name: string; id?: string }[] = [];
   if (dialect === "anthropic-messages") {
+    const add = (b: unknown) => {
+      if (isObject(b) && b.type === "tool_use" && str(b.name)) out.push({ name: str(b.name)!, ...(str(b.id) ? { id: str(b.id)! } : {}) });
+    };
     for (const ev of events) {
-      const block = isObject(ev.content_block) ? ev.content_block : null;
-      if (block?.type === "tool_use" && str(block.name)) out.push(str(block.name)!);
-      if (ev.type === "message" && Array.isArray(ev.content))
-        for (const b of ev.content) if (isObject(b) && b.type === "tool_use" && str(b.name)) out.push(str(b.name)!);
+      add(isObject(ev.content_block) ? ev.content_block : null);
+      if (ev.type === "message" && Array.isArray(ev.content)) for (const b of ev.content) add(b);
     }
   } else if (dialect === "openai-chat") {
-    /* Streamed, a call's name comes once on the delta that opens its index. */
-    const byIndex = new Map<number, string>();
+    /* Streamed, a call's name and id come once on the delta that opens its index. */
+    const byIndex = new Map<number, { name: string; id?: string }>();
     for (const ev of events) {
       for (const choice of Array.isArray(ev.choices) ? ev.choices : []) {
         if (!isObject(choice)) continue;
@@ -207,19 +215,20 @@ export function calledOf(dialect: Dialect, events: Json[]): string[] {
           if (!isObject(call)) continue;
           const name = str(isObject(call.function) ? call.function.name : undefined);
           const index = num(call.index) ?? (isObject(choice.message) ? i : byIndex.size);
-          if (name && !byIndex.has(index)) byIndex.set(index, name);
+          if (name && !byIndex.has(index)) byIndex.set(index, { name, ...(str(call.id) ? { id: str(call.id)! } : {}) });
         }
       }
     }
-    out.push(...[...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, name]) => name));
+    out.push(...[...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, call]) => call));
   } else {
     const seen = new Set<string>();
     const add = (item: unknown) => {
       if (!isObject(item) || (item.type !== "function_call" && item.type !== "custom_tool_call")) return;
-      const id = str(item.call_id) ?? str(item.id) ?? String(seen.size);
-      if (seen.has(id) || !str(item.name)) return;
-      seen.add(id);
-      out.push(str(item.name)!);
+      const callId = str(item.call_id) ?? str(item.id);
+      const key = callId ?? String(seen.size);
+      if (seen.has(key) || !str(item.name)) return;
+      seen.add(key);
+      out.push({ name: str(item.name)!, ...(callId ? { id: callId } : {}) });
     };
     for (const ev of events) {
       if (ev.type === "response.output_item.done" || ev.type === "response.output_item.added") add(ev.item);
@@ -245,7 +254,11 @@ const tap: GatewayTap = {
     const found = bill(eventsOf(response));
     if (!found) return;
     const request = parse(requestBody);
-    const called = calledOf(entry.dialect, allEventsOf(response));
+    const calls = toolCallsOf(entry.dialect, allEventsOf(response));
+    const called = calls.map((call) => call.name);
+    /* Only when every call named its id: a partial list would pin the record
+       to some of its step's rows and not others. */
+    const toolCallIds = calls.length && calls.every((call) => call.id) ? calls.map((call) => call.id!) : undefined;
     /* ponytail: `who` is always "turn" — a Claude Code side job (the title, the
        permission classifier) is on the same URL and indistinguishable here;
        `output` is left to the billed counters — of the reply's content only
@@ -261,6 +274,7 @@ const tap: GatewayTap = {
       billed: found.billed,
       timing: { ttftMs: timing.ttftMs, decodeMs: timing.ttftMs !== undefined ? timing.ms - timing.ttftMs : undefined },
       ...(called.length ? { called } : {}),
+      ...(toolCallIds ? { toolCallIds } : {}),
       ...(request ? { shape: shape(request) } : {}),
     }).catch((error: unknown) => {
       console.warn(`[model-calls] proxy record for ${sessionId.slice(0, 8)} failed: ${error instanceof Error ? error.message : String(error)}`);

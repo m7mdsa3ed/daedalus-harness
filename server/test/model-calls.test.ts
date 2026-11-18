@@ -32,7 +32,8 @@ import {
   partsOf,
   type RequestShape,
 } from "../src/model-calls/prompt-parts.js";
-import { calledOf } from "../src/model-calls/sources/proxy.js";
+import { calledOf, toolCallsOf } from "../src/model-calls/sources/proxy.js";
+import { copyReply } from "../src/gateway-shim.js";
 import type { ModelCall, ModelCallUpdate } from "../src/protocol.js";
 
 let passed = 0;
@@ -344,6 +345,66 @@ await test("proxy calledOf: the tools a reply asked to run, whole or streamed, i
     ]),
     ["shell"],
   );
+});
+
+await test("proxy toolCallsOf: each call's id, the one its ACP tool_call row carries", () => {
+  assert.deepEqual(
+    toolCallsOf("anthropic-messages", [
+      { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_a", name: "Read", input: {} } },
+    ]),
+    [{ name: "Read", id: "toolu_a" }],
+  );
+  assert.deepEqual(
+    toolCallsOf("openai-chat", [{ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "bash", arguments: "" } }] } }] }]),
+    [{ name: "bash", id: "call_1" }],
+  );
+  assert.deepEqual(
+    toolCallsOf("openai-responses", [{ type: "response.output_item.added", item: { type: "function_call", call_id: "c1", name: "shell" } }]),
+    [{ name: "shell", id: "c1" }],
+  );
+  assert.deepEqual(toolCallsOf("anthropic-messages", [{ type: "message", content: [{ type: "tool_use", name: "grep" }] }]), [{ name: "grep" }]);
+});
+
+await test("proxy ttft: the first output frame, never a keepalive, a ping or the opening frame", async () => {
+  const real = Date.now;
+  let now = 0;
+  Date.now = () => now;
+  try {
+    const time = async (streamed: boolean, frames: [number, string][]) => {
+      let ttft: number | undefined | null = null;
+      const copy = copyReply(0, streamed, (reply) => (ttft = reply.ttftMs));
+      const writer = copy.writable.getWriter();
+      const drain = copy.readable.pipeTo(new WritableStream());
+      for (const [at, frame] of frames) {
+        now = at;
+        await writer.write(new TextEncoder().encode(frame));
+      }
+      await writer.close();
+      await drain;
+      return ttft;
+    };
+    assert.equal(
+      await time(true, [
+        [40, ": OPENROUTER PROCESSING\n\n"],
+        [90, 'event: message_start\ndata: {"type":"message_start","message":{"content":[]}}\n\n'],
+        [120, 'event: ping\ndata: {"type":"ping"}\n\n'],
+        [1_800, 'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi"}}\n\n'],
+      ]),
+      1_800,
+    );
+    assert.equal(
+      await time(true, [
+        [50, 'data: {"choices":[{"delta":{"role":"assistant","content":""}}]}\n\n'],
+        [700, 'data: {"choices":[{"delta":{"content": "Hel'],
+        [710, 'lo"}}]}\n\n'],
+      ]),
+      700,
+      "a role-only chunk is not output; a frame split across chunks still counts",
+    );
+    assert.equal(await time(false, [[500, '{"content":"whole"}']]), undefined, "a reply that was not streamed has no first token");
+  } finally {
+    Date.now = real;
+  }
 });
 
 await test("claude prompt_snapshot: sections and tools seen, the conversation not; without tools, tool schemas missing too", async () => {

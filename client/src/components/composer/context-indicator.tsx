@@ -43,6 +43,7 @@ import {
   windowEstimated,
 } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
+import { ReadingSection, Tile, TokenBreakdown, cacheTone } from "@/components/reading-kit"
 import { tpsAverage } from "@daedalus/tps"
 
 /** Above this the agent is about to compact, so the popover says so. */
@@ -73,71 +74,6 @@ function Row({
 /** Children listed by name before the rest fold into "N more"; the Agents
     panel has the whole list. */
 const SUBAGENT_ROWS = 4
-
-/** A captioned group under a hairline — the popover's one unit. The caption
-    may carry a fact at its end (a count, a share). */
-function Section({ title, meta, children }: { title: string; meta?: string; children: React.ReactNode }) {
-  return (
-    <section className="space-y-2 border-t pt-3">
-      <div className="flex items-baseline justify-between gap-2 text-xs">
-        <p className="font-medium text-muted-foreground">{title}</p>
-        {meta && <span className="tabular-nums text-muted-foreground">{meta}</span>}
-      </div>
-      {children}
-    </section>
-  )
-}
-
-/** One figure at a glance: a caption over its value, in a muted tile. Laid
-    out in a row of up to three, so the numbers the eye looks for first — the
-    bill, the last turn, the speed — are read across, not hunted down a list. */
-function Tile({ label, value, hint, valueClass }: { label: string; value: string; hint?: string; valueClass?: string }) {
-  return (
-    <div className="min-w-0 flex-1 basis-0 rounded-lg bg-muted/50 px-2.5 py-2">
-      <p className="truncate text-xs text-muted-foreground">{label}</p>
-      <p className={cn("truncate text-sm font-medium tabular-nums", valueClass)}>{value}</p>
-      {hint && <p className="truncate text-xs tabular-nums text-muted-foreground">{hint}</p>}
-    </div>
-  )
-}
-
-/** A billed-token part: its colour in the stacked bar and its legend row. */
-interface Part {
-  label: string
-  tokens: number
-  color: string
-  hint?: string
-}
-
-/** What the session was billed for, as one bar of its parts and a legend —
-    the shape of the bill, which a column of numbers made the reader assemble. */
-function BilledBar({ parts }: { parts: Part[] }) {
-  const total = parts.reduce((n, part) => n + part.tokens, 0)
-  if (total <= 0) return null
-  return (
-    <>
-      <div className="flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-muted" aria-hidden>
-        {parts.map((part) =>
-          part.tokens > 0 ? (
-            <div key={part.label} className="h-full" style={{ width: `${(part.tokens / total) * 100}%`, background: part.color }} />
-          ) : null
-        )}
-      </div>
-      <dl className="space-y-1">
-        {parts.map((part) =>
-          part.tokens > 0 ? (
-            <div key={part.label} className="flex items-center gap-2 text-sm">
-              <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: part.color }} />
-              <dt className="min-w-0 flex-1 truncate text-muted-foreground">{part.label}</dt>
-              {part.hint && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{part.hint}</span>}
-              <dd className="shrink-0 font-medium tabular-nums">{formatTokens(part.tokens)}</dd>
-            </div>
-          ) : null
-        )}
-      </dl>
-    </>
-  )
-}
 
 /** One window of a plan, at a glance's measure: the name, the amounts behind
     the percentage, the bar and when it rolls over. Shared by a flat reading and
@@ -381,14 +317,7 @@ export function ContextIndicator({
   const toolDurationMs = thread.tps?.toolDurationMs ??
     Object.values(thread.turnToolDuration).reduce((sum, duration) => sum + duration, 0)
 
-  const cacheTone =
-    cacheRate === null
-      ? undefined
-      : cacheRate >= 50
-        ? "text-success"
-        : cacheRate >= 20
-          ? "text-warning"
-          : "text-destructive"
+  const cacheToneClass = cacheTone(cacheRate)
   /* The gaps between the model's requests, and what the agent could tell apart
      in them; the rest of the total is the tools (approvals too) and the
      harness's own work. */
@@ -489,33 +418,21 @@ export function ContextIndicator({
             {context?.cost ? (
               <Tile label="Cost" value={`${context.cost.amount.toFixed(2)} ${context.cost.currency}`} />
             ) : (
-              <Tile label="Cache hit" value={cacheRate !== null ? `${cacheRate}%` : "—"} valueClass={cacheTone} />
+              <Tile label="Cache hit" value={cacheRate !== null ? `${cacheRate}%` : "—"} valueClass={cacheToneClass} />
             )}
           </div>
         )}
 
         {usage && (
-          <Section title="Billed tokens" meta={cacheRate !== null && context?.cost ? `${cacheRate}% from cache` : undefined}>
-            <BilledBar
-              parts={[
-                { label: "From cache", tokens: cached, color: "var(--chart-2)", hint: cacheRate !== null ? `${cacheRate}%` : undefined },
-                { label: "Cache write", tokens: usage.cachedWriteTokens ?? 0, color: "var(--chart-3)" },
-                { label: "Fresh input", tokens: usage.inputTokens, color: "var(--chart-1)" },
-                {
-                  label: "Output",
-                  tokens: usage.outputTokens,
-                  color: "var(--chart-4)",
-                  hint: usage.thoughtTokens ? `${formatTokens(usage.thoughtTokens)} thinking` : undefined,
-                },
-              ]}
-            />
-          </Section>
+          <ReadingSection title="Billed tokens" meta={cacheRate !== null && context?.cost ? `${cacheRate}% from cache` : undefined}>
+            <TokenBreakdown usage={usage} />
+          </ReadingSection>
         )}
 
         {(avgRate || ttftMs !== null || toolDurationMs > 0) && (
-          <Section title="Speed">
+          <ReadingSection title="Speed">
             <div className="flex gap-2">
-              {ttftMs !== null && <Tile label="First token" value={`${ttftMs}ms`} />}
+              {ttftMs !== null && <Tile label="First token" value={`${ttftMs}ms`} hint="last turn" />}
               {avgRate && (
                 <Tile
                   label={average?.kind === "throughput" ? "Throughput" : "Output"}
@@ -525,23 +442,23 @@ export function ContextIndicator({
               )}
               {toolDurationMs > 0 && <Tile label="In tools" value={formatDuration(toolDurationMs)} />}
             </div>
-          </Section>
+          </ReadingSection>
         )}
 
         {waits && (
-          <Section title="Between requests" meta={formatDuration(waits.totalMs)}>
+          <ReadingSection title="Between requests" meta={formatDuration(waits.totalMs)}>
             <dl className="space-y-1">
               {waitRows.map(([label, ms]) => (
                 <Row key={label} label={label} value={formatDuration(ms)} />
               ))}
             </dl>
-          </Section>
+          </ReadingSection>
         )}
 
         {/* Each child's own bill, apart from the session's: some runtimes count a
             child in the turn that launched it, so adding them would double those. */}
         {spend.length > 0 && (
-          <Section title="Subagents" meta={`${spend.length} · ${formatTokens(spendTotal)}`}>
+          <ReadingSection title="Subagents" meta={`${spend.length} · ${formatTokens(spendTotal)}`}>
             <dl className="space-y-1">
               {spend.slice(0, SUBAGENT_ROWS).map((child) => (
                 <Row
@@ -553,7 +470,7 @@ export function ContextIndicator({
               ))}
               {spend.length > SUBAGENT_ROWS && <Row label={`${spend.length - SUBAGENT_ROWS} more`} value="" />}
             </dl>
-          </Section>
+          </ReadingSection>
         )}
         <PlanUsage thread={thread} meta={meta} actions={actions} />
       </ReadingPopoverContent>
