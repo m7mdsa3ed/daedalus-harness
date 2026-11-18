@@ -22,12 +22,21 @@ line: keep each bullet on a single line.
 
 - **`@openuidev/react-lang` is 1.1.1** (from 1.0.1): streamed views skip re-rendering elements whose props did not change, and `@Round`/`@Abs`/`@Floor`/`@Ceil` also map over arrays, which the generated prompt now says.
 
+### 2026-11-15
+
+- **On Claude Code, linking the `agents` server is the choice between its engine and ours, and it closes the runtime's subagent launcher too.** The `agent` tool's workflow fields are now always advertised; linked, the bridge disallows Claude Code's `Workflow` and its `Agent` (alias `Task`) launcher and allows `mcp__agents`, so every hand-off is one tool, and unlinked the native ones stay. Seed 41 adds `builtinTools.tools.subagent: ["Agent", "Task"]` inside an existing claude-code row (a row with its own `subagent` list keeps it), and `WORKFLOW_SERVER_NAME` is removed.
+- **The Daedalus agent's prompt names the harness's `agent` tool when that is how it delegates.** Under `subagents: "harness"` the deferred `mcp__agents__agent` used to be missing from the tool names the prompt was given, so it told the model it had no way to delegate; `delegationTool` now picks `task` or the harness tool, and the prompt says to load it once through tool search and when to hand off broad exploration or write a workflow for independent parts.
+
 ### 2026-11-14
 
 
 
 
 - **The server survives the database going away and says so while it reconnects.** Boot waits for Postgres with backoff instead of crashing into a pm2 restart loop; once it has failed a query on a connection error, every `/api` route answers `503 { error: "database unavailable — reconnecting" }` at once instead of waiting out the 10s connect timeout, a request arriving while down re-probes it (at most every 2s, on its own short-timeout client) and the first success marks it back up, and `/api/health` carries `database: {up, since?, error?}`.
+
+### 2026-11-05
+
+- **Workflows run five steps at once by default and the `agent` tool teaches models to split work wide.** A `steps`/`phases` definition used to default `maxParallel` to 3 while a script ran 5; the graph now takes the engine's own `defaultConcurrency`/`maxConcurrency` (`workflows/graph.ts`). The tool's manual says a phase is a barrier that waits for its slowest step, steers later steps to depend on only what they read, and adds splitting rules: split by disjoint area, keep the graph wide and shallow, size `maxParallel` to the widest layer, brief each step fully, isolate only overlapping edits, `forEach` over a schema'd list instead of a script, and end with a verify step (`workflows/manual.ts`, `agents-mcp.ts`).
 
 ### 2026-11-04
 

@@ -609,14 +609,10 @@ export function knowledgeServer(project: Pick<Project, "id">): StdioMcpServer {
  * so it drives the run over HTTP, and the key in that path is what lets the
  * route act for exactly this thread and no other.
  *
- * `workflows` is the other half of that address, and it is the RUNTIME's answer
- * (`AgentDef.workflowsVia === "native"`), not the caller's: a runtime with an
- * engine of its own is not offered ours, by the rule in
- * `docs/mcp-and-workflows.md`, and the schema is generated per thread from it
- * so a capability that is not on offer is not advertised either. It used to be
- * a second stdio server — `workflow` — which meant a model with two tool
- * families doing one thing; the tools moved here and the flag says whether the
- * workflow shapes of `agent` are theirs to use.
+ * The workflow shapes of `agent` are always on: a runtime with an engine of
+ * its own has it switched off when this server is linked (`workflowViaMcp`),
+ * so linking the server IS choosing ours. It used to be a second stdio server
+ * — `workflow` — which meant a model with two tool families doing one thing.
  *
  * `roles` is the thread's helper-model vocabulary, resolved to model ids: a
  * role means nothing to another pair, so the tool resolves one on the server
@@ -625,11 +621,11 @@ export function knowledgeServer(project: Pick<Project, "id">): StdioMcpServer {
 export function agentsServer(
   session: Pick<Session, "id">,
   runner: WorkflowUrlSource,
-  opts: { workflows: boolean; roles: { id: string; label: string; description: string; model: string }[] },
+  opts: { roles: { id: string; label: string; description: string; model: string }[] },
 ): StdioMcpServer {
   return harnessMcpServer(AGENTS_SERVER_NAME, "agents-mcp", [
     { name: "AGENTS_URL", value: runner.urlFor(session) },
-    ...(opts.workflows ? [{ name: "AGENTS_WORKFLOWS", value: "1" }] : []),
+    { name: "AGENTS_WORKFLOWS", value: "1" },
     ...(opts.roles.length ? [{ name: "AGENTS_ROLES", value: JSON.stringify(opts.roles) }] : []),
   ]);
 }
@@ -2372,36 +2368,19 @@ export class SessionManager {
        accounting — caps, cancel propagation, restart recovery — a tree, and a
        definition that spawns itself the obvious failure. One level.
 
-       Neither is a runtime that brings a workflow engine of its own
-       (`AgentDef.workflowsVia === "native"`, which today is Claude Code). The
-       harness's server exists because Codex and OpenCode have nothing like a
-       workflow; Claude Code's `Workflow` tool writes a *script* — loops,
-       branching, fan-out over a list it discovered — where a definition here is
-       a static graph of at most 16 steps, and the harness can now draw its runs
-       (`AIR_META` in acp-bridge.ts, `nativeWorkflowRun` in the
-       client), which is the only thing it ever lacked. Handing such a runtime
-       the lesser engine AND disallowing its own — which is what linking the
-       server does, see `workflowViaMcp` — would be trading down.
-
-       Read off the row and not compared against a literal id, which is what it
-       was: a fork of claude-agent-acp under another id got the lesser engine
-       *and* kept its own, and a runtime that grows a workflow engine could not
-       say so without an edit here.
-
-       Enforced here rather than left to whoever edits the profile's links:
-       the two decisions are one decision, and a half-applied one silently
-       costs the better tool. */
+       On a runtime that brings a workflow engine of its own (Claude Code's
+       `Workflow`), the link is the choice between the two: linking `agents`
+       hands it ours, workflow shapes included, and switches its own off —
+       its subagent launcher too, since `agent` is every hand-off
+       (`workflowViaMcp` → `builtinTools.workflow`/`.subagent` in the bridge's
+       `disallowedTools`); not linking it leaves the native ones alone. The
+       harness's script engine speaks Claude Code's API name for name, so
+       neither side is a trade down, and two engines offered side by side is
+       a model picking between two tools that do one thing. */
     const agent = await getAgent(session.agentId);
-    const ownsWorkflows = agent?.workflowsVia === "native";
-    /* One server for every way of handing work to another worker. `workflows`
-       is false on a runtime that brings its own engine (`AgentDef.workflowsVia
-       === "native"`, today Claude Code): the tool is still offered — asking
-       another pair rivals nothing — but its `steps`/`script`/`name` fields are
-       not advertised, so a capability that is not on offer is not promised. */
     const agents =
       this.workflowRunner && !session.parentSessionId
         ? agentsServer(session, this.workflowRunner, {
-            workflows: !ownsWorkflows,
             roles: await this.roleDefsFor(session),
           })
         : null;
@@ -2434,10 +2413,11 @@ export class SessionManager {
     return {
       mcpServers,
       websearchViaMcp: mcpServers.some((s) => s.name === WEB_SEARCH_SERVER_NAME),
-      /* Whether the workflow half of the `agents` server is on offer. Read off
-         the spawned server rather than off the row again, so what the bridge is
-         told and what the tool advertises cannot disagree. */
-      workflowViaMcp: mcpServers.some((s) => s.name === AGENTS_SERVER_NAME) && (agent?.workflowsVia ?? null) !== "native",
+      /* Whether the harness's workflows are on offer, which on a runtime with
+         an engine of its own is what switches that one off. Read off the
+         spawned server, so what the bridge is told and what the tool
+         advertises cannot disagree. */
+      workflowViaMcp: mcpServers.some((s) => s.name === AGENTS_SERVER_NAME),
     };
   }
 

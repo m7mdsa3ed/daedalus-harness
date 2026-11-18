@@ -17,7 +17,8 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   web tools and what gates usage recording — is now "the resolved list contains it",
   for any agent. **Which tools those are is the agent row's** (`AgentDef.builtinTools`, seed
   20: `{via: "acp-meta", tools: {webSearch: ["WebSearch", "WebFetch"], workflow:
-  ["Workflow"]}}` on claude-code, nothing on the rest): the bridge spells no tool name, so an
+  ["Workflow"]}}` on claude-code, plus seed 41's `subagent: ["Agent", "Task"]`, nothing on the
+  rest): the bridge spells no tool name, so an
   agent with no declaration keeps its built-ins beside ours — which is all the harness can
   honestly do without a door to close them — and a runtime that grows one says so on its row.
   **The disallow travels with an allow rule for `mcp__web-search`**
@@ -226,16 +227,19 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
   be a second library row (`builtin:workflow`) with its own MCP server, which is what put two
   tool families in front of a model for one job; the row is retired at boot and its links
   cascade. On Claude Code, which has an engine of its own, linking `agents` disallows its
-  native `Workflow` and allows `mcp__agents` (`AcpBridge.sessionMeta`, `workflowViaMcp`), for
-  exactly the classifier reason the web-search pair exists.
+  native `Workflow` **and its `Agent` subagent launcher (`Task`, its old name, too)** and allows
+  `mcp__agents` (`AcpBridge.sessionMeta`, `workflowViaMcp`), for exactly the classifier reason
+  the web-search pair exists. The launcher goes with it because `agent` is every hand-off: a
+  prompt alone is an own-pair subagent that is a real thread (openable, capped, resumable),
+  and leaving the native one beside it was two tools for one job.
 
-  **A runtime with its own engine keeps it, by rule and not by configuration**
-  (`ownsWorkflows` in `serversFor`): linking the server to it would disallow its native
-  `Workflow`, and those are one switch. Enforced at spawn rather than left to whoever edits a
-  profile's links, where applying half of it silently costs a tool. Which runtime that is
-  comes off the row (`AgentDef.workflowsVia === "native"`, seed 20) and not from a literal
-  `agentId === "claude-code"`, which is what it was: a fork of claude-agent-acp under another
-  id was handed the lesser engine *and* kept its own.
+  **On a runtime with its own engine, the link is the choice** (`serversFor`): linking
+  `agents` hands it ours, workflow shapes included, and switches its native `Workflow` and
+  `Agent` off — one switch, so two engines are never offered side by side; leaving it unlinked
+  keeps the native ones. It used to be refused outright (`ownsWorkflows`), on the grounds that a static
+  graph was a trade down from a script — but the script engine below speaks Claude Code's
+  API name for name, so picking ours costs nothing. Which runtime has one is still the row's
+  (`AgentDef.workflowsVia === "native"`, seed 20), never a literal id.
 
   **There are two engines here now, and the second runs a program the agent wrote.**
   That reverses the rule the first was built on — stated at the top of
@@ -610,9 +614,8 @@ scheduler, the growing `def`, `workflow_runs` or "nothing survives a restart", t
   because a long job is not an errand. The manual's BACKGROUND paragraph is true exactly
   there, and the field description names both so a model cannot assume one for the other.
 - **The schema is generated per thread.** `steps`/`phases`/`script`/`name`/`args` and the
-  flow fields appear only where
-  `AgentDef.workflowsVia !== "native"` (Claude Code keeps its own `Workflow`), read off the
-  row and never off the id; `role` appears only when the profile's vocabulary is non-empty,
+  flow fields appear wherever the server is linked (on Claude Code that switches its own
+  `Workflow` and `Agent` off); `role` appears only when the profile's vocabulary is non-empty,
   and the pair list in the description comes from `WorkflowEngine.pairs`. A capability that
   is not on offer is not advertised, which is the same rule `rolesClause` already followed.
 - **`steps` and `script` both stay, on purpose.** `steps` compiles to a script

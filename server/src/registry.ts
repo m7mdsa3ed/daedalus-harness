@@ -184,11 +184,11 @@ export interface AgentDef {
   /**
    * Whether this runtime brings a workflow engine of its own.
    *
-   * `"native"` (claude-code) means the harness's workflow MCP server is not
-   * handed to its threads: linking ours *disallows* the runtime's own (see
-   * `builtinTools`), and a static graph of at most 16 steps is a trade down
-   * from a script that can loop and fan out. Null (codex, opencode, daedalus)
-   * means it has none, and the harness's is offered.
+   * `"native"` (claude-code) means it has one: linking the harness's `agents`
+   * server picks ours and switches the runtime's off (`builtinTools.workflow`,
+   * and its subagent launcher with it, `builtinTools.subagent`),
+   * and leaving it unlinked keeps the native one. Null (codex, opencode,
+   * daedalus) means it has none. Descriptive: the choice is the link.
    *
    * Declared here rather than compared against a literal agent id in
    * `sessions.ts`, which is what it was: a fork of claude-agent-acp under
@@ -618,11 +618,24 @@ const BUILTIN_TOOLS: Record<string, BuiltinToolOverrides> = {
   "claude-code": {
     via: "acp-meta",
     // The runtime's own names, which is exactly why they are data: `Workflow`
-    // is Claude Code's orchestration tool and `WebSearch`/`WebFetch` its web
-    // pair. Nothing outside this row spells any of them.
-    tools: { webSearch: ["WebSearch", "WebFetch"], workflow: ["Workflow"] },
+    // is Claude Code's orchestration tool, `Agent` its subagent launcher
+    // (`Task` is the name it had, still accepted as an alias) and
+    // `WebSearch`/`WebFetch` its web pair. Nothing outside this row spells
+    // any of them.
+    tools: { webSearch: ["WebSearch", "WebFetch"], workflow: ["Workflow"], subagent: ["Agent", "Task"] },
   },
 };
+
+/** Seed 41's one key, added to a claude-code row that already has its built-ins:
+    `backfill20` fills only an absent column, so a row seeded at 20 would never
+    get it. A row that names its own `subagent` list — or another door, or none
+    — is the user's and is left alone. */
+function withSubagentTools(existing: AgentDef): Pick<AgentDef, "builtinTools"> | Record<string, never> {
+  const own = existing.builtinTools;
+  const seeded = BUILTIN_TOOLS["claude-code"];
+  if (!own || own.via !== seeded.via || own.tools.subagent !== undefined) return {};
+  return { builtinTools: { ...own, tools: { ...own.tools, subagent: seeded.tools.subagent } } };
+}
 
 /** Which binary reports the built-in model catalog a generated one copies. */
 const CATALOG_PROBES: Record<string, CatalogProbe> = {
@@ -1062,7 +1075,10 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // "acp-system-prompt"`, claude-agent-acp ≥ 0.100), with `"air-meta"` as the
     // fallback an adapter that does not advertise it still gets. Only the two
     // seeded doors move; a row naming anything else keeps it. Env untouched.
-    since: 40,
+    // Seed 41 names its subagent launcher (`builtinTools.tools.subagent`), so
+    // linking the `agents` server closes it beside `Workflow`
+    // (`withSubagentTools`). Env untouched.
+    since: 41,
     backfill: (existing) => ({
       env: withoutClaudeOtlp(withoutSubagentModelKey(
         withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
@@ -1080,6 +1096,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       workflowsVia: existing.workflowsVia ?? "native",
       pauseVia: existing.pauseVia ?? "acp-meta",
       ...backfill20(existing),
+      ...withSubagentTools(existing),
     }),
     id: "claude-code",
     name: "Claude Code",

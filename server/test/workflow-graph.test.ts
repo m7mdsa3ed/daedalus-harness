@@ -19,6 +19,7 @@ const {
   validateOutput,
   collectRefs,
 } = await import("../src/workflows/graph.js");
+const { ENGINE_LIMITS } = await import("../src/workflows/types.js");
 
 let passed = 0;
 const failures: string[] = [];
@@ -47,7 +48,7 @@ const parse = (def: unknown) => WorkflowDefinitionSchema.parse(def);
 // ---- validation (ported) ----
 test("accepts a pipeline and fills the defaults", () => {
   const r = parse(good);
-  assert.equal(r.maxParallel, 3);
+  assert.equal(r.maxParallel, ENGINE_LIMITS.defaultConcurrency);
   assert.equal(r.steps[0].output, "text");
   assert.deepEqual(r.steps[0].dependsOn, []);
   assert.equal(r.onRestart, "resume");

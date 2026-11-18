@@ -146,6 +146,23 @@ await test("seed 40 moves the seeded doors forward and leaves any other door alo
   assert.equal((await getAgent("codex"))!.personaVia, "air-meta", "a door that was never the seed's stays");
 });
 
+// Seed 41: Claude Code's subagent launcher goes off beside `Workflow` when the
+// `agents` server is linked. A row seeded at 20 already has `builtinTools`, so
+// the column-level backfill never reaches it — the key is added inside it.
+await test("seed 41 adds the subagent launcher to a claude-code row's built-ins and keeps a user's own list", async () => {
+  const seeded20 = { via: "acp-meta" as const, tools: { webSearch: ["WebSearch", "WebFetch"], workflow: ["Workflow"] } };
+  await resetAgents([{ id: "claude-code", seededVersion: 40, env: {}, builtinTools: seeded20 } as never]);
+  await seedAgents();
+  const tools = (await getAgent("claude-code"))!.builtinTools!.tools;
+  assert.deepEqual(tools.subagent, ["Agent", "Task"]);
+  assert.deepEqual(tools.workflow, ["Workflow"], "the rest of the row is untouched");
+
+  const mine = { ...seeded20, tools: { ...seeded20.tools, subagent: [] as string[] } };
+  await resetAgents([{ id: "claude-code", seededVersion: 40, env: {}, builtinTools: mine } as never]);
+  await seedAgents();
+  assert.deepEqual((await getAgent("claude-code"))!.builtinTools!.tools.subagent, [], "a list the user wrote is theirs");
+});
+
 console.log(`agent-seeds: ${passed} passed, ${failures.length} failed`);
 for (const f of failures) console.error(`  ✗ ${f}`);
 process.exit(failures.length ? 1 : 0);

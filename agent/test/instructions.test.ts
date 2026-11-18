@@ -144,6 +144,14 @@ process.env.HOME = home;
   assert.ok(full.includes("its own complete JSON arguments object"), "argument discipline is stated");
   // Cruft from another product: a tool that has never existed here.
   assert.ok(!full.includes("WebFetch"), "no tool from another harness is named");
+
+  /* Under the harness the hand-off tool is the deferred `mcp__agents__agent`,
+     never in `toolNames` — and the prompt said "There is no subagent tool". */
+  const harness = systemPrompt(working, env, { toolNames: [...readOnly, "bash", "search_tools"], delegate: "mcp__agents__agent" });
+  assert.ok(harness.includes("select:agents/agent"), "the harness's agent tool is named with how to load it");
+  assert.ok(harness.includes("`phases`"), "workflows are recommended for staged work");
+  assert.ok(!harness.includes("no subagent tool"), "a thread holding agent is not told it has none");
+  assert.ok(!harness.includes("use the task tool"), "task is not named where it was not built");
   console.log("instructions: prompt names the live tool set ok");
 }
 

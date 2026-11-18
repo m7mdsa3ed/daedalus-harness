@@ -27,8 +27,10 @@ export const LIMITS = {
   maxSteps: 64,
   /** Phases in one definition. A phase is a barrier. */
   maxPhases: 12,
-  maxParallel: 16,
-  defaultParallel: 3,
+  /* The engine's numbers, not a second set: a graph and a script are one
+     scheduler, so a run's default width cannot depend on how it was written. */
+  maxParallel: ENGINE_LIMITS.maxConcurrency,
+  defaultParallel: ENGINE_LIMITS.defaultConcurrency,
   /** Of a step's final prose kept as its output (and shown to the next step). */
   outputBytes: 256 * 1024,
 } as const;

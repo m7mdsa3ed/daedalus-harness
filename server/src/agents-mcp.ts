@@ -22,8 +22,8 @@
  * going reports back as a <task-notification>.
  *
  * The schema is generated per thread from what the thread can actually use — the
- * workflow fields only where the runtime has no engine of its own, the roles only
- * where the profile names some — because a capability that is not on offer must
+ * workflow fields where the spawn says so, the roles only where the profile
+ * names some — because a capability that is not on offer must
  * not be advertised (`AGENTS_WORKFLOWS`, `AGENTS_ROLES`, both from the spawn).
  *
  *   node dist/agents-mcp.js
@@ -44,10 +44,9 @@ if (!url) {
 const DEFAULT_WAIT_SEC = 45;
 const MAX_WAIT_SEC = 55;
 
-/** Whether this thread may run a graph or a script. False on a runtime that
-    brings its own workflow engine (`AgentDef.workflowsVia === "native"`), and
-    the fields are then not advertised at all — linking ours would disallow the
-    better one, by the rule in docs/mcp-and-workflows.md. */
+/** Whether this thread may run a graph or a script. The harness always says
+    yes (on a runtime with an engine of its own, linking this server is what
+    switches that one off); unset, the fields are not advertised at all. */
 const WORKFLOWS = process.env.AGENTS_WORKFLOWS === "1";
 
 /** One helper model this thread can run a subagent on, from the spawn
@@ -345,7 +344,7 @@ const agentFields: z.ZodRawShape = {
           .min(1)
           .optional()
           .describe(
-            "The same plan grouped into named stages that run one after another ({name, steps}): a phase starts only when the phase before it has finished, and its own steps run side by side. Give this OR `steps`, not both.",
+            "The same plan grouped into named stages that run one after another ({name, steps}): a phase starts only when the phase before it has finished, and its own steps run side by side. Each phase is a barrier that waits for its slowest step — use `steps` with targeted dependsOn when a later step needs only one earlier step. Give this OR `steps`, not both.",
           ),
         budgets: BudgetsSchema.optional().describe("Run limits; hitting one stops new agents and ends the run with its partial result. Set them for open-ended fan-out."),
         maxParallel: z.number().int().min(1).max(LIMITS.maxParallel).optional().describe(`Steps of this run at once (default ${LIMITS.defaultParallel}, max ${LIMITS.maxParallel}).`),

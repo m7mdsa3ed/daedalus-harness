@@ -240,8 +240,11 @@ export interface BuiltinToolOverrides {
   tools: {
     /** Replaced by the built-in web-search MCP server. */
     webSearch?: string[];
-    /** Replaced by the harness's workflow MCP server. */
+    /** Replaced by the `agents` server's workflow shapes. */
     workflow?: string[];
+    /** Replaced by the `agents` server's own-pair subagent (`agent` with a
+        `prompt` alone), switched off with `workflow` so a hand-off is one tool. */
+    subagent?: string[];
   };
 }
 
@@ -305,10 +308,11 @@ export const agents = pgTable("agents", {
       (`registry.ts › AgentDef.rewindVia`): `"acp-fork-point"` = `session/fork`
       with the jetbrains.air fork point. Null = rewind is not offered. */
   rewindVia: text("rewind_via").$type<"acp-fork-point">(),
-  /** Whether this runtime has a workflow engine of its own. `"native"` = the
-      harness's workflow MCP server is not offered to its threads, because
-      handing it the lesser engine costs the better one (`sessions.ts`). Null =
-      it has none, and the harness's is linked when the profile links it. */
+  /** Whether this runtime has a workflow engine of its own. `"native"` = it
+      does, and linking the harness's `agents` server switches it off in favour
+      of ours (`builtinTools.workflow`, and its subagent tool with it,
+      `builtinTools.subagent`); unlinked, the native ones stay. Null =
+      it has none. */
   workflowsVia: text("workflows_via").$type<"native">(),
   /** How a pause reaches a runtime with none of its own (`AgentDef.pauseVia`).
       `"acp-meta"` = the harness's step hooks through `_meta.claudeCode.options

@@ -664,6 +664,7 @@ test("seed 20 puts the workflow engine, the built-in tools and the catalog probe
   assert.equal(tools?.via, "acp-meta");
   assert.deepEqual(tools?.tools.webSearch, ["WebSearch", "WebFetch"]);
   assert.deepEqual(tools?.tools.workflow, ["Workflow"]);
+  assert.deepEqual(tools?.tools.subagent, ["Agent", "Task"]);
   assert.equal((await getAgent("codex"))?.builtinTools, null);
   // The module constant that read `codex` off PATH.
   assert.equal((await getAgent("codex"))?.catalogProbe?.kind, "codex-cli");

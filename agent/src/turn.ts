@@ -29,8 +29,8 @@ import {
   type Release,
 } from "./hold.js";
 import type { Session } from "./session.js";
-import { buildTools, metaFor, type ToolMeta, type ToolRuntime } from "./tools/index.js";
-import { deferMcpTools } from "./tools/tool-search.js";
+import { buildTools, delegationTool, HARNESS_AGENT_TOOL, metaFor, type ToolMeta, type ToolRuntime } from "./tools/index.js";
+import { deferMcpTools, SEARCH_TOOL } from "./tools/tool-search.js";
 import { generateTitle } from "./title.js";
 import { Emitter } from "./updates.js";
 import { Meter, normalizeUsage, toAcpUsage, totalOf, type CallMetering, type StepLead, type WaitCause } from "./metering.js";
@@ -318,7 +318,7 @@ export async function handlePrompt(
         /* The system prompt names the tools that are never deferred; a loaded
            MCP tool is said by the search result that loaded it, so a load never
            rewrites the prompt — not this turn, and not the next one either. */
-        const sections = systemSections(session, deps.env, { toolNames: deferral?.base ?? Object.keys(tools) });
+        const sections = systemSections(session, deps.env, { toolNames: deferral?.base ?? Object.keys(tools), delegate: delegationTool(tools) });
         const system = sections.map((part) => part.text).join("\n\n");
 
         const result = streamText({
@@ -1265,7 +1265,7 @@ async function runSubagent(
 export function systemPrompt(
   session: Session,
   env: AgentEnv,
-  opts: { subagent?: boolean; toolNames?: string[] } = {},
+  opts: { subagent?: boolean; toolNames?: string[]; delegate?: string | null } = {},
 ): string {
   return systemSections(session, env, opts)
     .map((part) => part.text)
@@ -1283,7 +1283,7 @@ export interface SystemSection {
 export function systemSections(
   session: Session,
   env: AgentEnv,
-  opts: { subagent?: boolean; toolNames?: string[] } = {},
+  opts: { subagent?: boolean; toolNames?: string[]; delegate?: string | null } = {},
 ): SystemSection[] {
   const parts: SystemSection[] = [];
   const section = (name: string, text: string) => parts.push({ name, text });
@@ -1294,6 +1294,10 @@ export function systemSections(
      mode, where bash is not there at all, is exactly how that failed. */
   const toolNames = opts.toolNames ?? [];
   const has = (name: string) => toolNames.length === 0 || toolNames.includes(name);
+  /* The hand-off tool is said apart from `toolNames`: under the harness it is
+     an MCP tool, deferred, so it is never among the names the prompt is given
+     — and the prompt used to tell a thread holding it that it had none. */
+  const delegate = opts.delegate !== undefined ? opts.delegate : has("task") ? "task" : null;
   /* ACP `systemPrompt` in `override` mode: the client's text stands in for
      the runtime's *built-in default instructions* — this core block and the
      model guidance below — and for nothing else. The spec keeps tools, modes
@@ -1418,7 +1422,16 @@ ${
     : `- Read with read_file and search with glob and grep. There is no shell this turn, so anything you would have reached for a command line to learn has to come from those three.`
 }
 ${
-  has("task")
+  delegate === HARNESS_AGENT_TOOL
+    ? `- You delegate through the harness's \`agent\` tool (\`${HARNESS_AGENT_TOOL}\`). It is deferred like every MCP tool: load it once with ${SEARCH_TOOL} \`select:agents/agent\`, then call it. Every call makes a run whose workers are real threads of this project, and a worker sees only the brief you write — goal, files, constraints and what to send back.
+- For broad exploration — a question that is not a needle query for one file, class or function — hand it to a subagent: \`agent\` with \`prompt\` and \`description\` alone, which runs on your own model and keeps the search out of your context.
+- For work with independent parts or stages — several areas to audit at once, research then implement then verify, a change and a review of it — write a workflow instead of a run of subagents: \`phases\` (or \`steps\` with \`dependsOn\`) when the plan is known up front, \`script\` only when its shape depends on what an earlier step finds. Give parallel steps that edit files \`isolation: "worktree"\`, and set \`budgets\` on open-ended fan-out.
+- A run that outlasts the call reports back as a <task-notification>: do not poll it. Do other work, or end your turn if there is none. Leave \`agent\`/\`profile\` out unless the user named another agent.
+<example>
+user: Where are errors from the client handled?
+assistant: [Loads agents/agent, then calls it with a prompt to find the files that handle client errors]
+</example>`
+    : delegate === "task"
     ? `- For broad exploration — a question that is not a needle query for one file, class or function — use the task tool instead of running the searches yourself. It keeps the search out of your context.
 <example>
 user: Where are errors from the client handled?

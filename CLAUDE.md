@@ -452,9 +452,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   never a one-click POST, because half of what publishers ship is a placeholder or an API key.
   **The registry never says how a remote authenticates**: a browsed row is `auth: "none"` and
   the save path's probe decides.
-- **Workflows are the harness's, except where the runtime says it has its own**
-  (`AgentDef.workflowsVia === "native"` — Claude Code: linking ours disallows its better one,
-  so ours is not offered). A definition is **declarative JSON**; a script is Claude Code's API,
+- **Workflows are the harness's; on a runtime with its own, the link picks**
+  (`AgentDef.workflowsVia === "native"` — Claude Code: linking `agents` offers ours and
+  disallows its `Workflow`, unlinked it keeps its own; never both). A definition is **declarative JSON**; a script is Claude Code's API,
   name for name, and its saved workflows live in Claude Code's own `.claude/workflows/`.
   **A run starts in the background and its end is a message** (`<task-notification>` through
   the scheduler's `fire`), never a poll the agent has to keep up. **Every step is a real thread** on the parent's own profile, agent, model,

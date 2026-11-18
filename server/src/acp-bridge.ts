@@ -34,7 +34,7 @@ import type {
 import { optionFor, stanceFor, type AutonomyPolicy } from "./autonomy.js";
 import type { Peer } from "./sessions.js";
 import { WEB_SEARCH_SERVER_NAME } from "./websearch.js";
-import { WORKFLOW_SERVER_NAME } from "./workflows/types.js";
+import { AGENTS_SERVER_NAME } from "./workflows/types.js";
 import type { BuiltinToolOverrides } from "./db/schema.js";
 import type { AcpConnection, ConnectionRoute } from "./acp-connection.js";
 import type { OrphanPrompt, WireLedger } from "./adopt-state.js";
@@ -781,8 +781,9 @@ export interface BridgeOptions {
       the runtime's own web tools are called, they are being replaced, and are
       switched off or the model keeps calling the originals instead of ours. */
   websearchViaMcp?: boolean;
-  /** The harness's workflow MCP server is replacing the runtime's own
-      orchestration tool, for the same reason and with the same allow rule. */
+  /** The harness's `agents` server is replacing the runtime's own hand-off
+      tools — its orchestration tool and its subagent launcher — for the same
+      reason and with the same allow rule. */
   workflowViaMcp?: boolean;
   /** The thread's persona, for an agent whose `personaVia` is one of the
       bridge's doors (`BridgePersonaVia`) — see `personaRequestFields`.
@@ -1187,9 +1188,14 @@ export class AcpBridge implements ConnectionRoute {
       disallowedTools.push(...builtin.webSearch);
       allowedTools.push(`mcp__${WEB_SEARCH_SERVER_NAME}`);
     }
-    if (opts.workflowViaMcp && builtin?.workflow?.length) {
-      disallowedTools.push(...builtin.workflow);
-      allowedTools.push(`mcp__${WORKFLOW_SERVER_NAME}`);
+    /* The `agents` server is every hand-off — subagent, ask and workflow — so
+       linking it closes both of the runtime's own: two subagent launchers side
+       by side is a model picking between two tools that do one thing, and the
+       runtime's children are not threads the harness can open, cap or resume. */
+    const handOff = [...(builtin?.workflow ?? []), ...(builtin?.subagent ?? [])];
+    if (opts.workflowViaMcp && handOff.length) {
+      disallowedTools.push(...handOff);
+      allowedTools.push(`mcp__${AGENTS_SERVER_NAME}`);
     }
     if (disallowedTools.length > 0) Object.assign(options, { disallowedTools, allowedTools });
 

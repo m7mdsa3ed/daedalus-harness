@@ -37,6 +37,18 @@ export function metaFor(meta: Record<string, ToolMeta>, toolName: string): ToolM
   return MCP_META;
 }
 
+/** The harness's `agents` server's one hand-off tool, as the MCP client names it
+    (`mcp.ts`). Under the harness (`subagents: "harness"`) it replaces `task`. */
+export const HARNESS_AGENT_TOOL = "mcp__agents__agent";
+
+/** The tool this turn delegates through, if any — what the system prompt must
+    name, because the harness's one is deferred and so absent from the names the
+    prompt is otherwise given. */
+export function delegationTool(tools: Record<string, unknown>): string | null {
+  if ("task" in tools) return "task";
+  return HARNESS_AGENT_TOOL in tools ? HARNESS_AGENT_TOOL : null;
+}
+
 export interface BuildToolsOptions {
   /** Plan mode strips everything that writes; a subagent loop strips `task`. */
   subagent?: boolean;

@@ -323,9 +323,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   never a one-click POST, because half of what publishers ship is a placeholder or an API key.
   **The registry never says how a remote authenticates**: a browsed row is `auth: "none"` and
   the save path's probe decides.
-- **Workflows are the harness's, except where the runtime says it has its own**
-  (`AgentDef.workflowsVia === "native"` — Claude Code: linking ours disallows its better one,
-  so ours is not offered). A definition is **declarative JSON compiled to a script** (`workflows/graph.ts`): there is one program model and one scheduler, and the journal (`wf_events`) is the run's state. **Every step is a real thread** on the parent's own profile, agent, model,
+- **Workflows are the harness's; on a runtime with its own, the link picks**
+  (`AgentDef.workflowsVia === "native"` — Claude Code: linking `agents` offers ours and
+  disallows its `Workflow`, unlinked it keeps its own; never both). A definition is **declarative JSON compiled to a script** (`workflows/graph.ts`): there is one program model and one scheduler, and the journal (`wf_events`) is the run's state. **Every step is a real thread** on the parent's own profile, agent, model,
   effort, persona and links. One level, never a tree. **A restart resumes a run, it does not end it**: the script replays from the journal, a completed step is never re-run, an unresolved gate resumes, and a step in flight follows its `onRestart` (`resume` by default). Downtime is not run time (`run_recovered`). Anything hashed or handed back to a script crosses `canon()` first, because `jsonb` reorders keys. Design: `docs/workflow-engine-v2.md`.
 - **A run outlives the turn that launched it, so a turn ending is not the thread being
   done.** A native workflow answers its prompt at "launched" and works on, so `turnActive`
@@ -343,8 +343,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `WorkflowEngine.launch`, so the id, the notification, the follow-up (`agent_message`), the
   stop (`agent_control`) and the cap are one system. The schema is flat (no `oneOf`: some
   providers reject unions), exactly one shape field is required and the handler says which
-  it got, and it is generated per thread — the workflow fields only where
-  `AgentDef.workflowsVia !== "native"`, `role` only when the vocabulary is non-empty.
+  it got, and it is generated per thread — `role` only when the vocabulary is non-empty.
   **An ask** is unchanged underneath: `ask_profiles` outrank the model, a missing choice
   raises the `askAgentPair` elicitation, the parent's model and mode ids never cross to
   another pair, and its row wears an `AskAgentChip`. **An own-pair subagent** is a real child
@@ -536,44 +535,25 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `--harness-composer-width`, so the whole unit breathes on every click in and out of the
   textarea, which is motion the reader did not ask for at the exact moment they are aiming
   at something.
-- **After the first message the composer may be the mini one, and the advanced form is a toggle on
-  it — nothing is hidden behind a button of its own.** It is the reader's switch, `miniComposer`
-  in View options, **off by default**: a started thread keeps the full box until they ask for the
-  small one, and the switch is read during render so it moves a box already on screen.
-  `ThreadView` hands `Composer` `compact` (the thread is not empty), and the mini box is the editor, the toggle and Send on one line:
-  **the two faces — the project's mark and the pair's avatars — stand down while the reader is
-  writing** (`marksDown`: the box has the caret or holds words, said by `ComposerEditor`'s
-  `onFocusChange`), folded to zero width with an ease rather than unmounted so the words do not
-  jump under the caret; the "+" stays, since adding to a message is done while writing it.
-  The scope row, the add menu, the pickers and the readings come back with the toggle
-  (remembered per thread for the life of the page, `ADVANCED_THREADS`). A draft and the landing
-  console are the full box — the first message is written in it. `ThreadView` also hands it the
-  scroller's own pin (`useFollowStream.pinned`) as `collapsed`: leaving the tail folds an advanced
-  box back to mini, and **a fill re-opens it** (`revealed`), because a suggested follow-up, a
-  queued row's Edit or an "Ask about this" has to be seen. **The mini box is a capsule, the full
-  one is a card**: its corner is `--radius-composer-mini` (the theme's pill, half a line plus the
-  inset above and below) where the advanced form wears `--radius-composer` (the 2xl step capped at
-  1.5rem) — one line at the card's corner reads as a shrunken box, and the uncapped pill would turn
-  a box grown to four lines into a stadium — and both are stated through the theme's
-  `--app-radius-pill` so a Square theme stays square either way. **Its padding is a pair, not the
-  card's one number**, because its ends are all curve and its top and bottom are not:
-  `--spacing-composer-pad-mini` at the ends (12px — the smallest the sweep allows at a finger's
-  radius, and the shelf's own column) against `--spacing-composer-pad-mini-y` above and below
-  (the card's 6px), with the editor dropping its own `px-2` inside one. **One token is the line**
-  (`--composer-mini-line`, restated under a coarse pointer) and the editor, the toolbar and the
-  radius all read it, so the box cannot be measured for one height and drawn for another. Only a voice call still takes the box
-  away (the `composer-pill`, a clip-path morph that keeps the height it reserves,
-  `--composer-dock-h`). A composer that collapsed *itself* — on a narrow panel or a short window —
-  was tried and removed: it took the box away from someone who was typing, on no gesture at all.
+- **The composer has one form, the full card, on every thread.** The mini composer (a one-line
+  capsule after the first message, its advanced-form toggle, `miniComposer` in View options, and
+  the `compact`/`collapsed` props `ThreadView` handed it) was removed: every control, the scope row
+  and its readings are always drawn, and scrolling off the tail changes nothing. Only a voice call
+  still takes the box away (the `composer-pill`, a clip-path morph that keeps the height it
+  reserves, `--composer-dock-h`). A composer that collapsed *itself* — on a narrow panel or a short
+  window — was tried and removed: it took the box away from someone who was typing, on no gesture
+  at all.
 - **The shelf has a surface of its own** (`--shelf`, `bg-shelf`), derived from `--composer`
   and **darker than it in both modes — which is two declarations, not one**: darker is toward
   the foreground in a light palette and toward the *background* in a dark one, where
   `--composer` is already the lighter of the two tones. It wore `--surface`, which is the
   *page's* ground and resolves to the same thing `--composer` does in a light palette, so the
   shelf, the composer and the page were one flat band with an invisible tuck between them.
-  Derived, never picked, so every generated palette gets it for nothing. **Neither the composer
-  nor the shelf draws a hairline ring** — the two grounds meeting is the seam, and the
-  composer's only ring is the destructive one while voice is listening.
+  Derived, never picked, so every generated palette gets it for nothing. **The composer is a flat card**: a solid `bg-composer` ground with no
+  glass or blur, a `ring-edge` hairline that steps to `ring-focus-soft` while the editor has the
+  caret (the destructive ring while voice is listening), and a Send key the row's own size in
+  the theme's `rounded-key`, set apart by its fill, never by being bigger. The shelf draws no ring: its seam with the page is
+  the two grounds meeting.
 - **The shelf has a floor and a pile, and the floor is what is permanently true.** Project,
   tools and the context ring are `ComposerStrip`'s `footer` (`DraftScopeRow`) — always drawn,
   never a card, on **both** sides of the first message: a started thread's project only stops

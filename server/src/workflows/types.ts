@@ -411,10 +411,8 @@ export interface GatesApi {
 
 // ---- MCP server names ----------------------------------------------------------
 
-/** The MCP server's name: what the agent sees the tools under
-    (`mcp__workflow__run_workflow` in Claude Code, `mcp.workflow.run_workflow` in Codex). */
-export const WORKFLOW_SERVER_NAME = "workflow";
-/** The `agents` MCP server: one thread asking another (profile, agent) pair. */
+/** The `agents` MCP server: every hand-off (subagent, ask, workflow), seen by the
+    agent as `mcp__agents__agent` in Claude Code and `mcp.agents.agent` in Codex. */
 export const AGENTS_SERVER_NAME = "agents";
 /** The `harness` MCP server: the agent managing this harness. */
 export const HARNESS_SERVER_NAME = "harness";
