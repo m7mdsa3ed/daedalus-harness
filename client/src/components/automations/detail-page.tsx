@@ -661,6 +661,17 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
                 {project?.name ?? "Project missing"}
                 {routine.worktree && <span className="text-muted-foreground"> · own worktree</span>}
               </MetaCell>
+              {routine.continueThread && (
+                <MetaCell label="Thread" icon={<MessagesSquareIcon className="size-5" />}>
+                  {pinnedThread ? (
+                    <Link to={threadPath(pinnedThread.id)} className="underline-offset-2 hover:underline">
+                      {pinnedThread.title || "Same thread"}
+                    </Link>
+                  ) : (
+                    "Started on the next run"
+                  )}
+                </MetaCell>
+              )}
               <MetaCell label="Agent" icon={<AgentIcon agentId={routine.agentId} className="size-5" />}>
                 {agentName}
                 {[routine.model, routine.effort].filter(Boolean).length > 0 && (

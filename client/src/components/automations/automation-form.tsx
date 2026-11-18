@@ -88,6 +88,7 @@ export interface AutomationDraft {
   enabled: boolean
   runsIn: RoutineRunsIn
   sessionId: string
+  continueThread: boolean
   projectId: string
   profileId: string
   agentId: string
@@ -122,6 +123,7 @@ export function draftOf(routine: Routine): AutomationDraft {
     enabled: routine.enabled,
     runsIn: routine.runsIn,
     sessionId: routine.sessionId ?? "",
+    continueThread: routine.continueThread,
     projectId: routine.projectId,
     profileId: routine.profileId,
     agentId: routine.agentId,
@@ -156,6 +158,7 @@ export function blankDraft(seed: { projectId: string; profileId: string; agentId
     enabled: true,
     runsIn: "thread",
     sessionId: "",
+    continueThread: false,
     ...seed,
     model: "",
     effort: "",
@@ -259,6 +262,7 @@ export function toInput(draft: AutomationDraft, mode: Mode): { input: RoutineInp
       enabled: draft.enabled,
       runsIn: draft.runsIn,
       sessionId: session ? draft.sessionId : null,
+      continueThread: !session && draft.continueThread,
       catchup: draft.catchup,
       worktree: session ? false : draft.worktree,
       ...(session
@@ -545,9 +549,27 @@ export function AutomationForm({
               )}
             </>
           ) : (
-            <p className="px-1 text-xs text-muted-foreground">
-              Every fire starts a fresh thread, exactly as the composer would, and links it back to its run.
-            </p>
+            <>
+              <p className="px-1 text-xs text-muted-foreground">
+                {draft.continueThread
+                  ? "The first fire starts a thread, exactly as the composer would; every later fire continues it."
+                  : "Every fire starts a fresh thread, exactly as the composer would, and links it back to its run."}
+              </p>
+              <label className="flex items-start gap-2.5">
+                <Switch
+                  className="mt-0.5"
+                  checked={draft.continueThread}
+                  onCheckedChange={(continueThread) => patch({ continueThread })}
+                />
+                <span className="text-sm">
+                  Continue in the same thread
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    One conversation that remembers earlier runs, under this automation's agent and access. If the
+                    thread is deleted, the next fire starts a new one; if you are mid-turn in it, that fire is skipped.
+                  </span>
+                </span>
+              </label>
+            </>
           )}
         </>
       )}

@@ -58,6 +58,7 @@ export function routineFromScheduled(row: LegacyScheduled, owner: ThreadOwner | 
     dryRunCompleted: true,
     runsIn: "session",
     sessionId: row.sessionId,
+    continueThread: false,
     catchup: "once",
     worktree: false,
     createdAt: row.createdAt || now,

@@ -1439,6 +1439,9 @@ export interface Routine {
       derive project/profile/agent from that thread. */
   runsIn: RoutineRunsIn
   sessionId: string | null
+  /** `thread` mode: the first fire mints the thread (remembered in
+      `sessionId`), and every later fire continues it. */
+  continueThread: boolean
   catchup: RoutineCatchup
   /** Each run works in its own git worktree (not for `session`). */
   worktree: boolean
@@ -1465,6 +1468,7 @@ export interface RoutineInput {
   enabled?: boolean
   runsIn?: RoutineRunsIn
   sessionId?: string | null
+  continueThread?: boolean
   catchup?: RoutineCatchup
   worktree?: boolean
   /** Required for `thread`; derived server-side from the thread for `session`. */

@@ -402,7 +402,7 @@ export function AutomationsListPage() {
               renderCard={renderCard}
               fields={[
                 { id: "state", label: "State", of: stateOf },
-                { id: "runs-in", label: "Runs in", of: (r) => (r.runsIn === "session" ? "This thread" : "New thread") },
+                { id: "runs-in", label: "Runs in", of: (r) => (r.runsIn === "session" ? "This thread" : r.continueThread ? "Same thread" : "New thread") },
                 { id: "project", label: "Project", of: projectName },
               ]}
               search={{

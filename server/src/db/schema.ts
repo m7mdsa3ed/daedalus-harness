@@ -1411,8 +1411,14 @@ export const routines = pgTable(
     /** The thread a `session`-mode routine delivers into. Not a foreign key
         (a restore must not depend on the thread being in the bundle): a thread
         that is gone is a `skipped` run saying so, and five of them in a row
-        disable the routine. Null for `thread` mode. */
+        disable the routine. For `thread` mode with `continueThread`, the thread
+        the engine minted on the first fire and every later fire continues —
+        written by the engine, and a gone or trashed one is replaced, not
+        skipped. Null otherwise. */
     sessionId: text("session_id"),
+    /** `thread` mode only: mint the thread once and send every later fire
+        into it, under the routine's own agent, links and policy. */
+    continueThread: boolean("continue_thread").notNull().default(false),
     /** Slots missed while the process was down: `once` fires the latest (within
         7 days), `none` only records them as skipped. */
     catchup: text("catchup", { enum: ["once", "none"] })

@@ -619,6 +619,7 @@ const RoutineRow = z.object({
   /* Absent in a bundle written before scheduled messages became routines. */
   runsIn: z.enum(["thread", "session"]).default("thread"),
   sessionId: optStr,
+  continueThread: z.boolean().default(false),
   catchup: z.enum(["once", "none"]).default("once"),
   worktree: z.boolean().default(false),
   createdAt: int,

@@ -74,8 +74,8 @@ import {
   type LinkTables,
 } from "./db/links.js";
 import { ASK_EVERYTHING, type AutonomyPolicy, type Stance } from "./autonomy.js";
-import { getProfile } from "./profiles.js";
-import { getProject } from "./projects.js";
+import { getProfile, type Profile } from "./profiles.js";
+import { getProject, type Project } from "./projects.js";
 import { getAgent } from "./registry.js";
 import { getQuota } from "./quota.js";
 import { LIMITS, OutputError, extractJsonOutput, validateOutput } from "./workflows/graph.js";
@@ -287,6 +287,9 @@ const RoutineFields = {
       `createRoutine`, which answers 400). */
   runsIn: z.enum(["thread", "session"]).optional(),
   sessionId: z.string().min(1).nullable().optional(),
+  /** `thread` mode: the first fire mints the thread and remembers it in
+      `sessionId`; every later fire continues it. */
+  continueThread: z.boolean().optional(),
   catchup: z.enum(["once", "none"]).optional(),
   worktree: z.boolean().optional(),
   projectId: z.string().min(1).optional(),
@@ -396,6 +399,7 @@ export async function createRoutine(input: RoutineInput, opts: { id?: string; ep
         agentId: agentId!,
         runsIn,
         sessionId: runsIn === "session" ? input.sessionId! : null,
+        continueThread: runsIn === "thread" && (input.continueThread ?? false),
         catchup: input.catchup ?? "once",
         worktree: input.worktree ?? false,
         ephemeral: opts.ephemeral ?? false,
@@ -432,6 +436,7 @@ export async function updateRoutine(id: string, patch: RoutinePatch): Promise<Ro
     if (patch.enabled !== undefined) set.enabled = patch.enabled;
     if (patch.runsIn !== undefined) set.runsIn = patch.runsIn;
     if (patch.sessionId !== undefined) set.sessionId = patch.sessionId;
+    if (patch.continueThread !== undefined) set.continueThread = runsIn === "thread" && patch.continueThread;
     if (patch.catchup !== undefined) set.catchup = patch.catchup;
     if (patch.worktree !== undefined) set.worktree = patch.worktree;
     if (patch.projectId !== undefined) set.projectId = patch.projectId;
@@ -1131,27 +1136,36 @@ export class RoutineEngine {
     try {
       const profile = (await getProfile(run.routine.profileId))!;
       const project = (await getProject(run.routine.projectId))!;
-      /* The whole fire, in one statement: everything a `POST /api/sessions`
-         body carries, off the routine's own columns. `parentSessionId` stays
-         unset — a routine has no parent thread, and `routine_runs` is what
-         names this session. The policy goes in at `create` rather than after
-         it, because the handshake and the first prompt are in flight by the
-         time this returns and a question can arrive before the next statement
-         runs. */
-      session = await this.manager.create(
-        profile,
-        run.routine.agentId,
-        project,
-        run.routine.model || undefined,
-        run.routine.effort || undefined,
-        undefined,
-        run.routine.configChoices,
-        run.routine.links,
-        {
-          title: `${run.routine.name} · ${stamp(run.startedAt)}`,
-          autonomy: policyFor(run.routine.autonomy, run.dryRun),
-        },
-      );
+      const policy = policyFor(run.routine.autonomy, run.dryRun);
+      session = run.routine.continueThread ? await this.continued(run, profile, project, policy) : null;
+      if (run.status !== "running") return;
+      if (!session) {
+        /* The whole fire, in one statement: everything a `POST /api/sessions`
+           body carries, off the routine's own columns. `parentSessionId` stays
+           unset — a routine has no parent thread, and `routine_runs` is what
+           names this session. The policy goes in at `create` rather than after
+           it, because the handshake and the first prompt are in flight by the
+           time this returns and a question can arrive before the next statement
+           runs. */
+        session = await this.manager.create(
+          profile,
+          run.routine.agentId,
+          project,
+          run.routine.model || undefined,
+          run.routine.effort || undefined,
+          undefined,
+          run.routine.configChoices,
+          run.routine.links,
+          {
+            title: run.routine.continueThread ? run.routine.name : `${run.routine.name} · ${stamp(run.startedAt)}`,
+            autonomy: policy,
+          },
+        );
+        /* Remembered on the row, so the next fire continues this thread. */
+        if (run.routine.continueThread) {
+          await db.update(routinesTable).set({ sessionId: session.id }).where(eq(routinesTable.id, run.routine.id));
+        }
+      }
       run.sessionId = session.id;
       await this.persist(run);
       unsubscribe = this.watch(run, session);
@@ -1168,8 +1182,51 @@ export class RoutineEngine {
          stays readable from its journal with no process held open, and
          "continue this run by hand" is the ordinary revive path. */
       if (session) this.manager.retire(session);
+      /* A continued thread is also the one a person reads and answers in
+         between fires, so the run's policy leaves with the run: a message
+         typed there later is theirs, asked of them, not answered for them. */
+      if (session && run.routine.continueThread) this.manager.setAutonomy(session.id, null);
       this.runs.delete(run.id);
     }
+  }
+
+  /**
+   * `continueThread`: the thread an earlier fire minted, brought back under
+   * this run's policy — or null when there is none to continue (first fire,
+   * deleted, trashed), and the caller mints one and remembers it.
+   *
+   * The policy is set *before* the revive: `Session.autonomy` is not a column,
+   * a retired thread reads back with none, and the spawn decides from it
+   * whether the run is unattended (no hold on error, no drawn-answer lane).
+   * A thread somebody is still talking in is a skipped run, never a message
+   * pushed into the middle of their turn; one that is merely live is retired
+   * first so it comes back on the unattended spawn the run needs.
+   */
+  private async continued(run: RunState, profile: Profile, project: Project, policy: AutonomyPolicy): Promise<Session | null> {
+    const id = run.routine.sessionId;
+    const session = id ? this.manager.get(id) : undefined;
+    /* A different runtime cannot `session/load` an id from another one's
+       store, so an agent change on the routine starts the thread over. */
+    if (!session || session.deletedAt !== null || session.agentId !== run.routine.agentId) return null;
+    if (session.bridge && !session.exited) {
+      if (session.bridge.promptActive) {
+        /* Not a `thread-` code: those count toward the auto-disable streak, and
+           a person using the thread is not the routine failing. */
+        await this.close(run, "skipped", "the routine's thread has a turn running", { skipReason: "busy" });
+        return null;
+      }
+      this.manager.retire(session);
+    }
+    this.manager.setAutonomy(session.id, policy);
+    return await this.manager.respawn(
+      session.id,
+      profile,
+      run.routine.agentId,
+      project,
+      run.routine.model || undefined,
+      run.routine.effort || undefined,
+      { revive: true },
+    );
   }
 
   /**

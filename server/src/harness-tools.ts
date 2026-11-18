@@ -798,7 +798,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
   {
     name: "routines_create",
     title: "Create a routine",
-    description: "Add a routine. Read routines_list for the shape: {name, runsIn?: thread|session, sessionId? (session), catchup?: once|none, worktree?, projectId/profileId/agentId (thread mode; derived from the thread in session mode), body: {kind: prompt, text} or {kind: workflow, definition}, autonomy?}. Add triggers with routine_triggers_create (kind schedule: cron+tz, intervalMs or atMs; api; git; manual).",
+    description: "Add a routine. Read routines_list for the shape: {name, runsIn?: thread|session, sessionId? (session), continueThread? (thread mode: the first fire mints the thread, later fires continue it), catchup?: once|none, worktree?, projectId/profileId/agentId (thread mode; derived from the thread in session mode), body: {kind: prompt, text} or {kind: workflow, definition}, autonomy?}. Add triggers with routine_triggers_create (kind schedule: cron+tz, intervalMs or atMs; api; git; manual).",
     method: "POST",
     path: "/api/routines",
     data: true,
