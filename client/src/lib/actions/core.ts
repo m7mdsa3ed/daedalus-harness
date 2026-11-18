@@ -17,7 +17,7 @@ import { panelId } from "../workspace/panels"
 import { api, profileSupports, type Routine, type RoutineInput, type ServerSettings, type SessionMeta, type SessionPage } from "../settings"
 import { knownAgentOptions, optionKey, shownOptions } from "../agent-options"
 import { partitionSessionOptions } from "../session-options"
-import { automationsKey } from "../queries/keys"
+import { automationsKey, scope } from "../queries/keys"
 import type { useCatalogReader } from "../queries/catalog"
 import { fetchQuota, planReadable } from "../quota"
 import type { Action, StoreHandle } from "../store"
@@ -27,6 +27,7 @@ import { recordThreadError } from "../thread/record-error"
 import { DEFAULT_SUGGEST_KINDS } from "../suggestions"
 import { DEFAULT_UI_GROUPS } from "../openui/groups"
 import {
+  retryWaiting,
   serverReachable,
   startHealthPoll,
   watchNetwork,
@@ -476,6 +477,33 @@ export function sessionActions(core: ActionsCore) {
 
   return {
     refreshSessions,
+
+    /**
+     * Everything this connection reads, read again — pull-to-refresh's answer.
+     * Never a page reload: that is what the browser's own gesture did, under a
+     * running turn. Parked sockets get their immediate try, the session window
+     * is re-read, and every query of this server is invalidated, which refetches
+     * the ones something is drawing. Resolves when all of that has landed.
+     */
+    async refreshAll() {
+      retryWaiting()
+      await Promise.all([
+        refreshSessions(),
+        queryClient.invalidateQueries({ queryKey: scope(settings) }),
+      ])
+    },
+
+    /**
+     * One thread, read again — the transcript's two-finger pull. A reattach
+     * that asks for the thread *as it is* (`revive: false`), the same thing an
+     * automatic rung asks: a live agent gets a fresh socket and the transcript
+     * catches up from its cursor, a retired one is re-read from its journal.
+     * Never a respawn — that is only a send's or the Revive button's to ask.
+     */
+    async refreshThread(sessionId: string) {
+      await core.threads.for(sessionId).reconnect(false, serverReachable, { revive: false })
+    },
+
     loadMoreSessions: core.loadMoreSessions,
     ensureSessionsLoaded: core.ensureSessionsLoaded,
 

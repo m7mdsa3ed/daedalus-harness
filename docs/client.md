@@ -1312,6 +1312,22 @@ landed. Every rule here is gated on `useIsMobile()` (the device), never a panel'
   document (dockview makes and unmakes strips, and a nested group has its own), a 10px
   axis lock that lets a mostly-vertical touch go for good, a 56px commit, and
   `touch-action: pan-y` on the narrow strip so the browser hands over the horizontal half.
+- **Pull-to-refresh is the app's own and reloads nothing.** The browser's is off
+  (`overscroll-behavior: none` on html/body — Android reloaded the app under a running
+  turn). `hooks/use-pull-to-refresh.ts` is the gesture, iOS-shaped (UIScrollView's rubber
+  band, the refresh firing mid-drag at 88px, a 60px rest while it runs);
+  `components/pull-to-refresh.tsx` is its face, generic over `onRefresh`, `scope`, finger
+  count and `indicator` (the logo drawing itself by default, `ActivityIndicator`, or any
+  image through `imageIndicator`). Two mounts: the shell's one-finger pull anywhere whose
+  every scroller is at its top (`actions.refreshAll` — parked sockets, the session window,
+  every query of the server), and the transcript's **two-finger** pull, which needs no top
+  because a long thread has none (`actions.refreshThread`, a reattach *as it is*, never a
+  respawn). Two fingers claim the move only while it is still a drag down; a pinch or a pan
+  the browser has already taken is left to it. **The indicator is placed in viewport px
+  from the box's visible top** — `--dock-content-overlap` below the header's tab band and
+  never above the safe-area inset — and portalled to the body, because in the edge-to-edge
+  PWA a scroller's own top is behind the status bar. Opt a surface out with
+  `data-no-pull-refresh`.
 - **"Needs you" is the inbox's top** (`components/notifications/needs-you.tsx`), read from
   `GET /api/pending` — every question a live agent is blocked on, across threads, straight
   off each bridge's `pending` map. A permission is answered on the card (Allow/Deny picked

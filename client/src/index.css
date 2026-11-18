@@ -691,7 +691,9 @@
      and reloads the app under a running turn, iOS rubber-bands the whole shell
      and shows the canvas behind it. `none` on both the root and the body (iOS
      reads it off whichever is the scrolling box) ends the chain at the last
-     real scroller. The tab strips keep their own `contain` on the x axis. */
+     real scroller. The tab strips keep their own `contain` on the x axis.
+     The gesture itself is the app's own (`components/pull-to-refresh.tsx`),
+     which re-reads data instead of reloading the page. */
   html,
   body {
     overscroll-behavior: none;

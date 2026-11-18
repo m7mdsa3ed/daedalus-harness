@@ -89,6 +89,7 @@ import { ThreadWelcome } from "@/components/thread-view/welcome"
 import { LandingConsoleContext } from "@/components/landing/landing-console"
 import { ThreadInspector } from "@/components/thread-view/thread-inspector"
 import { QuoteSelection } from "@/components/thread-view/quote-selection"
+import { PullToRefresh } from "@/components/pull-to-refresh"
 import { AsideWindow, type AsideAt } from "@/components/thread-view/aside-window"
 import { useAsideHighlights } from "@/components/thread-view/aside-highlights"
 import {
@@ -545,6 +546,7 @@ export function ThreadView({
   /* actions.send records its own failure in the transcript (with the text, so
      the row it leaves behind can offer Retry) — a toast on top would say the
      same thing twice. */
+  const refreshThread = React.useCallback(() => actions.refreshThread(sessionId), [actions, sessionId])
   const resume = () => void actions.send(sessionId, "Continue.").catch(() => {})
   const retry = (text: string) => void actions.send(sessionId, text).catch(() => {})
   /* The one exception to "attachments do not survive Retry", and it exists for
@@ -905,6 +907,14 @@ export function ThreadView({
            The primitive's own follow is kept (it is what hides the
            scroll-to-bottom button while following) but it is not trusted on its
            own — `useFollowStream` owns the pin. See hooks/use-follow-stream. */}
+        {/* Two fingers, anywhere in the transcript: a long thread has no top to
+            pull from. One finger at the top is still the shell's refresh. */}
+        <PullToRefresh
+          scope={follow.viewport}
+          fingers={2}
+          onRefresh={refreshThread}
+          label="Refreshing this thread"
+        />
         <MessageScroller className="col-start-1 row-start-1 min-h-0 flex-1">
           <MessageScrollerViewport
             ref={follow.viewportRef}

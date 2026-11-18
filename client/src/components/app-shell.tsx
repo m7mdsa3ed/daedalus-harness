@@ -30,6 +30,7 @@ import {
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { ImportThreadsDialog } from "@/components/import-threads"
 import { NotificationIconButton } from "@/components/notifications/bell"
+import { PullToRefresh } from "@/components/pull-to-refresh"
 import { pageRoutes, usePageHeading } from "@/components/routes"
 import { type SettingsSectionId } from "@/components/settings/sections"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
@@ -548,6 +549,7 @@ export function AppShell({
           then — the location.assign fallback would be a full reload. */}
       <NavigationBridge />
       <CloseSidebarOnNavigate />
+      <PullToRefresh onRefresh={actions.refreshAll} />
       {/* A flush rail: shadcn's stock `sidebar` variant, a panel with a 1px
           edge and the column beside it filling the rest — no floating card, no
           outer gutters. `offcanvas`, not `icon`: a 3rem column of glyphs is

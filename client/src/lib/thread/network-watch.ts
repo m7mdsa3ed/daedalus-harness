@@ -80,8 +80,9 @@ export function startHealthPoll(): void {
 
 /* The network (or the user's attention) came back. Everything parked — and
    everything still sitting out a backoff timer — gets its counter reset and one
-   immediate try; a failure re-enters the ladder at rung one. */
-function retryWaiting(): void {
+   immediate try; a failure re-enters the ladder at rung one. Exported for the
+   one gesture that asks for this by hand, pull-to-refresh. */
+export function retryWaiting(): void {
   if (typeof navigator !== "undefined" && !navigator.onLine) return
   for (const conn of current?.registry.recovering() ?? []) conn.retryNow(serverReachable)
   rereadServer()
