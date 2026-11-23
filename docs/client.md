@@ -514,13 +514,22 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   runtime, an older journal — falls back to timing: starting within `batchBurst` of the batch's
   first call, or before its latest call has ended. A step with neither (a notice, a `session/load`
   replay, whose stamps are the reload's) never joins, so no evidence marks nothing. The batch is
-  drawn as a group of its own (`ToolRun`'s `parallel`), **bracketed as a ledger and nothing
-  else**: a hairline above and below the group, one between every call, no tint, and the calls on
-  the run's rail — the same trunk, elbow and indent a plain run's steps have — because a batch is
-  still steps of the run. Six treatments (`wash`, `card`, `columns`, `bracket`, `ledger`, `tiles`)
-  were a reading preference once (`groupStyle`); the picker and the other five are gone, and a
-  stored `groupStyle` is ignored. **The chrome is one module** (`thread-items/group-style.tsx`):
-  the row asks for a treatment (`frame`, `list`) instead of spelling `border-… divide-…` inline.
+  drawn as a group of its own (`ToolRun`'s `parallel`), **highlighted as a lane wash**: one
+  rounded tinted ground and no border (`bg-primary/[0.04]`, deepening to `/[0.07]` while a call
+  is out — a card's edge read as a box dropped into the transcript), a hairline between every call,
+  and the calls on the run's rail — the same trunk, elbow and indent a plain run's steps have —
+  because a batch is still steps of the run. **Under the header, folded or open, `BatchLanes`
+  draws one bar per call on the batch's own clock** (start to end, from `startedAt`/`endedAt`),
+  because what makes a batch a batch is that its calls ran *at the same time*, and the ledger it
+  replaced (rules above, below and between) said "together" without saying "at once". Overlapping
+  bars are the overlap and the long bar is the call holding the batch up; a live bar grows each
+  second and sweeps, a failed one is destructive. Fewer than two timed calls draw no strip (a
+  `session/load` replay has no stamps), past six the bars thin, past twelve they stop, and the
+  strip is `aria-hidden` because the header and the rows already say it. Not drawn in the Branch
+  layout, whose gutter is that same reading. Six treatments (`wash`, `card`, `columns`,
+  `bracket`, `ledger`, `tiles`) were a reading preference once (`groupStyle`); the picker is gone
+  and a stored `groupStyle` is ignored. **The chrome is one module** (`thread-items/group-style.tsx`):
+  the row asks for a treatment (`frame`) instead of spelling `bg-…` inline.
   **It sits flush on the transcript's column**, the same edge a step row's hover ground, a todo
   card, the thinking panel and the gap rule are on — and `px-1` is not a free number, because the
   header and every call row inside the frame carry StepRow's `-mx-1 px-1`, which holds *their*
@@ -544,16 +553,15 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   still coming back" is said by hue rather than by a heavier frame. **`columns` reflows on the
   panel's width, not the window's** (`@panel-sm`, the container query): two step rows side by side
   in half a panel is two columns of truncated titles, so below it the grid falls back to the list.
-  The header says `3 in parallel` in the batch's hue, on the app's own chip shape
+  The header says `3 in parallel` in the batch's hue (below `@panel-sm` the words drop to `sr-only` and the chip is the glyph and the count), on the app's own chip shape
   (`CHIP` — one radius, one line box and one size as every other chip in the row, told apart by
   colour alone rather than by a pill of its own), and, beside it, how the batch stands: `1 of 3 running`
   (`StepBatch.running`) while any call is out, then the span from first start to latest end once
-  every call has ended — the calls ran side by side, so it is never a sum. **Each call says where
-  it sat**: a `2/3` chip between its mark and its title (`StepMarker`, read through
-  `StepMarkerContext` because a batch of mixed kinds folds into nested runs, so the calls to number
-  are below a row that knows nothing of the batch). The numbering is taken over the batch's *whole*
-  member list, never over the part a peek shows, and off the group's own layout rather than the
-  visible one, so a five-call batch never numbers its last three `1/3..3/3`. A notice between two
+  every call has ended — the calls ran side by side, so it is never a sum. **A call carries no
+  place chip** — the `2/3` marker (`StepMarker`/`StepMarkerContext`) is removed: the wash and the
+  lanes already say which rows went out together, and it cost every title the width it needed.
+  The header's readings are still taken over the batch's *whole* member list, never over the part
+  a peek shows. A notice between two
   calls of one batch is inside the wash. The wait (`gapMin`, Off draws
   none) is measured from the batch's *latest* end to the next batch's start, hangs off the batch's
   last call, and never reads as a row of its own, because a row would take a mark and a rail

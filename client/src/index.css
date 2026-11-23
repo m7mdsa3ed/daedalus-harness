@@ -1325,6 +1325,45 @@
   animation: harness-node-pulse 1.6s ease-in-out infinite;
 }
 
+/* A parallel batch's lanes (`group-style.tsx` BatchLanes): each bar grows from
+   its start in the batch's order, and a call still out carries a slow sweep —
+   the one bar on the strip that is still moving. */
+@keyframes harness-lane-in {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes harness-lane-sweep {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.harness-lane {
+  transform-origin: left center;
+  animation: harness-lane-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--lane-i, 0) * 40ms);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1), inset-inline-start 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+[dir="rtl"] .harness-lane {
+  transform-origin: right center;
+}
+.harness-lane-live {
+  background-image: linear-gradient(90deg, transparent 0%, color-mix(in oklab, var(--primary-foreground) 45%, transparent) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: harness-lane-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both, harness-lane-sweep 1.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .harness-lane,
+  .harness-lane-live {
+    animation: none;
+    transition: none;
+    background-image: none;
+  }
+}
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-lane {
+  animation: none;
+  transition: none;
+  background-image: none;
+}
+
 /* ── Frameless window chrome ──
    Two ways this app owns a window edge-to-edge: Electron (the attributes
    below are set by electron/preload.cjs before first paint) and an installed

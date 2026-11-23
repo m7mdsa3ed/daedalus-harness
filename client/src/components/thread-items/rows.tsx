@@ -76,9 +76,9 @@ import {
   formatElapsed,
   StepDirContext,
   BATCH_CHIP,
-  StepMarkerContext,
   StepMeta,
   StepRow,
+  useElapsed,
   yieldToTextSelection,
 } from "@/components/step-row"
 import { dominantTextDir } from "@/lib/text-direction"
@@ -120,7 +120,7 @@ import {
   railPlain,
   useRailSlots,
 } from "@/components/thread-items/rail"
-import { groupTreatment } from "@/components/thread-items/group-style"
+import { BatchLanes, groupTreatment } from "@/components/thread-items/group-style"
 import { UserMessageText, UserMessageFold } from "@/components/thread-items/user-message"
 import {
   childToolTitle,
@@ -303,13 +303,11 @@ export const ToolRun = React.memo(function ToolRun({
     () => layoutBatches(showing.map(batchSpanOfRow), { burstMs: burstMs(view.batchBurst), gapMinMs: gapMinMs(view.gapMin) }),
     [showing, view.batchBurst, view.gapMin]
   )
-  /* A parallel group's places are numbered over ALL of it, never over the part
-     on screen: a peeked group shows its last three, and "1/3, 2/3, 3/3" over
-     three rows of a five-call batch would number the wrong calls. So the group
-     reads its batch off its own members, and `layoutBatches` puts the span and
-     the running count on the batch's last CALL — not on its last row, which may
-     be a thought riding between two of them — so the reading is taken from
-     whichever row carries it. */
+  /* A parallel group's reading is taken over ALL of it, never over the part on
+     screen: a peeked group shows its last three, so the group reads its batch
+     off its own members, and `layoutBatches` puts the span and the running
+     count on the batch's last CALL — not on its last row, which may be a
+     thought riding between two of them. */
   const batchOf = React.useMemo(
     () =>
       parallel
@@ -320,30 +318,21 @@ export const ToolRun = React.memo(function ToolRun({
   const batchEnd = batchOf?.find((row) => row.spanMs !== undefined || row.running !== undefined)
   const batchSpan = batchEnd?.spanMs !== undefined ? formatElapsed(batchEnd.spanMs) : null
   const batchRunning = batchEnd?.running
-  /* The places themselves, as the context every step under this group reads:
-     a batch of mixed kinds folds into nested runs, so the calls to number are
-     below a row that was handed no props — the map is what reaches them. */
-  const placeInBatch = React.useMemo(() => {
-    if (!batchOf) return null
-    const places = new Map<string, string>()
-    displayItems.forEach((item, at) => {
-      const label = batchMarker(batchOf[at])
-      if (label) places.set(item.id, label)
-    })
-    return (id: string) => places.get(id)
-  }, [batchOf, displayItems])
   /* How this group is bracketed, and whether it is alive — said by the
      frame's colour on one weight, never by a heavier box. A plain run has no
      frame, so the treatment is only read for a batch. */
   const treatment = React.useMemo(() => groupTreatment(active), [active])
+  /* The lanes' clock: a call still out grows its bar each second; settled,
+     the strip is drawn from the calls' own stamps and does not tick. */
+  const framed = parallel === true
+  const laneNow = useElapsed(0, framed && active)
   return (
     <StepDirContext.Provider value={dir}>
-    <StepMarkerContext.Provider value={placeInBatch}>
-    {/* A batch is bracketed as a ledger — rules above, below and between its
-        calls, the calls on the run's rail like any other step. The chrome
+    {/* A batch is highlighted as a wash, the calls on the run's rail like any
+        other step. The chrome
         lives in `group-style.tsx`, so this row asks for a treatment rather
         than spelling it. */}
-    <div dir={dir} className={cn(parallel && treatment.frame)}>
+    <div dir={dir} className={cn(framed && treatment.frame)}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -410,6 +399,9 @@ export const ToolRun = React.memo(function ToolRun({
           />
         </span>
       </button>
+      {/* The batch's shape under its header, folded or open: one bar per call
+          on the batch's own clock, so the overlap is drawn rather than said. */}
+      {framed && !branch && <BatchLanes tools={tools} now={laneNow} />}
       <AnimatePresence initial={false}>
         {showing.length > 0 && (
           /* One rail for both states, so expanding a peeking run grows the list
@@ -436,9 +428,8 @@ export const ToolRun = React.memo(function ToolRun({
             className="-mx-2 overflow-hidden px-2"
           >
             {/* The rail's spacing lives inside the clip, so it collapses with it.
-                A batch keeps the rail and its indent — its ledger rules are
-                drawn between the rows on it. */}
-            <div className={cn(branch ? "space-y-0.5 pt-0.5" : RUN_RAIL_CLASS, parallel && treatment.list)}>
+                A batch keeps the rail and its indent; its wash is the frame's. */}
+            <div className={branch ? "space-y-0.5 pt-0.5" : RUN_RAIL_CLASS}>
             {hidden > 0 && (
               <div className={branch ? undefined : RAIL_THROUGH} style={branch ? { paddingInlineStart: gutter } : undefined}>
                 <EarlierSteps count={hidden} onClick={() => setOpen(true)} />
@@ -496,7 +487,6 @@ export const ToolRun = React.memo(function ToolRun({
         )}
       </AnimatePresence>
     </div>
-    </StepMarkerContext.Provider>
     </StepDirContext.Provider>
   )
 })
@@ -1708,14 +1698,6 @@ function batchSpanOfRow(item: ToolGroup["children"][number]): BatchSpan {
   const end = timed.some((span) => span.end === undefined) ? undefined : Math.max(...timed.map((span) => span.end ?? 0))
   /* The group's request is its earliest call's, which is the one that says it. */
   return { start, end, lead: spans.find((span) => span.start === start)?.lead }
-}
-
-/** A call's place in the batch it went out with, for `StepRow`'s marker.
-    Absent for a call that went out alone: `layoutBatches` only fills `index`
-    and `size` inside a batch of two or more, and a single call is not a
-    fan-out to be numbered. */
-function batchMarker(batch: StepBatch | undefined): string | undefined {
-  return batch?.index !== undefined && batch.size !== undefined ? `${batch.index}/${batch.size}` : undefined
 }
 
 /** The wait between one batch of calls settling and the next starting: the

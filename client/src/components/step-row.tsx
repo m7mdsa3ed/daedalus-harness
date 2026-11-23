@@ -50,46 +50,11 @@ export function copyText(text: string) {
    direction and only aligns with the row. */
 export const StepDirContext = React.createContext<"rtl" | "ltr" | null>(null)
 
-/* ── One call of a fan-out, marked ──
-   The rows a parallel batch sends are drawn on one wash, and the wash alone
-   does not say *which* rows ran at the same time or in what order.
-   `layoutBatches` has always known each call's place in its batch
-   (`index`/`size`) and nothing drew it, so a reader looking at four rows side
-   by side had no telling which one the agent's request listed first — and that
-   order is the order the results are read in.
-
-   The app's own chip (`CHIP`), wearing the batch's tint instead of `muted`:
-   one more thing on a line that already holds a mark, a file badge and a
-   command has to look like the things beside it, or it reads as a decoration
-   that arrived from somewhere else. `tabular-nums` so 1/10 and 2/3 are the
-   same width and a column of them lines up. */
-/** The batch's tint on the app's chip — the ONE spelling, worn by the group's
-    "n in parallel" chip and by every call's place, so the two can never differ
-    by a shade or a size again. */
+/** The batch's tint on the app's chip, worn by a parallel group's
+    "n in parallel" chip. Calls inside a batch carry no place chip of their
+    own: the wash and the lanes already say which rows went out together, and
+    a "2/3" on every title cost the line the width the title needed. */
 export const BATCH_CHIP = "shrink-0 bg-primary/10 font-medium tabular-nums text-primary"
-
-export function StepMarker({ label }: { label: string }) {
-  return (
-    <span
-      title={`Call ${label} — one of the calls this request made together`}
-      /* A fixed minimum and centred, so "1/2" and "10/12" take the same column
-         and every title in the batch starts on one line. */
-      className={cn(CHIP, BATCH_CHIP, "min-w-9 justify-center")}
-    >
-      {label}
-    </span>
-  )
-}
-
-/* Which of the calls on screen are one request's batch, and where each sat in
-   it. A map from item id to "2/3", provided by the batch itself (`ToolRun`'s
-   `parallel`) and read by every step below it. A context rather than a prop
-   handed down: a batch of mixed kinds folds into nested runs, so the calls that
-   need numbering are two rows down from the group that knows the numbering —
-   the same reason `StepDirContext` above is one. Identity is exact because the
-   fold keys a batch by the items the store handed it, and a step never renders
-   under a batch it is not part of. */
-export const StepMarkerContext = React.createContext<((id: string) => string | undefined) | null>(null)
 
 /* Closing gets its own symmetric curve: the opening ease-out run backwards
    dropped ~70% of the height in the first frame and then crawled. */
@@ -158,7 +123,7 @@ export function formatElapsed(ms: number): string {
 /* A step's clock in the width it has: the millisecond figure on a wide panel,
    a tenth of a second on a narrow one ("3s 120ms" → "3.1s"), where the
    readings share one line with the title and every character comes out of it. */
-function ElapsedFigure({ ms }: { ms: number }) {
+export function ElapsedFigure({ ms }: { ms: number }) {
   const full = formatElapsed(ms)
   const whole = Math.max(0, Math.round(ms))
   const short =
@@ -398,11 +363,6 @@ export const StepRow = React.memo(function StepRow({
       : null
   const runDir = React.useContext(StepDirContext)
   const d = runDir ?? dir ?? dominantTextDir(typeof target === "string" ? target : caption)
-  /* This step's place in the batch it went out with, when it went out with one
-     (`StepMarkerContext`): a step outside a batch has no key to look up and a
-     batch has none for a row it did not send, so both answer nothing. */
-  const places = React.useContext(StepMarkerContext)
-  const place = persistKey === undefined ? undefined : places?.(persistKey)
   const variant = toolLayout && toolVariant ? toolVariantOf(toolLayout, toolVariant) : undefined
   const compact = toolLayout === "timeline" && variant === "compact"
   const minimal = toolLayout === "timeline" && variant === "minimal"
@@ -529,7 +489,6 @@ export const StepRow = React.memo(function StepRow({
           ) : (
             <span className="flex min-w-0 flex-1 flex-col">
               <div className="harness-part-in [--part-i:1] flex min-w-0 items-baseline gap-2">
-                {place && <StepMarker label={place} />}
                 <span
                   className={cn(
                     "min-w-0 truncate text-sm leading-6",
