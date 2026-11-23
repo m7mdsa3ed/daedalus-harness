@@ -132,6 +132,7 @@ function rowContains(row: Row, id: string): boolean {
   if (row.kind === "workflow-group" || row.kind === "subagent-batch")
     return row.steps.some((step) => rowContains(step, id))
   if (row.kind === "run") return row.items.some((item) => item.id === id)
+  if (row.kind === "script") return row.children.some((child) => rowContains(child, id))
   return false
 }
 

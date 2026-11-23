@@ -1,7 +1,8 @@
 /* ── A script that makes tool calls ── the Daedalus agent's `repl`
    (`agent/src/tools/repl.ts`): one call whose input is a JavaScript body and
    whose result is what the script returned. The calls it made are rows of
-   their own (`<id>:<n>`), so this reads only the script and its answer.
+   their own (`<id>:<n>`), nested under it at view time (`ScriptGroup` in
+   lib/transcript-rows), so this reads only the script and its answer.
 
    The result is text, because it is what the *model* is handed back, and the
    agent writes it in one of three forms — read here, not invented here:

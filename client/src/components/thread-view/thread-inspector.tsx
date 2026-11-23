@@ -75,7 +75,7 @@ function recentStepText(group: SubagentGroup): string {
   if (head.kind === "subagent") {
     if (head.activity || head.report || head.task) return head.activity || head.report || head.task
   } else if (group.active) {
-    const latest = [...group.children].reverse().find((row) => row.kind === "tool" || row.kind === "run" || row.kind === "tool-group")
+    const latest = [...group.children].reverse().find((row) => row.kind === "tool" || row.kind === "run" || row.kind === "tool-group" || row.kind === "script")
     const tool = latest ? collectTools([latest]).at(-1) : undefined
     if (tool) return toolHeading(tool).title
   }

@@ -63,7 +63,7 @@ export function RunDetail({ item, active }: { item: ToolItem; active: boolean })
  * The tools a `repl` script called, as a strip under its row — drawn whether
  * the row is open or not, because which tools a script reached for is the one
  * thing about it worth seeing without opening it. The calls themselves are the
- * rows beside it; this is the count.
+ * steps after it on the script's group (`ScriptGroup`); this is the count.
  */
 export function CodeRunTools({ item }: { item: ToolItem }) {
   const calls = extractCodeRun(item)?.calls ?? []
@@ -81,8 +81,8 @@ export function CodeRunTools({ item }: { item: ToolItem }) {
 }
 
 /**
- * A script that made tool calls (`repl`). The calls themselves are rows of
- * their own beside this one, so the step holds what only it knows: the code,
+ * A script that made tool calls (`repl`). The calls themselves are drawn
+ * after it on the script's group (`ScriptGroup`), so this holds what only it knows: the code,
  * highlighted, and what the script handed back — its value, its console, or
  * why it stopped.
  */

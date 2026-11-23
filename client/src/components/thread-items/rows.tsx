@@ -20,6 +20,7 @@ import { AnimatePresence, m, useReducedMotion } from "motion/react"
 import {
   ArrowUpRightIcon,
   BotIcon,
+  SquareCodeIcon,
   BrainIcon,
   ListTodoIcon,
   PlayIcon,
@@ -162,9 +163,14 @@ export const ToolRun = React.memo(function ToolRun({
   tail,
   parallel,
   nested,
+  script,
 }: {
   items: RunItem[]
   nestedRows?: ToolGroup["children"]
+  /** This group is a `repl` script and the calls it made (`ScriptGroup`): the
+      script is the rail's first step and the header says it, on the same wash
+      a parallel batch wears. `items` are its calls. */
+  script?: ToolItem
   showTimestamps?: boolean
   /** This group is one response's parallel batch (`transcript-rows.ts`
       `foldStretch`): drawn on the batch wash, with its count in the header. */
@@ -183,7 +189,9 @@ export const ToolRun = React.memo(function ToolRun({
      is what a call is for. */
   const tools = items.filter((item): item is ToolItem => item.kind === "tool")
   const failed = tools.filter((item) => item.status === "failed").length
-  const active = tools.some((item) => item.status === "in_progress" || item.status === "pending")
+  const active =
+    tools.some((item) => item.status === "in_progress" || item.status === "pending") ||
+    (script !== undefined && (script.status === "in_progress" || script.status === "pending"))
   const summary = summarise(tools)
   /* One direction for the whole run, from its first call: its steps share a
      rail, and a rail cannot sit on both sides. */
@@ -222,7 +230,10 @@ export const ToolRun = React.memo(function ToolRun({
      run's first item — the id the run's row carries. */
   /* A parallel group shares its first item with the stretch it opens, so it
      keeps its own key. */
-  const [choice, setChoice] = useRowState<boolean | null>(items[0]?.id && `${parallel ? "batch" : "run"}:${items[0].id}`, null)
+  const [choice, setChoice] = useRowState<boolean | null>(
+    script ? `script:${script.id}` : items[0]?.id && `${parallel ? "batch" : "run"}:${items[0].id}`,
+    null
+  )
   const railRef = React.useRef<HTMLDivElement>(null)
   const isRun = tools.length > 1 || nestedRows !== undefined
   const [showRunHeader] = React.useState(isRun)
@@ -327,8 +338,9 @@ export const ToolRun = React.memo(function ToolRun({
   const treatment = React.useMemo(() => groupTreatment(active), [active])
   /* The lanes' clock: a call still out grows its bar each second; settled,
      the strip is drawn from the calls' own stamps and does not tick. */
-  const framed = parallel === true
+  const framed = parallel === true || script !== undefined
   const laneNow = useElapsed(0, framed && active)
+  const scriptHeading = script ? toolHeading(script).title : null
   return (
     <StepDirContext.Provider value={dir}>
     {/* A batch is highlighted as a wash, the calls on the run's rail like any
@@ -344,7 +356,7 @@ export const ToolRun = React.memo(function ToolRun({
         {/* The header starts on its marks — the stack is this row's mark column,
             and the rail leaves from under it — and what opens the run rides the
             row's end instead. See below. */}
-        <RunAvatarStack items={items} single={nested} />
+        <RunAvatarStack items={script && tools.length === 0 ? [script] : items} single={nested} />
         {/* English UI words, isolated: in an RTL run "2 files" would otherwise
             reorder into "files 2". */}
         <span
@@ -355,14 +367,33 @@ export const ToolRun = React.memo(function ToolRun({
             active && "harness-shimmer"
           )}
         >
-          <RunSummary summary={summary} />
+          {scriptHeading ? (
+            <>
+              <span className="text-foreground/80">{scriptHeading}</span>
+              {summary.length > 0 && (
+                <>
+                  {" · "}
+                  <RunSummary summary={summary} />
+                </>
+              )}
+            </>
+          ) : (
+            <RunSummary summary={summary} />
+          )}
         </span>
         {/* The run's own trailing column, on the same group its steps use — a
             count that sits a pixel off the rows it heads reads as a different
             kind of thing than it is. */}
         <StepMeta
-          className={parallel ? "text-primary" : undefined}
+          className={framed ? "text-primary" : undefined}
           parts={[
+            script ? (
+              <span title="Calls one script made, in the order it made them" className={cn(CHIP, BATCH_CHIP, "font-sans")}>
+                <SquareCodeIcon aria-hidden className="size-3 shrink-0" />
+                {tools.length}
+                <span className="sr-only @panel-sm:not-sr-only">{tools.length === 1 ? "call" : "calls"} from code</span>
+              </span>
+            ) : null,
             parallel ? (
               <span
                 title="Calls the agent made in one response, run side by side"
@@ -549,6 +580,17 @@ export const RowView = React.memo(function RowView({
   if (row.kind === "work-fold")
     return <WorkFoldRow row={row} showTimestamps={showTimestamps} streaming={streaming} />
   if (row.kind === "subagent-group") return <SubagentStep group={row} showTimestamps={showTimestamps} />
+  if (row.kind === "script")
+    return (
+      <ToolRun
+        items={collectTools(row.children)}
+        nestedRows={[row.head, ...row.children]}
+        script={row.head}
+        showTimestamps={showTimestamps}
+        tail={streaming}
+        nested={nested}
+      />
+    )
   if (row.kind === "workflow-group")
     return <WorkflowRun group={row} showTimestamps={showTimestamps} stepRow={SubagentStep} />
   if (row.kind === "subagent-batch")
@@ -580,6 +622,7 @@ function surfaceTools(rows: Row[]): ToolItem[] {
     else if (row.kind === "run")
       out.push(...row.items.filter((item): item is ToolItem => item.kind === "tool"))
     else if (row.kind === "tool-group") out.push(...collectTools(row.children))
+    else if (row.kind === "script") out.push(row.head)
   }
   return out
 }

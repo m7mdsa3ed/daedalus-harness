@@ -324,4 +324,24 @@ const assertOneStep = (out, kids) => {
   }
 }
 
+// A `repl` script's calls (`<scriptId>:<n>`) go under the script, in order; a
+// look-alike id under a tool that is not a script, and a call whose script is
+// not in the transcript, stay where they arrived.
+{
+  const script = { name: "repl", rawInput: { code: "return 1" } }
+  const items = reduce([
+    [tool("s1", script)],
+    [tool("s1:1", { name: "read_file" })],
+    [tool("s1:2", { name: "grep" })],
+    [tool("plain")],
+    [tool("plain:1")],
+    [tool("gone:1")],
+  ])
+  const out = buildRows(items, false, true)
+  assert.deepEqual(out.map((r) => `${r.kind}:${r.id}`), ["script:s1", "tool:plain", "tool:plain:1", "tool:gone:1"])
+  assert.deepEqual(out[0].children.map((r) => r.id), ["s1:1", "s1:2"])
+  // A script that has made no call yet is still the script's row, so it does not remount when one lands.
+  assert.equal(buildRows(reduce([[tool("s2", script)]]), false, true)[0].kind, "script")
+}
+
 console.log("subagents.check: ok")

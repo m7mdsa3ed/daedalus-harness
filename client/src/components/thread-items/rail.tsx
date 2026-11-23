@@ -36,7 +36,7 @@ export const RAIL_TAIL = "run-rail-tail"
     the block — through a see-through card, or the text itself. */
 const MARKED = new Set([
   "tool", "plan", "compaction", "autonomy", "shell", "voice", "subagent",
-  "run", "tool-group", "shell-run", "work-fold", "subagent-group", "workflow-group", "subagent-batch",
+  "run", "tool-group", "shell-run", "work-fold", "subagent-group", "workflow-group", "subagent-batch", "script",
 ])
 export const RAIL_PLAIN = "run-rail-plain"
 /** `marked` is for a row that draws a mark without being a kind of its own: a

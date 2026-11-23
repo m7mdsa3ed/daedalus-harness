@@ -109,6 +109,7 @@ export function collectTools(rows: Row[]): ToolItem[] {
     } else if (row.kind === "workflow-group" || row.kind === "subagent-batch")
       out.push(...collectTools(row.steps))
     else if (row.kind === "work-fold") out.push(...collectTools(row.rows))
+    else if (row.kind === "script") out.push(row.head, ...collectTools(row.children))
   }
   return out
 }
@@ -285,6 +286,7 @@ export function lastActivityAt(rows: Row[]): number {
       last = Math.max(last, row.head.at ?? 0, lastActivityAt(row.children))
     else if (row.kind === "workflow-group" || row.kind === "subagent-batch")
       last = Math.max(last, lastActivityAt(row.steps))
+    else if (row.kind === "script") last = Math.max(last, row.head.at ?? 0, lastActivityAt(row.children))
     // Not every item kind is stamped (a plan has no arrival time of its own).
     else if ("at" in row) last = Math.max(last, row.at ?? 0)
   }

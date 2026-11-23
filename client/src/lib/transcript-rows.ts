@@ -180,6 +180,24 @@ export interface WorkFold {
   rows: Row[]
 }
 
+/**
+ * A script that made tool calls (the Daedalus agent's `repl`) and the calls it
+ * made. Each call is an ordinary tool row the agent emits under
+ * `<scriptId>:<n>` (`agent/src/tools/repl.ts` `callInner`), so the store has
+ * them flat beside the script like any other step; here they are moved under
+ * it, because they are the script's work and not separate turns of the model's.
+ * Always formed for a script, calls or not, so the row does not change kind
+ * (and remount) when its first call lands.
+ */
+export interface ScriptGroup {
+  kind: "script"
+  /** The script's own tool call id. */
+  id: string
+  head: ToolItem
+  /** The calls, folded by kind like any run when grouping is on. */
+  children: ToolGroup["children"]
+}
+
 export type Row =
   | ThreadItem
   | ToolRunGroup
@@ -189,6 +207,7 @@ export type Row =
   | SubagentBatch
   | ShellRun
   | WorkFold
+  | ScriptGroup
 
 /** The id of the item a row stands for — for keys, scroll anchors and the
     "where does the Sources strip go" lookup, which is keyed by item id. A
@@ -201,6 +220,7 @@ export function rowTailId(row: Row): string {
   if (row.kind === "tool-group") return rowTailId(row.children[row.children.length - 1])
   if (row.kind === "workflow-group" || row.kind === "subagent-batch")
     return rowTailId(row.steps[row.steps.length - 1])
+  if (row.kind === "script" && row.children.length > 0) return rowTailId(row.children[row.children.length - 1])
   return row.id
 }
 
@@ -272,7 +292,13 @@ function lastInnerRow(row: Row): Row {
     replay), or a row that is not tool calls at all. */
 function toolsEndedAt(row: Row): number | undefined {
   const tools: ToolItem[] =
-    row.kind === "tool" ? [row] : row.kind === "run" || row.kind === "tool-group" ? row.items.filter((item): item is ToolItem => item.kind === "tool") : []
+    row.kind === "tool"
+      ? [row]
+      : row.kind === "script"
+        ? [row.head]
+        : row.kind === "run" || row.kind === "tool-group"
+          ? row.items.filter((item): item is ToolItem => item.kind === "tool")
+          : []
   if (tools.length === 0 || tools.some((tool) => tool.endedAt === undefined)) return undefined
   return Math.max(...tools.map((tool) => tool.endedAt!))
 }
@@ -367,12 +393,61 @@ export function buildRows(
   parallelBurstMs?: number
 ): Row[] {
   const nested = mergeSubagentBatches(
-    mergeWorkflowRuns(nestSubagents(withoutAsyncTasks(items), groupTools, turnActive, groupEdits, parallelBurstMs))
+    mergeWorkflowRuns(
+      nestScriptCalls(
+        nestSubagents(withoutAsyncTasks(items), groupTools, turnActive, groupEdits, parallelBurstMs),
+        groupTools,
+        groupEdits,
+        parallelBurstMs
+      )
+    )
   )
   const placed = placeNativeWorkflows(nested, items)
   const grouped = groupTools ? groupToolRuns(placed, groupEdits, parallelBurstMs) : placed
   const shelled = groupShells ? groupShellRuns(grouped) : grouped
   return answersOnly ? foldWork(shelled) : shelled
+}
+
+/** `<scriptId>:<n>` -- the id `repl` gives each call its script makes. */
+const SCRIPT_CALL_ID = /^(.+):(\d+)$/
+
+/**
+ * Move each script's calls under it (`ScriptGroup`). Matched on the id alone,
+ * and only to a script that is itself in these rows, so a runtime whose ids
+ * merely contain a colon is left alone. Top level only: a subagent loop is
+ * never given `repl`.
+ */
+function nestScriptCalls(rows: Row[], groupTools: boolean, groupEdits: boolean, parallelBurstMs?: number): Row[] {
+  const scripts = new Set<string>()
+  for (const row of rows) if (row.kind === "tool" && toolViewOf(row) === "code") scripts.add(row.id)
+  if (scripts.size === 0) return rows
+  const calls = new Map<string, ToolItem[]>()
+  for (const row of rows) {
+    if (row.kind !== "tool") continue
+    const owner = SCRIPT_CALL_ID.exec(row.id)?.[1]
+    if (!owner || !scripts.has(owner)) continue
+    const list = calls.get(owner)
+    if (list) list.push(row)
+    else calls.set(owner, [row])
+  }
+  const claimed = new Set<Row>([...calls.values()].flat())
+  const out: Row[] = []
+  for (const row of rows) {
+    if (claimed.has(row)) continue
+    if (row.kind !== "tool" || !scripts.has(row.id)) {
+      out.push(row)
+      continue
+    }
+    const children = calls.get(row.id) ?? []
+    out.push({
+      kind: "script",
+      id: row.id,
+      head: row,
+      /* Only calls go in, so only calls and their folds come out. */
+      children: groupTools ? (groupToolRuns(children, groupEdits, parallelBurstMs) as ToolGroup["children"]) : children,
+    })
+  }
+  return out
 }
 
 /* An async-task item is a record, not a row: it is read into a `WorkflowGroup`
@@ -1301,6 +1376,7 @@ function isWorkRow(row: Row): boolean {
     case "subagent-group":
     case "workflow-group":
     case "subagent-batch":
+    case "script":
       return true
     case "shell-run":
     case "work-fold":
@@ -1364,6 +1440,7 @@ const GROUP_KINDS: ReadonlySet<string> = new Set<Row["kind"]>([
   "subagent-batch",
   "shell-run",
   "work-fold",
+  "script",
 ])
 
 /** A plain object that is not an item: a group row, or data inside one. */
