@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
@@ -158,6 +158,31 @@ function replResult(updates: { update: unknown }[]): string {
     assert.equal(existsSync(join(cwd, "out.txt")), false);
   });
   console.log("repl: permission ok");
+}
+
+// --- edits to one file in a Promise.all all land: writes to a path are serialised ---
+{
+  const cwd = freshCwd();
+  writeFileSync(join(cwd, "many.txt"), "a\nb\nc\nd\n");
+  const agent = buildAgentApp({
+    env,
+    makeModel: scriptedModel([
+      repl(`
+        await read_file({ path: "many.txt" });
+        await Promise.all(["a", "b", "c", "d"].map((l) => edit_file({ path: "many.txt", old_string: l + "\\n", new_string: l.toUpperCase() + "\\n" })));
+        return await read_file({ path: "many.txt" });
+      `),
+      textScript("done "),
+    ]),
+  });
+  const { app: client, harness } = makeClient();
+  await connectPair(agent, client, async (ctx) => {
+    await initialize(ctx);
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    await ctx.request("session/prompt", { sessionId, prompt: promptOf("upper") });
+    assert.equal(readFileSync(join(cwd, "many.txt"), "utf8"), "A\nB\nC\nD\n", replResult(harness.updates));
+  });
+  console.log("repl: concurrent edits ok");
 }
 
 // --- bad input is refused by the tool's own schema, an unknown tool by name ---

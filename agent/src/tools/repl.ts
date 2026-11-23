@@ -113,7 +113,7 @@ export function makeReplTool(
     description: [
       "Run JavaScript that calls your other tools, in one step. Each tool is an async function taking the same input object you would pass it directly, and resolving to its usual text result:",
       `${names.join(", ")}${mcp ? `, and any MCP tool by its full name (mcp__server__tool; load its schema with ${SEARCH_TOOL} first)` : ""}. Every tool is also reachable as tools[name], for a name that is not an identifier.`,
-      "Use it when code can decide what to do — a rename across files, checking which of many paths exist, filtering search results — or to run several independent calls at once with Promise.all. Use the normal tools for a single call, or when you need to read content to judge it.",
+      "Use it for any step that needs two or more tool calls — several reads or searches, edits across files, checking which of many paths exist, a few commands to run — with independent calls run together through Promise.all. Call a tool directly only for a step that is genuinely one call; when you need to see content before deciding, read it here, return the part you need, and act in the next script.",
       "The body runs inside an async function: `await` freely and end with `return <value>`; only what you return (JSON) and console.log lines come back, so return what you need, not whole files. There is no require, import, process, fetch or filesystem — only the tool functions.",
       "Every call still asks the user's permission like a direct call would; a rejected call throws inside the script, and changes already made stay made. The script is killed after 10 minutes.",
     ].join("\n"),

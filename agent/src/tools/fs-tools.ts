@@ -13,6 +13,25 @@ export function resolvePath(cwd: string, path: string): string {
   return isAbsolute(path) ? path : resolve(cwd, path);
 }
 
+/* Writes to one file, one at a time. An edit reads the file, waits for its
+   permission, then writes what it computed from that read -- so two edits to
+   the same file in flight together (a repl script's Promise.all, or parallel
+   calls) each wrote over the other, and both reported success. Keyed on the
+   resolved path, so writes to different files still run side by side. */
+const writing = new Map<string, Promise<unknown>>();
+function oneWriterPer<T>(abs: string, work: () => Promise<T>): Promise<T> {
+  const run = (writing.get(abs) ?? Promise.resolve()).then(work, work);
+  const settled = run.then(
+    () => {},
+    () => {},
+  );
+  writing.set(abs, settled);
+  void settled.then(() => {
+    if (writing.get(abs) === settled) writing.delete(abs);
+  });
+  return run;
+}
+
 function short(cwd: string, path: string): string {
   const abs = resolvePath(cwd, path);
   return abs.startsWith(`${cwd}/`) ? abs.slice(cwd.length + 1) : abs;
@@ -157,8 +176,9 @@ export function makeWriteTool(rt: ToolRuntime) {
       path: z.string().describe("File path (absolute, or relative to the working directory)"),
       content: z.string().describe("The full contents to write"),
     }),
-    execute: async ({ path, content }, options) => {
+    execute: ({ path, content }, options) => {
       const abs = resolvePath(rt.session.cwd, path);
+      return oneWriterPer(abs, async () => {
       let oldText: string | null = null;
       if (existsSync(abs)) {
         try {
@@ -199,6 +219,7 @@ export function makeWriteTool(rt: ToolRuntime) {
       });
       const lines = content === "" ? 0 : content.split("\n").length;
       return `Wrote ${abs} (${lines} lines, ${Buffer.byteLength(content)} bytes).`;
+      });
     },
   });
 }
@@ -330,8 +351,9 @@ export function makeEditTool(rt: ToolRuntime) {
       new_string: z.string().describe("The replacement text"),
       replace_all: z.boolean().optional().describe("Replace every occurrence (default: false)"),
     }),
-    execute: async ({ path, old_string, new_string, replace_all }, options) => {
+    execute: ({ path, old_string, new_string, replace_all }, options) => {
       const abs = resolvePath(rt.session.cwd, path);
+      return oneWriterPer(abs, async () => {
       let oldText: string;
       try {
         oldText = readFileSync(abs, "utf8");
@@ -398,6 +420,7 @@ export function makeEditTool(rt: ToolRuntime) {
       return replace_all
         ? `Edited ${abs}: ${match.count} replacement${match.count === 1 ? "" : "s"}${note}.`
         : `Edited ${abs} at line ${lineOf(oldText, match.index)}${note}.`;
+      });
     },
   });
 }

@@ -13,6 +13,11 @@ line: keep each bullet on a single line.
 
 ## [Unreleased]
 
+### 2026-11-22
+
+- **Code mode is how a turn calls tools, not a mode it may use.** With `repl` in the turn's tool list the agent's own instructions now make it the default: any step that needs two or more calls is one script with its independent calls under `Promise.all`, a direct call is for a step that is genuinely one call or a tool a script cannot reach, and "I need to see it first" is answered inside code mode (read in one script, act on it in the next) instead of exempting the step from it — the old carve-out covered almost every step and left the tool unused (`agent/src/turn.ts`, `agent/src/tools/repl.ts`, `agent/docs/prompting.md`). It is read off the tool list, so a thread with code mode off still gets the plain one-message batching line.
+- **Two edits to the same file can no longer write over each other.** `edit_file` and `write_file` now serialise per resolved path (`oneWriterPer` in `agent/src/tools/fs-tools.ts`): an edit reads the file, waits for its permission and then writes what it computed from that read, so a `Promise.all` of edits to one file used to have every call read the same text and each report success while all but one change was lost. Writes to different files still run side by side, and `test:repl` runs a four-edit script that now lands all four.
+
 ### 2026-11-18
 
 - **A model call's tokens and timing are drawn on the transcript step that made it.** A `ModelCall` now carries `toolCallIds`, the ACP ids of the calls it asked for, wherever the door can name them (the Daedalus agent's own records, a proxied reply's tool-use ids, Claude Code's OTLP `api_response_body`, which the record waits for beside the request body); the client's `callsByStep` (`lib/trace.ts`) files each record on the last of those rows, falling back to the row that was last when it landed (`ThreadCall.tailId`), so a tool step and a message row show their own call's figures. The composer's context reading, a turn's footer and a step's figure now share one popover layout (`components/reading-kit.tsx`: captioned sections, a row of tiles, one token breakdown and cache tone) instead of three, and the trace panel reads the same records (`trace.check.mjs`).

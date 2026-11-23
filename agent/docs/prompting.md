@@ -57,6 +57,17 @@ question. Knowing the layers is most of knowing where to put an instruction.
    is a conditional rather than a lie. It is not one of the two *calibrations*
    above: nothing in it depends on the task being greenfield or small, so unlike
    **Planning** it is always in force.
+
+   **Code mode** (`repl` in the turn's tools) turns that batching rule and the
+   *Tool usage* section around: repl is the default way to call tools, any step
+   of two or more calls is one script with its independent calls under
+   `Promise.all`, and a direct call is for a step that is genuinely one call or
+   a tool a script cannot reach. "I need to see it first" is answered inside
+   code mode — read in one script, return the excerpt, act in the next — because
+   the old carve-out ("use the tools directly when you must read content to
+   judge it") covered almost every step and left the tool unused. Read off the
+   tool list, so a thread that switches code mode off gets the plain
+   one-message batching line back on its next turn.
 2. **The engine under this agent.** Which model the thread is running on, and
    how that model is best driven — an assigned row from the model-prompt
    library, or the built-in family calibration, whichever applies. See below.
