@@ -568,6 +568,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   elbow. A reader's approval time is already out of a call's length (`waitedMs`), so the figure
   is the agent's own. Both options are Segmented presets, not free numbers (`BATCH_BURSTS`,
   `GAP_MINS`): `pick` drops a stored value outside the list.
+  **A step row's stamp is the short clock** (`Timestamp compact`: `5:56`, no leading zero, no day
+  period, a shade quieter than the readings) because a transcript is read in order and the tooltip
+  carries the full date; a message's stamp keeps the long form. On a phone the readings give way
+  to the title: the clock shortens (`ElapsedFigure`), the cache share hides (the popover keeps it),
+  and the file badge shrinks instead of overflowing into them.
   **A thinking row is a live view while it streams, and its shape is a view option.**
   `RowView`'s `streaming` flag (set by `thread-view.tsx` on the rows the open turn is still
   writing, and by the subagent rail on its own while the child is active) opens the

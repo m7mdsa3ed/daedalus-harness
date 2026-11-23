@@ -52,8 +52,12 @@ import { cn } from "@/lib/utils"
    timestamp beside it in a step's trailing group. Stated here rather than
    inherited from wherever it lands, so the figure looks the same in a run's
    header, on a step and under a turn. */
+/* `-mx-1 px-1`: the hover ground keeps its 4px, but the figure's text sits on
+   the same spacing as every other reading in the group — a bare `px-1` put 4px
+   more air round the coin than round the clock or the stamp, which is what
+   made a step's trailing line look unevenly spaced. */
 const FIGURE =
-  "inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-xs leading-4 tabular-nums text-muted-foreground transition-colors duration-150 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+  "-mx-1 inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-xs leading-4 tabular-nums text-muted-foreground transition-colors duration-150 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
 /** The headline number: everything the turn or step burned, both directions.
     `totalTokens` is the agent's own sum and is what the composer's popover
@@ -160,7 +164,10 @@ export function useStepTurnUsage(itemId: string): acp.Usage | undefined {
 /** The share of a prompt read from cache, as a chip's trailing mark. */
 function CacheFigure({ percent }: { percent: number }) {
   return (
-    <span className="ms-1 inline-flex items-center gap-0.5">
+    /* Only where the panel has room: on a phone the share is one more glyph and
+       figure on a line whose title is already down to a word, and the popover
+       and the trigger's label still say it. */
+    <span className="ms-1 hidden items-center gap-0.5 @panel-sm:inline-flex">
       <DatabaseZapIcon aria-hidden className="size-3 shrink-0" />
       {percent}%
     </span>

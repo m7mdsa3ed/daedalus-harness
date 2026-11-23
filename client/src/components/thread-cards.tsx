@@ -640,7 +640,7 @@ export const CompactionStep = React.memo(function CompactionStep({
       status={running ? "in_progress" : failed ? "failed" : null}
       mono={false}
       target={label}
-      metric={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null]}
+      metric={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} compact /> : null]}
       detail={detail}
       persistKey={item.id}
     />
@@ -677,7 +677,7 @@ export const AutonomyStep = React.memo(function AutonomyStep({
       status={line.attention ? "failed" : null}
       mono={false}
       target={line.title}
-      metric={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null]}
+      metric={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} compact /> : null]}
       detail={<p className="text-sm leading-relaxed text-muted-foreground">{line.detail}</p>}
       persistKey={item.id}
     />
@@ -786,7 +786,7 @@ export const ShellStep = React.memo(function ShellStep({
       mono={!heading.prose}
       metric={[
         failed ? <span className="font-mono text-destructive">exit {item.exitCode}</span> : null,
-        showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null,
+        showTimestamp && item.at !== undefined ? <Timestamp at={item.at} compact /> : null,
       ]}
       detail={
         <>

@@ -72,6 +72,7 @@ import {
 import {
   copyText,
   DISCLOSE_EXIT,
+  ElapsedFigure,
   finishedOpening,
   formatElapsed,
   StepDirContext,
@@ -316,7 +317,9 @@ export const ToolRun = React.memo(function ToolRun({
     [parallel, displayItems, view.batchBurst]
   )
   const batchEnd = batchOf?.find((row) => row.spanMs !== undefined || row.running !== undefined)
-  const batchSpan = batchEnd?.spanMs !== undefined ? formatElapsed(batchEnd.spanMs) : null
+  /* The step rows' own clock, so the header's span shortens on a phone the
+     way every call's does ("2s 582ms" there reads "2.5s"). */
+  const batchSpan = batchEnd?.spanMs !== undefined ? <ElapsedFigure ms={batchEnd.spanMs} /> : null
   const batchRunning = batchEnd?.running
   /* How this group is bracketed, and whether it is alive — said by the
      frame's colour on one weight, never by a heavier box. A plain run has no
@@ -369,10 +372,14 @@ export const ToolRun = React.memo(function ToolRun({
                    box as everything beside it, told apart by colour alone. Not a
                    pill of its own: a rounded-full badge in this column read as a
                    second kind of thing parked on the row. */
-                className={cn(CHIP, BATCH_CHIP)}
+                className={cn(CHIP, BATCH_CHIP, "font-sans")}
               >
                 <LayersIcon aria-hidden className="size-3 shrink-0" />
-                {tools.length} in parallel
+                {tools.length}
+                {/* The words only where there is room: on a phone the glyph and
+                    the count are the chip and the title keeps the line. The
+                    tooltip and the screen reader still get the sentence. */}
+                <span className="sr-only @panel-sm:not-sr-only">in parallel</span>
               </span>
             ) : null,
             /* What the fan-out cost: `layoutBatches` reads the batch's span (its
@@ -816,7 +823,7 @@ export const SubagentStep = React.memo(function SubagentStep({
       endedAt={head.kind === "tool" ? head.endedAt : undefined}
       metric={[
         tokens ? <TokenSummary usage={tokens} label="This step" /> : null,
-        showTimestamps ? <Timestamp at={head.at} /> : null,
+        showTimestamps ? <Timestamp at={head.at} compact /> : null,
       ]}
       detail={
         hasBody ? (
@@ -1842,7 +1849,7 @@ const ToolStep = React.memo(function ToolStep({
       metric={[
         isHarnessTool && item.status !== "failed" ? harnessSummary(item) : null,
         tokens || calls ? <StepTokens usage={tokens} calls={calls} itemId={item.id} /> : null,
-        showTimestamp ? <Timestamp at={item.at} /> : null,
+        showTimestamp ? <Timestamp at={item.at} compact /> : null,
       ]}
       startedAt={item.startedAt}
       endedAt={item.endedAt}

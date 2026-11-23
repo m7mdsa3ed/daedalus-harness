@@ -1147,8 +1147,8 @@ export function FileBadge({
   const inner = (
     <>
       <FileTextIcon aria-hidden className="size-3 shrink-0 opacity-70" />
-      <span className="truncate">{file}</span>
-      {range && <span className="shrink-0 opacity-60">:{formatRange(range)}</span>}
+      <span className="min-w-0 truncate">{file}</span>
+      {range && <span className="min-w-0 truncate opacity-60">:{formatRange(range)}</span>}
     </>
   )
   /* The chip carries the row's own entrance (`harness-part-in`, index.css)
@@ -1160,7 +1160,10 @@ export function FileBadge({
      lands with the title it belongs to — it inherits that part's `--part-i`,
      so it is the same 45ms, not a slot of its own. */
   const cls =
-    cn(CHIP, "harness-part-in max-w-[45%] shrink-0 text-muted-foreground")
+    /* `min-w-0` and shrinkable, never `shrink-0`: on a phone the readings
+       take the row's end, and a chip that could not give way overflowed the
+       title column and drew its range under the clock beside it. */
+    cn(CHIP, "harness-part-in min-w-0 max-w-[45%] shrink text-muted-foreground")
   if (!ctx || !target) return <span className={cls} title={filePath ?? file}>{inner}</span>
   return (
     <span
@@ -1385,6 +1388,17 @@ const DAY_MONTH_YEAR = new Intl.DateTimeFormat(undefined, { day: "numeric", mont
 const FULL = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" })
 
 const clockOf = (date: Date) => CLOCK.format(date)
+/* The step rows' clock: the hour without its leading zero and without the day
+   period ("5:56", not "05:56 AM"). A transcript is read in order, so the period
+   is never in doubt from one row to the next, and the tooltip carries the full
+   date. It is the width a column of stamps costs on a phone. */
+const CLOCK_SHORT = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })
+const shortClockOf = (date: Date) =>
+  CLOCK_SHORT.formatToParts(date)
+    .filter((part) => part.type !== "dayPeriod")
+    .map((part) => part.value)
+    .join("")
+    .trim()
 
 const startOfDay = (ms: number) => {
   const d = new Date(ms)
@@ -1393,9 +1407,9 @@ const startOfDay = (ms: number) => {
 }
 
 /** The short label: a clock, prefixed with the day when it is not today's. */
-export function formatStamp(at: number, now = Date.now()): string {
+export function formatStamp(at: number, now = Date.now(), short = false): string {
   const date = new Date(at)
-  const time = clockOf(date)
+  const time = short ? shortClockOf(date) : clockOf(date)
   const days = Math.round((startOfDay(now) - startOfDay(at)) / 86_400_000)
   if (days === 0) return time
   // Inside the last week the weekday is both shorter and easier to place than
@@ -1438,7 +1452,18 @@ export function formatRelative(at: number, now = Date.now()): string {
  * timestamps down a transcript should be legible when looked for and invisible
  * when not.
  */
-export const Timestamp = React.memo(function Timestamp({ at, className }: { at?: number; className?: string }) {
+export const Timestamp = React.memo(function Timestamp({
+  at,
+  className,
+  compact = false,
+}: {
+  at?: number
+  className?: string
+  /** A step row's stamp: the short clock (`formatStamp`'s `short`) a shade
+      quieter than the readings beside it, so a column of them down a run is
+      found when looked for and costs the title nothing when not. */
+  compact?: boolean
+}) {
   if (!at) return null
   const date = new Date(at)
   const now = Date.now()
@@ -1456,12 +1481,13 @@ export const Timestamp = React.memo(function Timestamp({ at, className }: { at?:
               // makes it quiet. Callers wanting the smaller one still say so
               // (the queue's rows).
               "shrink-0 cursor-default whitespace-nowrap text-xs tabular-nums text-muted-foreground",
+              compact && "text-muted-foreground/70",
               className
             )}
           />
         }
       >
-        {formatStamp(at, now)}
+        {formatStamp(at, now, compact)}
       </TooltipTrigger>
       <TooltipContent className="flex-col items-start gap-0 text-xs">
         <FullTime at={at} />
