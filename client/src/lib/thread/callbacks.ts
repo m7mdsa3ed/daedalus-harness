@@ -17,6 +17,7 @@ import {
   foldRewound,
 } from "./replay"
 import type { CallbackHost, FoldContext } from "./fold-context"
+import { threadNotifies } from "../settings"
 
 /**
  * The one set of callbacks a `ThreadSocket` folds into — live events and
@@ -45,6 +46,14 @@ export function makeThreadCallbacks(
   const sink = makeReplaySink(host.dispatch, () => host.state.restarting)
   const { send, sendStream, flush } = sink
   const ctx: FoldContext = { host, sink, owner, carried: [], attachedArchived: false }
+  /* A muted thread says nothing — no toast, sound or OS notice. Read per event
+     off the store's row, so a toggle lands on the next one. A thread not in the
+     list (a draft's first turn) notifies as before. */
+  const notify: typeof notifyThreadEvent = (event, ...rest) => {
+    const row = getState().sessions.find((s) => s.id === id)
+    if (row && !threadNotifies(row)) return
+    notifyThreadEvent(event, ...rest)
+  }
   return {
     onUpdate: (update, historyReplay, sessionId, at, historyText, historyAttachments, endAt) => {
       sendStream({ type: "update", id, update, allowUserChunks: historyReplay, sessionId, at, historyText, historyAttachments, endAt })
@@ -57,7 +66,7 @@ export function makeThreadCallbacks(
        callback: it names the request the server minted, which is also how a
        peer's answer is matched against this card. */
     onPermission: (requestId, request, from) => {
-      notifyThreadEvent("permissionNeeded", id, host.titleOf(), request.toolCall?.title ?? undefined)
+      notify("permissionNeeded", id, host.titleOf(), request.toolCall?.title ?? undefined)
       send({
         type: "permission",
         id,
@@ -74,7 +83,7 @@ export function makeThreadCallbacks(
       })
     },
     onElicitation: (requestId, request, from) => {
-      notifyThreadEvent("questionAsked", id, host.titleOf(), request.message)
+      notify("questionAsked", id, host.titleOf(), request.message)
       send({
         type: "elicitation",
         id,
@@ -361,7 +370,7 @@ export function makeThreadCallbacks(
           error: info.kind === "cancelled" ? null : info.title,
         })
         if (!catchingUp && info.kind !== "cancelled") {
-          notifyThreadEvent("turnFailed", id, host.titleOf(), noticeDetail(promptText, info.title))
+          notify("turnFailed", id, host.titleOf(), noticeDetail(promptText, info.title))
         }
       } else {
         /* An AIR failure ends the turn as `end_turn`, its row already drawn
@@ -369,7 +378,7 @@ export function makeThreadCallbacks(
            and the notification, a `warning` is not. */
         const failed = failure?.severity === "error" ? failure.title : null
         send({ type: "turn-verdict", id, error: failed })
-        if (failed && !catchingUp) notifyThreadEvent("turnFailed", id, host.titleOf(), noticeDetail(promptText, failed))
+        if (failed && !catchingUp) notify("turnFailed", id, host.titleOf(), noticeDetail(promptText, failed))
       }
       if (!error && failure?.severity !== "error" && !catchingUp && !continued) {
         // Notifying on replay would re-announce every turn in the thread on
@@ -386,7 +395,7 @@ export function makeThreadCallbacks(
            predates it. */
         const thread = getState().threads[id]
         if (!thread?.background && !(thread && backgroundRunning(thread.items))) {
-          notifyThreadEvent("turnFinished", id, host.titleOf(), noticeDetail(promptText))
+          notify("turnFinished", id, host.titleOf(), noticeDetail(promptText))
         }
       }
     },

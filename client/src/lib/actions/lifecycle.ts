@@ -4,7 +4,7 @@
    Split out of the one 1500-line `useActions` memo; see `lib/actions.ts`. */
 
 import { uuid } from "../uuid"
-import { api, type AskProfiles } from "../settings"
+import { api, threadNotifies, type AskProfiles } from "../settings"
 import { forgetDraft, patchDraft } from "../draft-sessions"
 import { cancelPrewarm } from "../prewarm"
 import { postJson, type ActionsCore } from "./core"
@@ -72,6 +72,22 @@ export function lifecycleActions(core: ActionsCore) {
         { method: "PATCH", body: JSON.stringify({ hidden: !session.hiddenAt }) }
       )
       dispatch({ type: "hide-session", id: sessionId, hiddenAt })
+    },
+
+    /** Turn a thread's notifications off, or back on.
+     *
+     * Server-owned (`sessions.notify`) and moved in the store with the answer.
+     * The toggle flips what the reader sees now — a hidden thread with no choice
+     * made reads as muted — and stores it as an explicit choice. */
+    async toggleNotify(sessionId: string) {
+      const session = getState().sessions.find((s) => s.id === sessionId)
+      if (!session || session.draft) return
+      const { notify } = await api<{ notify: boolean | null }>(
+        settings,
+        `/api/sessions/${sessionId}`,
+        { method: "PATCH", body: JSON.stringify({ notify: !threadNotifies(session) }) }
+      )
+      dispatch({ type: "notify-session", id: sessionId, notify })
     },
 
     /** Choose which profile and model this thread's `agent` tool uses per

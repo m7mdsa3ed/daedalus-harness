@@ -56,6 +56,7 @@ export interface ThreadRowHandlers {
   onPurge: (session: SessionMeta) => void
   onPin: (session: SessionMeta) => void
   onHide: (session: SessionMeta) => void
+  onToggleNotify: (session: SessionMeta) => void
   onRemoveWorktree?: (session: SessionMeta) => void
   onClose?: (session: SessionMeta) => void
 }
@@ -115,7 +116,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   setSize?: number
   measure?: (el: Element | null) => void
 }) {
-  const { onOpen, onRename, onDelete, onRestore, onPurge, onPin, onHide, onRemoveWorktree, onClose } = handlers
+  const { onOpen, onRename, onDelete, onRestore, onPurge, onPin, onHide, onToggleNotify, onRemoveWorktree, onClose } = handlers
   /* One list feeds both the ⋯ menu and the right-click menu. */
   /* Delete is Trash, and Trash stops the agent: a turn in motion (or one
      waiting on an answer) is not something to throw away from a menu row —
@@ -136,6 +137,7 @@ export const ThreadRow = React.memo(function ThreadRow({
               onDelete,
               onPin,
               onHide,
+              onToggleNotify,
               onRemoveWorktree,
             },
             /* A phone folds every split back into one strip, so the row that
@@ -146,7 +148,7 @@ export const ThreadRow = React.memo(function ThreadRow({
               ? { ...item, disabled: true, hint: "Stop the turn first" }
               : item
           ),
-    [session, trash, pinned, busy, isMobile, onRename, onDelete, onRestore, onPurge, onPin, onHide, onRemoveWorktree]
+    [session, trash, pinned, busy, isMobile, onRename, onDelete, onRestore, onPurge, onPin, onHide, onToggleNotify, onRemoveWorktree]
   )
   /* ── One line ──
      The agent's mark, the title, and at the trailing edge the status (a spinner,

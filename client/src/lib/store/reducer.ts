@@ -203,6 +203,7 @@ export type Action =
   | { type: "promote-draft"; id: string }
   | { type: "pin-session"; id: string; pinnedAt: number | null }
   | { type: "hide-session"; id: string; hiddenAt: number | null }
+  | { type: "notify-session"; id: string; notify: boolean | null }
   | { type: "ask-profiles-session"; id: string; askProfiles: AskProfiles }
   /** Absolute state, with one hole: an event may carry modes and leave the
       options out, which means "unchanged" and not "none". The reducer is where
@@ -697,6 +698,13 @@ export function reducer(state: State, action: Action): State {
         ...state,
         sessions: state.sessions.map((s) =>
           s.id === action.id ? { ...s, hiddenAt: action.hiddenAt } : s
+        ),
+      }
+    case "notify-session":
+      return {
+        ...state,
+        sessions: state.sessions.map((s) =>
+          s.id === action.id ? { ...s, notify: action.notify } : s
         ),
       }
     case "ask-profiles-session":

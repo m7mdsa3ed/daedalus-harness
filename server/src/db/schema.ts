@@ -1150,6 +1150,11 @@ export const sessions = pgTable(
         the sidebar's "Hidden" filter), it just leaves the default list. Like a
         pin it is the server's, so it follows the thread to every device. */
     hiddenAt: bigint("hidden_at", { mode: "number" }),
+    /** Whether this thread raises notifications (inbox, push, toast, sound).
+        Null = the default, which is on for a shown thread and off for a hidden
+        one (`threadNotifies`); true/false is a person's explicit choice and
+        outranks hiding. The server's, so muting follows the thread. */
+    notify: boolean("notify"),
     /** Which profile this thread's `ask_agent` uses for each agent, by agent
         id: chosen up front (the project's default, the draft's menu, the
         thread's settings) or by answering the picker an ask raised and ticking

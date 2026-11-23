@@ -876,7 +876,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   });
 
   app.patch("/api/sessions/:id", async (c) => {
-    const { title, pinned, hidden, askProfiles } = await c.req.json();
+    const { title, pinned, hidden, notify, askProfiles } = await c.req.json();
     if (!sessions.get(c.req.param("id"))) return c.json({ error: "not found" }, 404);
     // Which profile (and model) `ask_agent` uses per agent on this thread.
     // Travels alone, like a pin.
@@ -893,6 +893,10 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     // Hiding travels alone for the same reason.
     if (typeof hidden === "boolean" && title === undefined) {
       return c.json({ hiddenAt: sessions.setHidden(c.req.param("id"), hidden) ?? null });
+    }
+    // Muting too; null hands the thread back to the default (off while hidden).
+    if ((typeof notify === "boolean" || notify === null) && title === undefined) {
+      return c.json({ notify: sessions.setNotify(c.req.param("id"), notify) ?? null });
     }
     if (typeof title !== "string") return c.json({ error: "title must be a string" }, 400);
     const named = sessions.rename(c.req.param("id"), title);

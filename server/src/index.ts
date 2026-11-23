@@ -19,7 +19,7 @@ import { seedDefaultModelRoles } from "./model-roles.js";
 import { seedAgents } from "./registry.js";
 import { seedPersonas } from "./persona-seeds.js";
 import { ensureDefaultBoard } from "./boards.js";
-import { SessionManager } from "./sessions.js";
+import { SessionManager, threadNotifies } from "./sessions.js";
 import { adoptAgents } from "./adopt-boot.js";
 import { mark } from "./boot-timing.js";
 import { durable, sandbox } from "./sandbox/index.js";
@@ -142,11 +142,15 @@ let routines: RoutineEngine | null = null;
 let routineGitTriggers: RoutineGitTriggers | null = null;
 const sessions = new SessionManager(
   {
+    /* A muted thread (explicitly, or hidden with no choice made) records
+       nothing and pushes nothing; the transcript still shows the event. */
     onPermissionRequest: async (s) => {
+      if (!threadNotifies(s)) return;
       await addNotification("permission", s);
       push.send("Permission needed", s.title, { sessionId: s.id, event: "permissionNeeded" }).catch(console.error);
     },
     onElicitationRequest: async (s) => {
+      if (!threadNotifies(s)) return;
       await addNotification("question", s);
       push.send("The agent has a question", s.title, { sessionId: s.id, event: "questionAsked" }).catch(console.error);
     },
@@ -157,6 +161,7 @@ const sessions = new SessionManager(
          (a lock screen) with nothing beside it to correct it. The run's own end
          opens a turn of its own, and that one notifies honestly. */
       if (!error && s.bridge?.background) return;
+      if (!threadNotifies(s)) return;
       /* The thread is the row's title; the body is what the turn was about —
          the message the user sent, and the failure's own line when it failed.
          A notice that said only "Turn finished" told the reader nothing they

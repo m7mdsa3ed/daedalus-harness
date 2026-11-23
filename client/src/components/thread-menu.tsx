@@ -17,6 +17,8 @@
 import * as React from "react"
 import {
   Activity,
+  Bell,
+  BellOff,
   Copy,
   ExternalLink,
   Eye,
@@ -64,7 +66,7 @@ import type { Actions } from "@/lib/actions"
 import { describeError, reportError } from "@/lib/errors"
 import { usePins } from "@/lib/pins"
 import { projectPath, settingsFormPath, threadPath } from "@/lib/router"
-import { ApiError, type HelperCommand, type Project, type SessionMeta } from "@/lib/settings"
+import { ApiError, threadNotifies, type HelperCommand, type Project, type SessionMeta } from "@/lib/settings"
 import { useProjects } from "@/lib/queries/catalog"
 import { useServer } from "@/lib/server-context"
 import { useStoreSelect } from "@/lib/store"
@@ -101,6 +103,17 @@ const hideItem = (
   label: session.hiddenAt ? "Unhide" : "Hide",
   icon: session.hiddenAt ? <Eye /> : <EyeOff />,
   onClick: () => hide(session),
+})
+
+/** Muting reads the effective state: a hidden thread is muted until someone
+    says otherwise, so its row offers "Unmute". */
+const notifyItem = (
+  session: SessionMeta,
+  toggle: (session: SessionMeta) => void
+): MenuItemSpec => ({
+  label: threadNotifies(session) ? "Mute notifications" : "Unmute notifications",
+  icon: threadNotifies(session) ? <BellOff /> : <Bell />,
+  onClick: () => toggle(session),
 })
 
 const renameItem = (session: SessionMeta, rename: (session: SessionMeta) => void): MenuItemSpec => ({
@@ -141,6 +154,7 @@ export function threadMenuItems(
     onDelete: (session: SessionMeta) => void
     onPin: (session: SessionMeta) => void
     onHide: (session: SessionMeta) => void
+    onToggleNotify: (session: SessionMeta) => void
     onRemoveWorktree?: (session: SessionMeta) => void
   },
   options: { beside?: boolean } = {}
@@ -157,6 +171,7 @@ export function threadMenuItems(
     renameItem(session, handlers.onRename),
     pinItem(session, pinned, handlers.onPin),
     hideItem(session, handlers.onHide),
+    notifyItem(session, handlers.onToggleNotify),
     { label: "Copy link", icon: <LinkIcon />, onClick: () => copyThreadLink(session) },
     { type: "separator" },
     ...worktreeItems(session, handlers.onRemoveWorktree),
@@ -292,6 +307,17 @@ export function useThreadRowActions(
     [actions]
   )
 
+  const toggleNotify = React.useCallback(
+    (session: SessionMeta) => {
+      actions
+        .toggleNotify(session.id)
+        .catch((err) =>
+          reportError(err, threadNotifies(session) ? "Couldn't mute the thread" : "Couldn't unmute the thread")
+        )
+    },
+    [actions]
+  )
+
   const restore = React.useCallback(
     (session: SessionMeta) => {
       actions
@@ -360,7 +386,7 @@ export function useThreadRowActions(
     [confirm, actions]
   )
 
-  return { rename, remove, restore, purge, pin, hide, removeWorktree }
+  return { rename, remove, restore, purge, pin, hide, toggleNotify, removeWorktree }
 }
 
 import { writeClipboard } from "@/lib/clipboard"

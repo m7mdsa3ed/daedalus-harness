@@ -330,6 +330,8 @@ export interface Session {
   /** Epoch ms this thread was hidden from the sidebar's default list; null =
       shown. Server-side, so it follows the thread to every device. */
   hiddenAt: number | null;
+  /** Explicit notification choice; null = the default (`threadNotifies`). */
+  notify: boolean | null;
   /** The profile `ask_agent` uses per agent id; an agent not in it is asked about. */
   askProfiles: AskProfiles;
   exited: boolean;
@@ -2082,6 +2084,7 @@ export class SessionManager {
       deletedAt: null,
       pinnedAt: null,
       hiddenAt: null,
+      notify: null,
       askProfiles: opts.askProfiles ?? {},
       exited: false,
       respawnChain: null,
@@ -4178,6 +4181,7 @@ export class SessionManager {
       deletedAt: s.deletedAt,
       pinnedAt: s.pinnedAt,
       hiddenAt: s.hiddenAt,
+      notify: s.notify,
       askProfiles: s.askProfiles,
       attached: s.peers.size > 0,
       peerCount: s.peers.size,
@@ -4265,6 +4269,15 @@ export class SessionManager {
     session.hiddenAt = hidden ? Date.now() : null;
     this.persist(session);
     return session.hiddenAt;
+  }
+
+  /** Mute or unmute a thread's notifications; null returns it to the default. */
+  setNotify(id: string, notify: boolean | null): boolean | null | undefined {
+    const session = this.sessions.get(id);
+    if (!session) return undefined;
+    session.notify = notify;
+    this.persist(session);
+    return session.notify;
   }
 
   /**
@@ -4587,6 +4600,12 @@ function forwardedRequest(child: Session, event: ThreadEvent & { requestId: stri
     : ({ ...event, requestId, from: { sessionId: child.id, title: child.title } } as ThreadEvent);
 }
 
+/** Whether a thread raises notifications: a person's explicit choice, else on
+    for a shown thread and off for a hidden one. */
+export function threadNotifies(session: Pick<Session, "notify" | "hiddenAt">): boolean {
+  return session.notify ?? !session.hiddenAt;
+}
+
 /** The durable half of a session, as the row shape. */
 /** Where a thread's agent runs: its worktree, or the project's own cwd. */
 export function threadCwd(session: Pick<Session, "worktree">, project: Pick<Project, "cwd">): string {
@@ -4627,6 +4646,7 @@ function rowValues(s: Session) {
     deletedAt: s.deletedAt,
     pinnedAt: s.pinnedAt,
     hiddenAt: s.hiddenAt,
+    notify: s.notify,
     askProfiles: s.askProfiles,
     parentSessionId: s.parentSessionId,
     childKind: s.childKind,

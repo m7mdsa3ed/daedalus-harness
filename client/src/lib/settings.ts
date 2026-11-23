@@ -1075,6 +1075,9 @@ export interface SessionMeta {
       follows the thread to every device. A hidden thread leaves the sidebar's
       default list and is read back with the "Hidden" filter. */
   hiddenAt?: number | null
+  /** Whether this thread raises notifications; null/absent = the default,
+      on for a shown thread and off for a hidden one (`threadNotifies`). */
+  notify?: boolean | null
   /** Which profile and model this thread's `agent` tool uses for each agent;
       an agent not in it is asked about. The server's, and read at ask time,
       so changing it costs the thread nothing. */
@@ -1247,6 +1250,13 @@ const sameHelperModels = (
  * is no longer a draft (see the `sessions` reducer), and keeping the old object
  * would keep `draft: true` on a thread the server has just confirmed.
  */
+/** Whether a thread raises notifications: a person's explicit choice, else on
+    for a shown thread and off for a hidden one. The server's `threadNotifies`
+    reads the same row the same way. */
+export function threadNotifies(session: Pick<SessionMeta, "notify" | "hiddenAt">): boolean {
+  return session.notify ?? !session.hiddenAt
+}
+
 export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
   if (a === b) return true
   if (a.draft || b.draft) return false
@@ -1268,6 +1278,7 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.deletedAt === b.deletedAt &&
     (a.pinnedAt ?? null) === (b.pinnedAt ?? null) &&
     (a.hiddenAt ?? null) === (b.hiddenAt ?? null) &&
+    (a.notify ?? null) === (b.notify ?? null) &&
     JSON.stringify(a.askProfiles ?? {}) === JSON.stringify(b.askProfiles ?? {}) &&
     a.attached === b.attached &&
     a.peerCount === b.peerCount &&

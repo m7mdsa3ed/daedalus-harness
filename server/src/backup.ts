@@ -493,6 +493,8 @@ const SessionRow = z.object({
   pinnedAt: int.nullish(),
   /* Absent in a bundle from before hiding existed, which reads as shown. */
   hiddenAt: int.nullish(),
+  /* Absent in a bundle from before muting existed: the default. */
+  notify: z.boolean().nullish(),
   /* Absent in a bundle from before the setting: ask each time, as every thread did. */
   askProfiles: z.record(z.string(), z.object({ profileId: z.string(), model: z.string().optional() })).nullish(),
   parentSessionId: optStr,
@@ -1436,6 +1438,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
           deletedAt: columns.deletedAt ?? null,
           pinnedAt: columns.pinnedAt ?? null,
           hiddenAt: columns.hiddenAt ?? null,
+          notify: columns.notify ?? null,
           askProfiles: columns.askProfiles ?? null,
           parentSessionId: columns.parentSessionId ?? null,
           childKind: columns.childKind ?? null,
