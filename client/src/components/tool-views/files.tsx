@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { CopyButton } from "@/components/ui/copy-button"
 import { DiffView } from "@/components/ui/diff-view"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
+import { ShellOutput } from "@/components/shell-output"
 import {
   CodeBlock,
   DetailSection,
@@ -17,7 +18,6 @@ import {
   PANE_MAX_H,
   SHELL_COMMAND,
   SHELL_FOOTER,
-  SHELL_OUTPUT,
   SHELL_SKELETON,
   ShellPane,
   ShellScript,
@@ -304,18 +304,15 @@ export function TerminalDetail({ item, active }: { item: ToolItem; active: boole
         <ShellScript command={command} className="min-w-0 flex-1" />
       </div>
       {out.trim() && (
-        <pre
-          className={cn(
-            PANE_MAX_H,
-            SHELL_OUTPUT,
-            failed ? "text-destructive" : "text-muted-foreground"
-          )}
-        >
-          {out}
-        </pre>
+        <ShellOutput
+          output={out}
+          whole={whole}
+          failed={failed}
+          scrollClassName={PANE_MAX_H}
+          footer={over ? <ShowAll onClick={showAll} /> : null}
+        />
       )}
       {!out.trim() && active && <ToolCallSkeleton className={SHELL_SKELETON} />}
-      {over && <ShowAll onClick={showAll} />}
       {/* A footer only a failure earns. "exited 0" is what every command that
           worked would say, which is nothing worth the row — but a run that
           died is a row worth having, because it is what carries the copy of

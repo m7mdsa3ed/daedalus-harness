@@ -59,6 +59,7 @@ import { useCoarsePointer } from "@/hooks/use-device"
 import { recoverUnfencedOpenui } from "@/lib/openui/recover-unfenced"
 import { splitOpenuiFences } from "@/lib/openui/fences"
 import { FileLink } from "@/components/file-link"
+import { ShellOutput } from "@/components/shell-output"
 import { Prose, REHYPE } from "@/components/prose"
 import { FilePreviewContext, projectPath } from "@/lib/file-preview"
 
@@ -1066,8 +1067,6 @@ function parseJsonDocument(text: string): { value: unknown } | null {
 /** ShellPane's rows, shared with the terminal-channel run (`TerminalDetail`)
     so the two panes are one geometry. */
 export const SHELL_COMMAND = "flex items-start gap-2 px-3 py-2 font-mono text-xs leading-relaxed"
-export const SHELL_OUTPUT =
-  "overflow-auto border-t border-inherit px-3 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap"
 export const SHELL_SKELETON = "border-t border-inherit px-3 py-2"
 /** A pane's footer row — a failed run's exit line. */
 export const SHELL_FOOTER = "flex items-center gap-2 border-t border-inherit px-3 py-1 font-mono text-xs"
@@ -1097,15 +1096,13 @@ export function ShellPane({
         <ShellScript command={command} className="min-w-0 flex-1" />
       </div>
       {out.trim() && (
-        <pre
-          className={cn(
-            PANE_MAX_H,
-            SHELL_OUTPUT,
-            failed ? "text-destructive" : "text-muted-foreground"
-          )}
-        >
-          {out}
-        </pre>
+        <ShellOutput
+          output={out}
+          whole={output}
+          failed={failed}
+          scrollClassName={PANE_MAX_H}
+          footer={over ? <ShowAll onClick={showAll} /> : null}
+        />
       )}
       {/* Running with nothing printed yet: breathing lines, not an empty pane. */}
       {!out.trim() && running && <ToolCallSkeleton className={SHELL_SKELETON} />}
@@ -1114,7 +1111,6 @@ export function ShellPane({
           {emptyNote}
         </p>
       )}
-      {over && <ShowAll onClick={showAll} />}
     </div>
   )
 }

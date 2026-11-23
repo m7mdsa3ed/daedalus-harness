@@ -13,6 +13,10 @@ line: keep each bullet on a single line.
 
 ## [Unreleased]
 
+### 2026-11-23
+
+- **A command's output is read, not dumped.** What a shell run printed was one muted `<pre>`: a ping summary, a config grep and an aligned table ran together, wrapped lines broke the columns, and the line saying "100% packet loss" looked like every other. `components/shell-output.tsx` draws the same bytes as numbered lines with a heading row (line count, wrap toggle, copy), a separate span for run-on and logs, terminal noise dropped (ANSI codes, the overwritten half of a `\r` progress line), light token colouring from the editor's own `--code-*` tokens, and a destructive or warning tint on a line that names one — "0 errors" is not one. A marker-only line (`== host`, `--- conf`, `### step`) is drawn as a section heading, off for diff output where `--- a/file` is data. Both panes share it (`ShellPane`, `TerminalDetail`), so Show all sits inside the pane rather than under it and copy hands over every byte, not the visible cap.
+
 ### 2026-11-22
 
 - **Code mode is how a turn calls tools, not a mode it may use.** With `repl` in the turn's tool list the agent's own instructions now make it the default: any step that needs two or more calls is one script with its independent calls under `Promise.all`, a direct call is for a step that is genuinely one call or a tool a script cannot reach, and "I need to see it first" is answered inside code mode (read in one script, act on it in the next) instead of exempting the step from it — the old carve-out covered almost every step and left the tool unused (`agent/src/turn.ts`, `agent/src/tools/repl.ts`, `agent/docs/prompting.md`). It is read off the tool list, so a thread with code mode off still gets the plain one-message batching line.
