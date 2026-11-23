@@ -3422,6 +3422,29 @@ html .dock-tab[data-active] {
       var(--shadow-glass);
   }
 
+  /* The tab each OTHER group is showing. `data-active` is dockview's
+     `api.isActive` — selected AND its group focused — so with a split only the
+     focused group said which tab it was on; the other group's selected tab was
+     drawn bare and muted like every tab it hides, and the strip read as one
+     group with a selection and one without. `.dv-active-tab` is the
+     group-local answer, so that tab gets the middle weight: the same material
+     at half strength, the hairline at rest, no lift, and its title in the
+     foreground. Focus is still the lift and the full ground. */
+  html:not([data-sidebar-layout="inset"]) .dv-tab.dv-active-tab .dock-tab:not(.dock-nested *):not([data-active]) {
+    background-color: color-mix(in oklch, var(--composer) 55%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) calc(var(--app-edge) / 2), transparent);
+    color: color-mix(in oklch, var(--foreground) 85%, transparent);
+  }
+
+  html:not([data-sidebar-layout="inset"]) .dv-tab.dv-active-tab .dock-tab:not(.dock-nested *):not([data-active]):hover {
+    background-color: var(--composer);
+    color: var(--foreground);
+  }
+
+  html:not([data-sidebar-layout="inset"]) .dv-tab.dv-active-tab .dock-tab:not(.dock-nested *):not([data-active]) [data-tab-mark] {
+    color: color-mix(in oklch, var(--foreground) 85%, transparent);
+  }
+
   /* The tab in the hand keeps its lift (the ghost rule above is outranked here). */
   html:not([data-sidebar-layout="inset"]) .dv-tab-ghost-drag .dock-tab:not(.dock-nested *) {
     background-color: var(--composer);
