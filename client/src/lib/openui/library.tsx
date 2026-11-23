@@ -67,6 +67,7 @@ import { Image } from "@/lib/openui/components/Image"
 import { Button, Checkbox, DatePicker, Form, FormControl, Input, RadioGroup, Select, SelectItem, Slider, Switch, Textarea } from "@/lib/openui/components/interactive"
 import { Rank } from "@/lib/openui/components/Rank"
 import { EditableTable } from "@/lib/openui/components/EditableTable"
+import { LEGACY_COMPONENTS } from "@/lib/openui/components/legacy"
 
 /** What each group's section tells the model beyond its signatures. The names
     and membership are `groups.ts`'s; a note must only mention components of its
@@ -175,4 +176,12 @@ export const openuiLibrary = createLibrary({
     Rank,
   ],
   componentGroups: UI_GROUPS.map((group) => ({ name: group.label, components: group.components, notes: GROUP_NOTES[group.id] ?? [] })),
+})
+
+/** What a fence is drawn with: the table above plus the retired names a stored
+    answer still uses (`components/legacy.tsx`). Never used for the prompt — an
+    ungrouped component is printed under "### Other" and would be taught again. */
+export const openuiRenderLibrary = createLibrary({
+  root: "Stack",
+  components: [...Object.values(openuiLibrary.components), ...LEGACY_COMPONENTS],
 })

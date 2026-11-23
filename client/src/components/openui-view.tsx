@@ -34,14 +34,14 @@ import { Prose } from "@/components/prose"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useOpenuiActions } from "@/lib/openui/actions"
-import { openuiLibrary } from "@/lib/openui/library"
+import { openuiRenderLibrary } from "@/lib/openui/library"
 import { positionalize } from "@/lib/openui/named-args"
 
 type Verdict = "parse" | "empty"
 
 /** A component's prop order — the order its signature prints in the prompt. */
 const propOrder = (name: string): string[] | undefined => {
-  const def = openuiLibrary.components[name]
+  const def = openuiRenderLibrary.components[name]
   return def ? Object.keys(def.props.shape) : undefined
 }
 
@@ -207,7 +207,7 @@ export function OpenuiView({ code, streaming }: { code: string; streaming: boole
   return (
     <div ref={container} data-live={streaming || undefined} className="w-full max-w-full min-w-0 [overflow-wrap:anywhere]">
       <Renderer
-        library={openuiLibrary}
+        library={openuiRenderLibrary}
         response={program}
         /* A button in a half-written program belongs to a view that is still
            arriving: the renderer disables it, and a form's fields do not
